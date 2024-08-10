@@ -7,28 +7,51 @@
 #include <dev_array.h>
 
 namespace RapiDHT {
+	enum Directions {
+		DIRECTION_X,
+		DIRECTION_Y,
+		DIRECTION_Z
+	};
 	enum Modes {
 		CPU,
-		GPU,
+		GPU, 
 		RFFT
 	};
 
 	class HartleyTransform {
 	public:
-		HartleyTransform(size_t rows, size_t cols = 0, size_t depth = 0, Modes mode = Modes::CPU);
+		HartleyTransform(int rows, int cols = 0, int depth = 0, Modes mode = Modes::CPU)
+			: rows_(rows), cols_(cols), depth_(depth), mode_(mode) {
+			if (rows_ <= 0 || cols_ < 0 || depth_ < 0) {
+				throw std::invalid_argument("Error (initialization): at least Rows must be positive. \
+					Cols and Depth can be zero (by default) but not negative.");
+			} else if (cols_ == 0 && depth_ > 0) {
+				throw std::invalid_argument("Error (initialization): if cols is zero, depth must be zero.");
+			}
 
-		void ForwardTransform(std::vector<double>& data);
-		void InverseTransform(std::vector<double>& data);
+			// Preparation to 1D transforms
+			if (mode_ == Modes::CPU || mode_ == Modes::RFFT) {
+				bit_reversed_indices_x_.resize(rows_);
+				bit_reversed_indices_y_.resize(cols_);
+				bit_reversed_indices_z_.resize(depth_);
+				bit_reverse(&bit_reversed_indices_x_);
+				bit_reverse(&bit_reversed_indices_y_);
+				bit_reverse(&bit_reversed_indices_z_);
+			}
+			if (mode_ == Modes::GPU) {
+				// Initialize Vandermonde matrice on the host
+				initialize_kernel_host(&h_Vandermonde_Matrix_x_, rows);
+				//initializeKernelHost(h_A, rows);
+				//initializeKernelHost(h_A, rows);
 
-		size_t cols() {
-			return _bit_reversed_indices_x.size();
+
+				// transfer CPU -> GPU
+				d_Vandermonde_Matrix_x_.resize(rows_ * cols_);
+				d_Vandermonde_Matrix_x_.set(&h_Vandermonde_Matrix_x_[0], rows_ * cols_);
+			}
 		}
-		size_t rows() {
-			return _bit_reversed_indices_y.size();
-		}
-		size_t depth() {
-			return _bit_reversed_indices_z.size();
-		}
+		void ForwardTransform(double* data);
+		void InverseTransform(double* data);
 
 	private:
 		/* ------------------------- ND Transforms ------------------------- */
@@ -36,73 +59,54 @@ namespace RapiDHT {
 		 * FDHT1D(double* vector) returns the Hartley transform
 		 * of an 1D array using a fast Hartley transform algorithm.
 		 */
-		template <typename Iter>
-		static void FDHT1D(Iter begin, Iter end, const std::vector<size_t>& bit_reversed_indices);
+		void FDHT1D(double* vector, const Directions direction = Directions::DIRECTION_X);
 
 		/**
 		 * FHT2D(double* image_ptr) returns the Hartley transform
 		 * of an 2D array using a fast Hartley transform algorithm. The 2D transform
 		 * is equivalent to computing the 1D transform along each dimension of image.
 		 */
-		static void FDHT2D(std::vector<double>& image, const std::vector<std::vector<size_t>>& bit_reversed_indices);
-
-		/**
-		 * Bracewell R.N.et al.
-		 * Fast two - dimensional Hartley transform
-		 * //Proceedings of the IEEE. – 1986. – Т. 74. – №. 9. – С. 1282-1283.
-		 *
-		 * 2cas(a + b) = cas(a) cas(b) + cas(a) cas(-b) + cas(-a)cas(b) - cas(-a)cas(-b) =>
-		 *
-		 * => H(u, v) = [T(u, v) + T(u, M - v) + T(N - u, v) - T(N - u, M - v)] / 2.
-		 */
-		static void BracewellTransform2DCPU(std::vector<double>& image, size_t rows, size_t cols);
-
-		/**
-		 * FHT2D(double* image_ptr) returns the Hartley transform
-		 * of an 3D array using a fast Hartley transform algorithm. The 3D transform
-		 * is equivalent to computing the 1D transform along each dimension of image.
-		 */
-		static void FDHT3D(std::vector<double>& cube, const std::vector<std::vector<size_t>>& bit_reversed_indices);
+		void FDHT2D(double* image);
 
 		/**
 		* DHT1DCuda(double* h_x, double* h_A, const int length) returns the Hartley
 		* transform of an 1D array using a matrix x vector multiplication.
 		*/
-		static void DHT1DCuda(double* h_x, const dev_array<double>& d_A, size_t length);
+		void DHT1DCuda(double* h_x, double* h_A, const int length);
 
 		/**
 		* DHT2DCuda(double* image) returns the Hartley
 		* transform of an 1D array using a matrix x matrix multiplication.
 		*/
-		static void DHT2DCuda(double* h_X, const dev_array<double>& d_A, size_t cols);
+		void DHT2DCuda(double* image);
 
 		/**
 		 * RealFFT1D(double* vector) returns the Fourier transform
 		 * of an 1D array using a real Fourier transform algorithm.
 		 */
-		static void RealFFT1D(std::vector<double>& vector, const std::vector<size_t>& bit_reversed_indices);
-		static void RealFFT2D(std::vector<double>& image, const std::vector<std::vector<size_t>>& bit_reversed_indices);
+		void RealFFT1D(double* vector, const Directions direction = Directions::DIRECTION_X);
 
-		static std::vector<size_t> bitReverse(size_t length);
-		static void initializeKernelHost(std::vector<double>* kernel, const int cols);
+		void series1d(double* image, const Directions direction);
+		
+		static void bit_reverse(std::vector<size_t>* indices);
+		static void initialize_kernel_host(std::vector<double>* kernel, const int cols);
 		static std::vector<double> DHT1D(const std::vector<double>& a, const std::vector<double>& kernel);
 		template <typename T>
 		static void transpose(std::vector<std::vector<T>>* image);
-		static void transpose(std::vector<double>& matrix, int cols, int rows);
-		static void transposeSimple(double* image, int rows, int cols);
-		static std::vector<double> transpose3D(
-			const std::vector<double>& input,
-			size_t rows, size_t cols, size_t depth,
-			const std::array<size_t, 3>& old_indices,
-			const std::array<size_t, 3>& new_indices);
+		static void transpose_simple(double* image, int rows, int cols);
+		void BracewellTransform2DCPU(double* image_ptr);
 
-		Modes _mode = Modes::CPU;
-		std::vector<size_t> _bit_reversed_indices_x;
-		std::vector<size_t> _bit_reversed_indices_y;
-		std::vector<size_t> _bit_reversed_indices_z;
-		
-		// TODO do for a common case
-		dev_array<double> _d_hartley_matrix;
+		size_t* choose_reverced_indices(int* length, const Directions direction);
+
+		int rows_ = 0;
+		int cols_ = 0;
+		int depth_ = 0;
+		Modes mode_ = Modes::CPU;
+		std::vector<size_t> bit_reversed_indices_x_;
+		std::vector<size_t> bit_reversed_indices_y_;
+		std::vector<size_t> bit_reversed_indices_z_;
+		std::vector<double> h_Vandermonde_Matrix_x_;
+		dev_array<double> d_Vandermonde_Matrix_x_;
 	};
 }
 

@@ -2,50 +2,62 @@
 #include <rapidht.h>
 #include <utilities.h>
 #include <cmath>
-#include <numeric>
 #include <cstring>
+#include <numeric>
 
 int main(int argc, char** argv) {
+	// Define global 3D array sizes
+	int rows = static_cast<int>(pow(2, 13));
+	int cols = rows;
+	RapiDHT::Modes mode = RapiDHT::GPU;
 
-	size_t cols = static_cast<size_t>(pow(2, 13));
-	size_t rows = static_cast<size_t>(pow(2, 13));
-	RapiDHT::Modes mode = RapiDHT::CPU;
+	// If arguments are parced then exactly two arguments are required
+	if (argc >= 2) {
+		if (argc >= 3) {
+			rows = std::atoi(argv[1]);
+			cols = std::atoi(argv[2]);
+			if (argc >= 4) {
+				auto device = argv[3];
+				if (!strcmp(device, "CPU")) {
+					mode = RapiDHT::CPU;
+				} else if (!strcmp(device, "GPU")) {
+					mode = RapiDHT::GPU;
+				} else if (!strcmp(device, "RFFT")) {
+					mode = RapiDHT::RFFT;
+				} else {
+					std::cerr << "Error: device must be either CPU, GPU or RFFT" << std::endl;
+					return 1;
+				}
+			}
+		} else {
+			std::cerr << "Usage: " << argv[0] << " rows cols" << std::endl;
+			return 1;
+		}
+	}
 
-	// Обрабатываем аргументы командной строки, если они есть
-	auto args_map = parseCommandLine(argc, argv);
-	cols = parseSize(args_map, "--cols").value_or(cols);
-	rows = parseSize(args_map, "--rows").value_or(rows);
-	mode = parseMode(args_map).value_or(mode);
-
-	// Выводим полученные значения
-	std::cout << "Cols: " << cols << std::endl;
-	std::cout << "Rows: " << rows << std::endl;
-	std::cout << "Mode: " << (mode == RapiDHT::CPU ? "CPU" :
-		mode == RapiDHT::GPU ? "GPU" : "RFFT") << std::endl << std::endl;
-
-	auto a2_1 = makeData<double>({ cols, rows });
+	auto a2_1 = make_data<double>({ rows, cols });
 	auto a2_2(a2_1);
 
 	double common_start, common_finish;
 	common_start = clock() / static_cast<double>(CLOCKS_PER_SEC);
 
-	//printData2D(a2_1.data(), rows, cols);
+	auto ptr = a2_1.data();
 
-	RapiDHT::HartleyTransform ht(cols, rows, 0, mode);
-	ht.ForwardTransform(a2_1);
-	ht.InverseTransform(a2_1);
+	//print_data_2d(ptr, rows, cols);
 
-	//printData2D(a2_1.data(), rows, cols);
+	RapiDHT::HartleyTransform ht(rows, cols, 0, mode);
+	ht.ForwardTransform(ptr);
+	ht.InverseTransform(ptr);
+
+	//print_data_2d(ptr, rows, cols);
 
 	common_finish = clock() / static_cast<double>(CLOCKS_PER_SEC);
-	showTime(common_start, common_finish, "Common time");
+	show_time(common_start, common_finish, "Common time");
 
-	// Считаем ошибку
-	double sum = std::transform_reduce(
-		a2_1.begin(), a2_1.end(), a2_2.begin(), 0.0,
-		std::plus<>(),
-		[](double x, double y) { return std::abs(x - y); }
+	double sum_sqr = std::transform_reduce(
+		a2_1.begin(), a2_1.end(), a2_2.begin(), 0.0, std::plus<>(),
+		[](double x, double y) { return (x - y) * (x - y); }
 	);
-	std::cout << "Error:\t" << sum << std::endl;
+	std::cout << "Error:\t" << std::sqrt(sum_sqr) << std::endl;
 	return 0;
 }
