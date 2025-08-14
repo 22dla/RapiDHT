@@ -1,8 +1,6 @@
 #ifndef FHT_H
 #define FHT_H
 
-//#define _USE_MATH_DEFINES
-
 #include <vector>
 #include <array>
 #include <dev_array.h>
