@@ -2,9 +2,9 @@ name: CI
 
 on:
   push:
-    branches: [main]
+    branches: [master]
   pull_request:
-    branches: [main]
+    branches: [master]
 
 jobs:
   build-and-test:
@@ -31,7 +31,4 @@ jobs:
     - name: Run tests
       run: |
         cd build/Release
-        # Запуск всех тестов
-        YourTestExecutable.exe
-        # Или только “большие” тесты
-        YourTestExecutable.exe --gtest_filter=*Large*
+        test_smoke.exe --gtest_color=yes
