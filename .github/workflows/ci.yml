@@ -1,0 +1,37 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  build-and-test:
+    runs-on: windows-latest
+
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v3
+
+    - name: Setup MSBuild
+      uses: microsoft/setup-msbuild@v1
+
+    - name: Setup Visual Studio environment
+      uses: microsoft/setup-msbuild@v1
+      with:
+        vs-version: '17.0' # VS 2022
+
+    - name: Restore CMake project
+      run: cmake -S . -B build -G "Visual Studio 17 2022"
+
+    - name: Build
+      run: cmake --build build --config Release
+
+    - name: Run tests
+      run: |
+        cd build/Release
+        # Запуск всех тестов
+        YourTestExecutable.exe
+        # Или только “большие” тесты
+        YourTestExecutable.exe --gtest_filter=*Large*

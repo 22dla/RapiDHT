@@ -9,7 +9,7 @@
 int main(int argc, char** argv)
 {
     // ---- Размеры массива ----
-    size_t width = static_cast<size_t>(pow(2, 10));
+    size_t width = static_cast<size_t>(pow(2, 12));
     size_t height = width;
     auto mode = RapiDHT::Modes::GPU;
 

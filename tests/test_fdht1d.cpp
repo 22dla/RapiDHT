@@ -6,7 +6,7 @@
 #include <cstring>
 
 int main(int argc, char** argv) {
-	size_t width = static_cast<size_t>(pow(2, 14));
+	size_t width = static_cast<size_t>(pow(2, 3));
 	auto mode = RapiDHT::Modes::GPU;
 
 	// If arguments is parced then exactly one argument is required
@@ -37,7 +37,7 @@ int main(int argc, char** argv) {
 	auto original_data = make_data<double>({ width });
 	auto transformed_data = original_data;
 
-	//print_data_1d(original_data.data(), width);
+	print_data_1d(original_data.data(), width);
 
 	// ---- Засекаем время ----
 	auto start_time = std::chrono::high_resolution_clock::now();
@@ -47,7 +47,7 @@ int main(int argc, char** argv) {
 	ht.ForwardTransform(transformed_data.data());
 	ht.InverseTransform(transformed_data.data());
 
-	//print_data_1d(transformed_data.data(), width);
+	print_data_1d(transformed_data.data(), width);
 
 	auto end_time = std::chrono::high_resolution_clock::now();
 	std::chrono::duration<double> elapsed = end_time - start_time;
