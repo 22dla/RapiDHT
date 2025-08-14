@@ -1,63 +1,74 @@
-#include <iostream>
 #include <rapidht.h>
 #include <utilities.h>
+#include <iostream>
 #include <cmath>
-#include <cstring>
 #include <numeric>
+#include <cstring>
+#include <chrono>
 
-int main(int argc, char** argv) {
-	// Define global 3D array sizes
-	int rows = static_cast<int>(pow(2, 13));
-	int cols = rows;
-	RapiDHT::Modes mode = RapiDHT::GPU;
+int main(int argc, char** argv)
+{
+    // ---- Размеры массива ----
+    size_t rows = static_cast<size_t>(pow(2, 10));
+    size_t cols = rows;
+    RapiDHT::Modes mode = RapiDHT::GPU;
 
-	// If arguments are parced then exactly two arguments are required
-	if (argc >= 2) {
-		if (argc >= 3) {
-			rows = std::atoi(argv[1]);
-			cols = std::atoi(argv[2]);
-			if (argc >= 4) {
-				auto device = argv[3];
-				if (!strcmp(device, "CPU")) {
-					mode = RapiDHT::CPU;
-				} else if (!strcmp(device, "GPU")) {
-					mode = RapiDHT::GPU;
-				} else if (!strcmp(device, "RFFT")) {
-					mode = RapiDHT::RFFT;
-				} else {
-					std::cerr << "Error: device must be either CPU, GPU or RFFT" << std::endl;
-					return 1;
-				}
-			}
-		} else {
-			std::cerr << "Usage: " << argv[0] << " rows cols" << std::endl;
-			return 1;
-		}
-	}
+    // ---- Обработка аргументов ----
+    if (argc >= 3) {
+        rows = std::atoi(argv[1]);
+        cols = std::atoi(argv[2]);
 
-	auto a2_1 = make_data<double>({ rows, cols });
-	auto a2_2(a2_1);
+        if (argc >= 4) {
+            const char* device = argv[3];
+            if (!strcmp(device, "CPU")) {
+                mode = RapiDHT::CPU;
+            }
+            else if (!strcmp(device, "GPU")) {
+                mode = RapiDHT::GPU;
+            }
+            else if (!strcmp(device, "RFFT")) {
+                mode = RapiDHT::RFFT;
+            }
+            else {
+                std::cerr << "Error: device must be either CPU, GPU or RFFT" << std::endl;
+                return 1;
+            }
+        }
+        if (argc >= 5) {
+            std::cerr << "Usage: " << argv[0] << " rows cols [device]" << std::endl;
+            return 1;
+        }
+    }
+    else if (argc == 2) {
+        std::cerr << "Usage: " << argv[0] << " rows cols [device]" << std::endl;
+        return 1;
+    }
 
-	double common_start, common_finish;
-	common_start = clock() / static_cast<double>(CLOCKS_PER_SEC);
+    // ---- Создание данных ----
+    auto original_data = make_data<double>({ rows, cols });
+    auto transformed_data = original_data;
+    //print_data_2d(original_data.data(), rows, cols);
 
-	auto ptr = a2_1.data();
+    // ---- Засекаем время ----
+    auto start_time = std::chrono::high_resolution_clock::now();
 
-	//print_data_2d(ptr, rows, cols);
+    // ---- Преобразование Хартли ----
+    RapiDHT::HartleyTransform ht(rows, cols, 0, mode);
+    ht.ForwardTransform(transformed_data.data());
+    ht.InverseTransform(transformed_data.data());
 
-	RapiDHT::HartleyTransform ht(rows, cols, 0, mode);
-	ht.ForwardTransform(ptr);
-	ht.InverseTransform(ptr);
+    auto end_time = std::chrono::high_resolution_clock::now();
+    std::chrono::duration<double> elapsed = end_time - start_time;
+    show_time(0, elapsed.count(), "Common time");
 
-	//print_data_2d(ptr, rows, cols);
+    //print_data_2d(transformed_data.data(), rows, cols);
+    // ---- Подсчёт ошибки ----
+    double sum_sqr = std::transform_reduce(
+        transformed_data.begin(), transformed_data.end(),
+        original_data.begin(), 0.0, std::plus<>(),
+        [](double x, double y) { return (x - y) * (x - y); }
+    );
 
-	common_finish = clock() / static_cast<double>(CLOCKS_PER_SEC);
-	show_time(common_start, common_finish, "Common time");
-
-	double sum_sqr = std::transform_reduce(
-		a2_1.begin(), a2_1.end(), a2_2.begin(), 0.0, std::plus<>(),
-		[](double x, double y) { return (x - y) * (x - y); }
-	);
-	std::cout << "Error:\t" << std::sqrt(sum_sqr) << std::endl;
-	return 0;
+    std::cout << "Error:\t" << std::sqrt(sum_sqr) << std::endl;
+    return 0;
 }
