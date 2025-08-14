@@ -94,15 +94,15 @@ void print_data_1d(const T* data, int length)
  *
  * @tparam T Тип данных массива.
  * @param data Указатель на данные массива.
- * @param rows Количество строк.
- * @param cols Количество столбцов.
+ * @param width Количество строк.
+ * @param height Количество столбцов.
  */
 template<typename T>
-void print_data_2d(const T* data, int rows, int cols)
+void print_data_2d(const T* data, int width, int height)
 {
-	for (int i = 0; i < rows; ++i) {
-		for (int j = 0; j < cols; ++j) {
-			std::cout << std::fixed << std::setprecision(2) << data[i * cols + j] << " ";
+	for (int i = 0; i < width; ++i) {
+		for (int j = 0; j < height; ++j) {
+			std::cout << std::fixed << std::setprecision(2) << data[i * height + j] << " ";
 		}
 		std::cout << "\n";
 	}
@@ -114,24 +114,24 @@ void print_data_2d(const T* data, int rows, int cols)
  *
  * @tparam T Тип данных матрицы.
  * @param matrix Указатель на данные матрицы.
- * @param rows Количество строк.
- * @param cols Количество столбцов.
+ * @param width Количество строк.
+ * @param height Количество столбцов.
  * @param file_path Путь к CSV файлу для записи.
  * @throws std::runtime_error если файл не удалось открыть для записи.
  */
 template<typename T>
-void write_matrix_to_csv(const T* matrix, const size_t rows,
-	const size_t cols, const std::string& file_path)
+void write_matrix_to_csv(const T* matrix, const size_t width,
+	const size_t height, const std::string& file_path)
 {
 	std::ofstream output_file(file_path);
 	if (!output_file) {
 		throw std::runtime_error("Failed to open file for writing");
 	}
 
-	for (size_t i = 0; i < rows; ++i) {
-		for (size_t j = 0; j < cols; ++j) {
-			output_file << matrix[i * cols + j];
-			if (j < cols - 1) output_file << ";";
+	for (size_t i = 0; i < width; ++i) {
+		for (size_t j = 0; j < height; ++j) {
+			output_file << matrix[i * height + j];
+			if (j < height - 1) output_file << ";";
 		}
 		output_file << "\n";
 	}

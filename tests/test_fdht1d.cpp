@@ -6,22 +6,22 @@
 #include <cstring>
 
 int main(int argc, char** argv) {
-	size_t rows = static_cast<size_t>(pow(2, 14));
-	RapiDHT::Modes mode = RapiDHT::GPU;
+	size_t width = static_cast<size_t>(pow(2, 14));
+	auto mode = RapiDHT::Modes::GPU;
 
 	// If arguments is parced then exactly one argument is required
 	if (argc >= 2) {
-		rows = std::atoi(argv[1]);
+		width = std::atoi(argv[1]);
 
 		if (argc >= 3) {
 			auto device = argv[2];
 
 			if (!strcmp(device, "CPU")) {
-				mode = RapiDHT::CPU;
+				mode = RapiDHT::Modes::CPU;
 			} else if (!strcmp(device, "GPU")) {
-				mode = RapiDHT::GPU;
+				mode = RapiDHT::Modes::GPU;
 			} else if (!strcmp(device, "RFFT")) {
-				mode = RapiDHT::RFFT;
+				mode = RapiDHT::Modes::RFFT;
 			} else {
 				std::cerr << "Error: device must be either CPU, GPU or RFFT" << std::endl;
 				return 1;
@@ -34,20 +34,20 @@ int main(int argc, char** argv) {
 	}
 
 	// ---- Создание данных ----
-	auto original_data = make_data<double>({ rows });
+	auto original_data = make_data<double>({ width });
 	auto transformed_data = original_data;
 
-	//print_data_1d(original_data.data(), rows);
+	//print_data_1d(original_data.data(), width);
 
 	// ---- Засекаем время ----
 	auto start_time = std::chrono::high_resolution_clock::now();
 
 	// ---- Преобразование Хартли ----
-	RapiDHT::HartleyTransform ht(rows, 0, 0, mode);
+	RapiDHT::HartleyTransform ht(width, 0, 0, mode);
 	ht.ForwardTransform(transformed_data.data());
 	ht.InverseTransform(transformed_data.data());
 
-	//print_data_1d(transformed_data.data(), rows);
+	//print_data_1d(transformed_data.data(), width);
 
 	auto end_time = std::chrono::high_resolution_clock::now();
 	std::chrono::duration<double> elapsed = end_time - start_time;

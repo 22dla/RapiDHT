@@ -9,25 +9,25 @@
 int main(int argc, char** argv)
 {
     // ---- Размеры массива ----
-    size_t rows = static_cast<size_t>(pow(2, 10));
-    size_t cols = rows;
-    RapiDHT::Modes mode = RapiDHT::GPU;
+    size_t width = static_cast<size_t>(pow(2, 10));
+    size_t height = width;
+    auto mode = RapiDHT::Modes::GPU;
 
     // ---- Обработка аргументов ----
     if (argc >= 3) {
-        rows = std::atoi(argv[1]);
-        cols = std::atoi(argv[2]);
+        width = std::atoi(argv[1]);
+        height = std::atoi(argv[2]);
 
         if (argc >= 4) {
             const char* device = argv[3];
             if (!strcmp(device, "CPU")) {
-                mode = RapiDHT::CPU;
+                mode = RapiDHT::Modes::CPU;
             }
             else if (!strcmp(device, "GPU")) {
-                mode = RapiDHT::GPU;
+                mode = RapiDHT::Modes::GPU;
             }
             else if (!strcmp(device, "RFFT")) {
-                mode = RapiDHT::RFFT;
+                mode = RapiDHT::Modes::RFFT;
             }
             else {
                 std::cerr << "Error: device must be either CPU, GPU or RFFT" << std::endl;
@@ -45,15 +45,15 @@ int main(int argc, char** argv)
     }
 
     // ---- Создание данных ----
-    auto original_data = make_data<double>({ rows, cols });
+    auto original_data = make_data<double>({ width, height });
     auto transformed_data = original_data;
-    //print_data_2d(original_data.data(), rows, cols);
+    //print_data_2d(original_data.data(), width, height);
 
     // ---- Засекаем время ----
     auto start_time = std::chrono::high_resolution_clock::now();
 
     // ---- Преобразование Хартли ----
-    RapiDHT::HartleyTransform ht(rows, cols, 0, mode);
+    RapiDHT::HartleyTransform ht(width, height, 0, mode);
     ht.ForwardTransform(transformed_data.data());
     ht.InverseTransform(transformed_data.data());
 
@@ -61,7 +61,7 @@ int main(int argc, char** argv)
     std::chrono::duration<double> elapsed = end_time - start_time;
     show_time(0, elapsed.count(), "Common time");
 
-    //print_data_2d(transformed_data.data(), rows, cols);
+    //print_data_2d(transformed_data.data(), width, height);
     // ---- Подсчёт ошибки ----
     double sum_sqr = std::transform_reduce(
         transformed_data.begin(), transformed_data.end(),
