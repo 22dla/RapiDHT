@@ -44,17 +44,17 @@ void HartleyTransform::ForwardTransform(double* data) {
 void HartleyTransform::InverseTransform(double* data) {
 	ForwardTransform(data);
 
-	double denominator = 0;
-	if (height() == 0 && depth() == 0) {	// 1D
-		denominator = 1.0f / width();
-	} else if (depth() == 0) {			// 2D
-		denominator = 1.0f / (width() * height());
-	} else {							// 3D
-		denominator = 1.0f / (width() * height() * depth());
+	size_t totalSize = width();
+	if (height() > 0) {
+		totalSize *= height();
+	}
+	if (depth() > 0) {
+		totalSize *= depth();
 	}
 
-	size_t size = (depth() > 0) ? width() * height() * depth() : ((height() > 0) ? width() * height() : width());
-	for (int i = 0; i < size; ++i) {
+	auto denominator = 1.0 / static_cast<double>(totalSize);
+
+	for (size_t i = 0; i < totalSize; ++i) {
 		data[i] *= denominator;
 	}
 }
@@ -96,7 +96,7 @@ void HartleyTransform::bit_reverse(std::vector<size_t>* indices_ptr) {
 	}
 }
 
-void HartleyTransform::initialize_kernel_host(std::vector<double>* kernel, const int height) {
+void HartleyTransform::initialize_kernel_host(std::vector<double>* kernel, size_t height) {
 	if (kernel == nullptr) {
 		throw std::invalid_argument("Error: kernell==nullptr (initialize_kernel_host)");
 	}
@@ -171,7 +171,7 @@ void HartleyTransform::transpose_simple(double* matrix, size_t width, size_t hei
 	}
 }
 
-void HartleyTransform::series1d(double* image_ptr, const Direction& direction) {
+void HartleyTransform::series1d(double* image_ptr, Direction direction) {
 	PROFILE_FUNCTION();
 
 	if (image_ptr == nullptr) {
@@ -292,7 +292,7 @@ void HartleyTransform::FDHT2D(double* image_ptr) {
 }
 
 // test functions
-void HartleyTransform::RealFFT1D(double* vec, const Direction& direction) {
+void HartleyTransform::RealFFT1D(double* vec, Direction direction) {
 	if (vec == nullptr) {
 		std::cout << "The pointer to vector is null." << std::endl;
 		throw std::invalid_argument("The pointer to vector is null.");
@@ -358,7 +358,7 @@ void HartleyTransform::RealFFT1D(double* vec, const Direction& direction) {
 	}
 }
 
-void HartleyTransform::DHT1DCuda(double* h_x, double* h_A, const int length) {
+void HartleyTransform::DHT1DCuda(double* h_x, double* h_A, size_t length) {
 	// Allocate memory on the device
 	dev_array<double> d_A(length * length);	// matrix for one line
 	dev_array<double> d_x(length);			// input vector
