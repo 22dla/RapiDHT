@@ -11,71 +11,145 @@ enum class Modes { CPU, GPU, RFFT };
 
 class HartleyTransform {
 public:
-	HartleyTransform() = delete;
+    HartleyTransform() = delete;
 
-	HartleyTransform(size_t width, size_t height, size_t depth, Modes mode);
-	void ForwardTransform(double* data);
-	void InverseTransform(double* data);
+    /**
+     * @brief Constructs a HartleyTransform object with specified dimensions and mode.
+     * @param width Width of the 3D data.
+     * @param height Height of the 3D data.
+     * @param depth Depth of the 3D data.
+     * @param mode Transformation mode (CPU, GPU, RFFT).
+     */
+    HartleyTransform(size_t width, size_t height, size_t depth, Modes mode);
 
-	constexpr size_t width() const noexcept { return _dims[static_cast<size_t>(Direction::X)]; }
-	constexpr size_t height() const noexcept { return _dims[static_cast<size_t>(Direction::Y)]; }
-	constexpr size_t depth() const noexcept { return _dims[static_cast<size_t>(Direction::Z)]; }
-	constexpr size_t length(Direction direction) const noexcept { return _dims[static_cast<size_t>(direction)]; }
-	inline size_t bit_reversed_index(Direction direction, size_t index) const noexcept {
-		return _bit_reversed_indices[static_cast<size_t>(direction)][index];
-	}
+    /**
+     * @brief Performs the forward Hartley transform on the input data.
+     * @param data Pointer to the input/output data array.
+     */
+    void ForwardTransform(double* data);
 
+    /**
+     * @brief Performs the inverse Hartley transform on the input data.
+     * @param data Pointer to the input/output data array.
+     */
+    void InverseTransform(double* data);
+
+    constexpr size_t Width() const noexcept { return _dims[static_cast<size_t>(Direction::X)]; }
+    constexpr size_t Height() const noexcept { return _dims[static_cast<size_t>(Direction::Y)]; }
+    constexpr size_t Depth() const noexcept { return _dims[static_cast<size_t>(Direction::Z)]; }
+
+    /**
+     * @brief Returns the length of the specified direction.
+     * @param direction Direction (X, Y, Z) to query.
+     * @return Length along the specified direction.
+     */
+    constexpr size_t Length(Direction direction) const noexcept { return _dims[static_cast<size_t>(direction)]; }
+
+    /**
+     * @brief Returns the bit-reversed index for the given index and direction.
+     * @param direction Direction (X, Y, Z) for the index.
+     * @param index Original index.
+     * @return Bit-reversed index.
+     */
+    inline size_t BitReversedIndex(Direction direction, size_t index) const noexcept {
+        return _bitReversedIndices[static_cast<size_t>(direction)][index];
+    }
 
 private:
-	/* ------------------------- ND Transforms ------------------------- */
-	/**
-	 * FDHT1D(double* vector) returns the Hartley transform
-	 * of an 1D array using a fast Hartley transform algorithm.
-	 */
-	void FDHT1D(double* vector, const Direction& direction = Direction::X);
+    /* ------------------------- ND Transforms ------------------------- */
 
-	/**
-	 * FHT2D(double* image_ptr) returns the Hartley transform
-	 * of an 2D array using a fast Hartley transform algorithm. The 2D transform
-	 * is equivalent to computing the 1D transform along each dimension of image.
-	 */
-	void FDHT2D(double* image);
+    /**
+     * @brief Performs a 1D Fast Hartley Transform on the given vector along the specified direction.
+     * @param vector Pointer to the input/output data array.
+     * @param direction Direction along which to perform the transform.
+     */
+    void FDHT1D(double* vector, const Direction& direction = Direction::X);
 
-	/**
-	* DHT1DCuda(double* h_x, double* h_A, const int length) returns the Hartley
-	* transform of an 1D array using a matrix x vector multiplication.
-	*/
-	void DHT1DCuda(double* h_x, double* h_A, size_t length);
+    /**
+     * @brief Performs a 2D Fast Hartley Transform on the given image.
+     * @param image Pointer to the input/output 2D data array.
+     */
+    void FDHT2D(double* image);
 
-	/**
-	* DHT2DCuda(double* image) returns the Hartley
-	* transform of an 1D array using a matrix x matrix multiplication.
-	*/
-	void DHT2DCuda(double* image);
+    /**
+     * @brief Performs a 1D Hartley Transform using CUDA matrix-vector multiplication.
+     * @param hX Pointer to the input data vector.
+     * @param hA Pointer to the transformation matrix.
+     * @param length Length of the vector.
+     */
+    void DHT1DCuda(double* hX, double* hA, size_t length);
 
-	/**
-	 * RealFFT1D(double* vector) returns the Fourier transform
-	 * of an 1D array using a real Fourier transform algorithm.
-	 */
-	void RealFFT1D(double* vector, Direction direction = Direction::X);
+    /**
+     * @brief Performs a 2D Hartley Transform using CUDA matrix-matrix multiplication.
+     * @param image Pointer to the input/output 2D data array.
+     */
+    void DHT2DCuda(double* image);
 
-	void series1d(double* image, Direction direction);
+    /**
+     * @brief Performs a 1D Real Fourier Transform along the specified direction.
+     * @param vector Pointer to the input/output data array.
+     * @param direction Direction along which to perform the transform.
+     */
+    void RealFFT1D(double* vector, Direction direction = Direction::X);
 
-	static void bit_reverse(std::vector<size_t>* indices);
-	static void initialize_kernel_host(std::vector<double>* kernel, size_t height);
-	static std::vector<double> DHT1D(const std::vector<double>& a, const std::vector<double>& kernel);
-	template <typename T>
-	static void transpose(std::vector<std::vector<T>>* image);
-	static void transpose_simple(double* image, size_t width, size_t height);
-	void BracewellTransform2DCPU(double* image_ptr);
+    /**
+     * @brief Performs a series of 1D transforms along the given direction.
+     * @param image Pointer to the input/output data array.
+     * @param direction Direction along which to perform the series of transforms.
+     */
+    void Series1D(double* image, Direction direction);
 
-	std::array<size_t, static_cast<size_t>(Direction::Count)> _dims{};
-	std::array<std::vector<size_t>, static_cast<size_t>(Direction::Count)> _bit_reversed_indices;
+    /**
+     * @brief Computes bit-reversed indices for FFT.
+     * @param indices Pointer to the vector of indices to fill.
+     */
+    static void BitReverse(std::vector<size_t>* indices);
 
-	Modes _mode = Modes::CPU;
+    /**
+     * @brief Initializes the kernel used for 1D Hartley transform.
+     * @param kernel Pointer to the kernel vector to initialize.
+     * @param height Height of the 1D transform.
+     */
+    static void InitializeKernelHost(std::vector<double>* kernel, size_t height);
 
-	std::vector<double> _h_transform_matrix_x;
-	dev_array<double> _d_transform_matrix_x;
+    /**
+     * @brief Computes the 1D Hartley transform using a given kernel.
+     * @param a Input vector.
+     * @param kernel Precomputed kernel vector.
+     * @return Transformed 1D vector.
+     */
+    static std::vector<double> DHT1D(const std::vector<double>& a, const std::vector<double>& kernel);
+
+    /**
+     * @brief Transposes a 2D vector.
+     * @tparam T Type of elements in the vector.
+     * @param image Pointer to the 2D vector to transpose.
+     */
+    template <typename T>
+    static void Transpose(std::vector<std::vector<T>>* image);
+
+    /**
+     * @brief Performs a simple transpose of a 2D array in place.
+     * @param image Pointer to the 2D array.
+     * @param width Width of the array.
+     * @param height Height of the array.
+     */
+    static void TransposeSimple(double* image, size_t width, size_t height);
+
+    /**
+     * @brief Performs the 2D Hartley Transform on the CPU using Bracewell's algorithm.
+     * @param imagePtr Pointer to the input/output 2D data array.
+     */
+    void BracewellTransform2DCPU(double* imagePtr);
+
+    std::array<size_t, static_cast<size_t>(Direction::Count)> _dims{};
+    std::array<std::vector<size_t>, static_cast<size_t>(Direction::Count)> _bitReversedIndices
+        ;
+
+    Modes _mode = Modes::CPU;
+
+    std::vector<double> _hTransformMatrixX;
+    dev_array<double> _dTransformMatrixX;
 };
 }
 
