@@ -20,7 +20,7 @@ void HartleyTransform::ForwardTransform(double* data)
 		break;
 	case Modes::GPU:
 		if (height() == 0 && depth() == 0) {
-			DHT1DCuda(data, _h_transorm_matrix_x.data(), width());
+			DHT1DCuda(data, _h_transform_matrix_x.data(), width());
 		}
 		else if (depth() == 0) {
 			DHT2DCuda(data);
