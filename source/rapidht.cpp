@@ -4,29 +4,33 @@
 #include <complex>
 #include <kernel.h>
 
-using namespace RapiDHT;
+namespace RapiDHT {
 
-void HartleyTransform::ForwardTransform(double* data) {
+void HartleyTransform::ForwardTransform(double* data)
+{
 
 	switch (mode_) {
 	case RapiDHT::CPU:
 		if (cols_ == 0 && depth_ == 0) {
 			FDHT1D(data);
-		} else if (depth_ == 0) {
+		}
+		else if (depth_ == 0) {
 			FDHT2D(data);
 		}
 		break;
 	case RapiDHT::GPU:
 		if (cols_ == 0 && depth_ == 0) {
 			DHT1DCuda(data, h_Vandermonde_Matrix_x_.data(), rows_);
-		} else if (depth_ == 0) {
+		}
+		else if (depth_ == 0) {
 			DHT2DCuda(data);
 		}
 		break;
 	case RapiDHT::RFFT:
 		if (cols_ == 0 && depth_ == 0) {
 			RealFFT1D(data);
-		} else if (depth_ == 0) {
+		}
+		else if (depth_ == 0) {
 			FDHT2D(data);
 		}
 		break;
@@ -35,15 +39,18 @@ void HartleyTransform::ForwardTransform(double* data) {
 	}
 }
 
-void HartleyTransform::InverseTransform(double* data) {
+void HartleyTransform::InverseTransform(double* data)
+{
 	this->ForwardTransform(data);
 
 	double denominator = 0;
 	if (cols_ == 0 && depth_ == 0) {	// 1D
 		denominator = 1.0f / rows_;
-	} else if (depth_ == 0) {			// 2D
+	}
+	else if (depth_ == 0) {			// 2D
 		denominator = 1.0f / (rows_ * cols_);
-	} else {							// 3D
+	}
+	else {							// 3D
 		denominator = 1.0f / (rows_ * cols_ * depth_);
 	}
 
@@ -53,7 +60,8 @@ void HartleyTransform::InverseTransform(double* data) {
 	}
 }
 
-void HartleyTransform::bit_reverse(std::vector<size_t>* indices_ptr) {
+void HartleyTransform::bit_reverse(std::vector<size_t>* indices_ptr)
+{
 	std::vector<size_t>& indices = *indices_ptr;
 	if (indices.size() == 0) {
 		return;
@@ -77,7 +85,7 @@ void HartleyTransform::bit_reverse(std::vector<size_t>* indices_ptr) {
 		for (size_t i = count; i < kLog2n; ++i) {
 			binary_num[i] = false;
 		}
-			
+
 		int dec_value = 0;
 		base = 1;
 		for (int i = kLog2n - 1; i >= 0; --i) {
@@ -90,7 +98,8 @@ void HartleyTransform::bit_reverse(std::vector<size_t>* indices_ptr) {
 	}
 }
 
-void HartleyTransform::initialize_kernel_host(std::vector<double>* kernel, const int cols) {
+void HartleyTransform::initialize_kernel_host(std::vector<double>* kernel, const int cols)
+{
 	if (kernel == nullptr) {
 		throw std::invalid_argument("Error: kernell==nullptr (initialize_kernel_host)");
 	}
@@ -108,7 +117,8 @@ void HartleyTransform::initialize_kernel_host(std::vector<double>* kernel, const
 
 // test function
 std::vector<double> HartleyTransform::DHT1D(
-	const std::vector<double>& a, const std::vector<double>& kernel) {
+	const std::vector<double>& a, const std::vector<double>& kernel)
+{
 	std::vector<double> result(a.size());
 
 	for (size_t i = 0; i < a.size(); i++)
@@ -120,7 +130,8 @@ std::vector<double> HartleyTransform::DHT1D(
 }
 
 template <typename T>
-void HartleyTransform::transpose(std::vector<std::vector<T>>* matrix_ptr) {
+void HartleyTransform::transpose(std::vector<std::vector<T>>* matrix_ptr)
+{
 	std::vector<std::vector<T>>& matrix = *matrix_ptr;
 
 	const size_t rows = matrix.size();
@@ -135,7 +146,8 @@ void HartleyTransform::transpose(std::vector<std::vector<T>>* matrix_ptr) {
 	}
 }
 
-void HartleyTransform::transpose_simple(double* matrix, const int rows, const int cols) {
+void HartleyTransform::transpose_simple(double* matrix, const int rows, const int cols)
+{
 	if (matrix == nullptr) {
 		throw std::invalid_argument("The pointer to matrix is null.");
 	}
@@ -149,7 +161,8 @@ void HartleyTransform::transpose_simple(double* matrix, const int rows, const in
 				std::swap(matrix[i * cols + j], matrix[j * cols + i]);
 			}
 		}
-	} else {
+	}
+	else {
 		// Non-square matrix
 		std::vector<double> transposed(rows * cols);
 	#pragma omp parallel for
@@ -165,7 +178,8 @@ void HartleyTransform::transpose_simple(double* matrix, const int rows, const in
 	}
 }
 
-void HartleyTransform::series1d(double* image_ptr, const Directions direction) {
+void HartleyTransform::series1d(double* image_ptr, const Directions direction)
+{
 	PROFILE_FUNCTION();
 
 	if (image_ptr == nullptr) {
@@ -186,7 +200,8 @@ void HartleyTransform::series1d(double* image_ptr, const Directions direction) {
 	}
 }
 
-void HartleyTransform::FDHT1D(double* vec, const Directions direction) {
+void HartleyTransform::FDHT1D(double* vec, const Directions direction)
+{
 	if (vec == nullptr) {
 		throw std::invalid_argument("The pointer to vector is null.");
 	}
@@ -243,7 +258,8 @@ void HartleyTransform::FDHT1D(double* vec, const Directions direction) {
 	}
 }
 
-void HartleyTransform::BracewellTransform2DCPU(double* image_ptr) {
+void HartleyTransform::BracewellTransform2DCPU(double* image_ptr)
+{
 	//PROFILE_FUNCTION();
 	std::vector<double> H(rows_ * cols_, 0.0);
 #pragma omp parallel for
@@ -261,7 +277,8 @@ void HartleyTransform::BracewellTransform2DCPU(double* image_ptr) {
 	std::copy(H.begin(), H.end(), image_ptr);
 }
 
-void HartleyTransform::FDHT2D(double* image_ptr) {
+void HartleyTransform::FDHT2D(double* image_ptr)
+{
 	if (image_ptr == nullptr) {
 		std::cout << "The pointer to image is null." << std::endl;
 		throw std::invalid_argument("The pointer to image is null.");
@@ -288,7 +305,8 @@ void HartleyTransform::FDHT2D(double* image_ptr) {
 	// write_matrix_to_csv(image_ptr, rows, cols, "matrix2.txt");
 }
 
-size_t* HartleyTransform::choose_reverced_indices(int* length, const Directions direction) {
+size_t* HartleyTransform::choose_reverced_indices(int* length, const Directions direction)
+{
 
 	size_t* bit_reversed_indices;
 	switch (direction) {
@@ -311,7 +329,8 @@ size_t* HartleyTransform::choose_reverced_indices(int* length, const Directions 
 }
 
 // test functions
-void HartleyTransform::RealFFT1D(double* vec, const Directions direction) {
+void HartleyTransform::RealFFT1D(double* vec, const Directions direction)
+{
 	if (vec == nullptr) {
 		std::cout << "The pointer to vector is null." << std::endl;
 		throw std::invalid_argument("The pointer to vector is null.");
@@ -378,7 +397,8 @@ void HartleyTransform::RealFFT1D(double* vec, const Directions direction) {
 	}
 }
 
-void HartleyTransform::DHT1DCuda(double* h_x, double* h_A, const int length) {
+void HartleyTransform::DHT1DCuda(double* h_x, double* h_A, const int length)
+{
 	// Allocate memory on the device
 	dev_array<double> d_A(length * length);	// matrix for one line
 	dev_array<double> d_x(length);			// input vector
@@ -396,7 +416,8 @@ void HartleyTransform::DHT1DCuda(double* h_x, double* h_A, const int length) {
 	cudaDeviceSynchronize();
 }
 
-void HartleyTransform::DHT2DCuda(double* h_X) {
+void HartleyTransform::DHT2DCuda(double* h_X)
+{
 	// Allocate memory on the device
 	dev_array<double> d_X(rows_ * cols_); // one slice
 	dev_array<double> d_Y(rows_ * cols_); // one slice
@@ -411,4 +432,6 @@ void HartleyTransform::DHT2DCuda(double* h_X) {
 	// transfer GPU -> CPU
 	d_X.get(&h_X[0], rows_ * cols_);
 	cudaDeviceSynchronize();
+}
+
 }
