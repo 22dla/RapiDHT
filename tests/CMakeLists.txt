@@ -18,7 +18,4 @@ foreach(TEST ${TESTS})
   add_executable(${TEST} "${TEST}.cpp")
   target_link_libraries(${TEST} PRIVATE coreht gtest_main)
   install(TARGETS ${TEST} DESTINATION bin)
-
-  include(GoogleTest)
-  gtest_discover_tests(${TEST})
 endforeach()
