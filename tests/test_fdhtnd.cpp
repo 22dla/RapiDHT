@@ -40,7 +40,7 @@ int main(int argc, char** argv) {
 
 	std::cout << "making data...";
 	auto making_start = std::chrono::high_resolution_clock::now();
-	auto a3 = makeData<double>({ rows, cols, images_num });
+	auto a3 = make_data<double>({ rows, cols, images_num });
 	auto making_finish = std::chrono::high_resolution_clock::now();
 	auto making_time = std::chrono::duration_cast<std::chrono::milliseconds>(making_finish - making_start);
 	std::cout << "time:\t" << making_time.count() / 1000.0 << std::endl;
@@ -51,7 +51,7 @@ int main(int argc, char** argv) {
 	for (int i = 0; i < images_num; ++i) {
 		//printData2D(ptr + i * cols * rows, rows, cols);
 		//ht.ForwardTransform(ptr + i * cols * rows);
-		ht.ForwardTransform(a3);
+		ht.ForwardTransform(a3.data());
 		//printData2D(ptr + i * cols * rows, rows, cols);
 	}
 	auto calculation_finish = std::chrono::high_resolution_clock::now();
