@@ -9,9 +9,9 @@
 namespace RapiDHT {
 enum Directions
 {
-	DIRECTION_X,
-	DIRECTION_Y,
-	DIRECTION_Z
+	X,
+	Y,
+	Z
 };
 enum Modes
 {
@@ -64,7 +64,7 @@ private:
 	 * FDHT1D(double* vector) returns the Hartley transform
 	 * of an 1D array using a fast Hartley transform algorithm.
 	 */
-	void FDHT1D(double* vector, const Directions direction = Directions::DIRECTION_X);
+	void FDHT1D(double* vector, const Directions direction = Directions::X);
 
 	/**
 	 * FHT2D(double* image_ptr) returns the Hartley transform
@@ -89,7 +89,7 @@ private:
 	 * RealFFT1D(double* vector) returns the Fourier transform
 	 * of an 1D array using a real Fourier transform algorithm.
 	 */
-	void RealFFT1D(double* vector, const Directions direction = Directions::DIRECTION_X);
+	void RealFFT1D(double* vector, const Directions direction = Directions::X);
 
 	void series1d(double* image, const Directions direction);
 

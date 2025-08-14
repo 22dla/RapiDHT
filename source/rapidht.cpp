@@ -291,12 +291,12 @@ void HartleyTransform::FDHT2D(double* image_ptr)
 	// write_matrix_to_csv(image_ptr, rows, cols, "matrix1.txt");
 
 	// 1D transforms along X dimension
-	this->series1d(image_ptr, DIRECTION_X);
+	this->series1d(image_ptr, X);
 
 	transpose_simple(image_ptr, rows_, cols_);
 
 	// 1D transforms along Y dimension
-	this->series1d(image_ptr, DIRECTION_Y);
+	this->series1d(image_ptr, Y);
 
 	transpose_simple(image_ptr, cols_, rows_);
 
@@ -310,15 +310,15 @@ size_t* HartleyTransform::choose_reverced_indices(int* length, const Directions 
 
 	size_t* bit_reversed_indices;
 	switch (direction) {
-	case DIRECTION_X:
+	case X:
 		*length = rows_;
 		bit_reversed_indices = bit_reversed_indices_x_.data();
 		break;
-	case DIRECTION_Y:
+	case Y:
 		*length = cols_;
 		bit_reversed_indices = bit_reversed_indices_y_.data();
 		break;
-	case DIRECTION_Z:
+	case Z:
 		*length = depth_;
 		bit_reversed_indices = bit_reversed_indices_z_.data();
 		break;
