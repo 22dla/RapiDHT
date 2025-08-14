@@ -1,9 +1,15 @@
 cmake_minimum_required(VERSION 3.18 FATAL_ERROR)
 
-# Name of project
-project(RapiDHT LANGUAGES CXX CUDA)
+# GPU using option
+option(RAPI_DHT_USE_GPU "Enable GPU support (requires CUDA)" ON)
 
-# setting support of C++17
+# Languages
+if(RAPI_DHT_USE_GPU)
+    project(RapiDHT LANGUAGES CXX CUDA)
+else()
+    project(RapiDHT LANGUAGES CXX)
+endif()
+
 set(CMAKE_CXX_STANDARD 17)
 
 # Set folder to installing
