@@ -39,14 +39,14 @@ public:
 		}
 		if (_mode == Modes::GPU) {
 			// Initialize Vandermonde matrice on the host
-			initialize_kernel_host(&_h_transorm_matrix_x, width);
+			initialize_kernel_host(&_h_transform_matrix_x, width);
 			//initializeKernelHost(h_A, width);
 			//initializeKernelHost(h_A, width);
 
 
 			// transfer CPU -> GPU
 			_d_transform_matrix_x.resize(_dims[0] * _dims[1]);
-			_d_transform_matrix_x.set(&_h_transorm_matrix_x[0], _dims[0] * _dims[1]);
+			_d_transform_matrix_x.set(&_h_transform_matrix_x[0], _dims[0] * _dims[1]);
 		}
 	}
 	void ForwardTransform(double* data);
@@ -110,7 +110,7 @@ private:
 
 	Modes _mode = Modes::CPU;
 
-	std::vector<double> _h_transorm_matrix_x;
+	std::vector<double> _h_transform_matrix_x;
 	dev_array<double> _d_transform_matrix_x;
 };
 }
