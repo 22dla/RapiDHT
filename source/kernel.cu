@@ -4,7 +4,9 @@
 
 // ------------------------------ Kernels ------------------------------
 
-__global__ void matrixMultiplicationKernel(const double* A, const double* B, double* C, int M, int K, int N) {
+namespace RapiDHT {
+
+__global__ void MatrixMultiplicationKernel(const double* A, const double* B, double* C, int M, int K, int N) {
 	int row = blockIdx.y * blockDim.y + threadIdx.y; // индекс строки C
 	int col = blockIdx.x * blockDim.x + threadIdx.x; // индекс столбца C
 
@@ -17,7 +19,7 @@ __global__ void matrixMultiplicationKernel(const double* A, const double* B, dou
 	}
 }
 
-__global__ void matrixVectorMultKernel(const double* A, const double* x, double* y, int N) {
+__global__ void MatrixVectorMultKernel(const double* A, const double* x, double* y, int N) {
 	int i = blockIdx.x * blockDim.x + threadIdx.x;
 	if (i < N) {
 		double sum = 0.0;
@@ -28,7 +30,7 @@ __global__ void matrixVectorMultKernel(const double* A, const double* x, double*
 	}
 }
 
-__global__ void matrixTransposeKernel(double* A, int N) {
+__global__ void MatrixTransposeKernel(double* A, int N) {
 	int i = blockIdx.x * blockDim.x + threadIdx.x;
 	int j = blockIdx.y * blockDim.y + threadIdx.y;
 
@@ -39,7 +41,7 @@ __global__ void matrixTransposeKernel(double* A, int N) {
 	}
 }
 
-__global__ void matrixTransposeKernel(const double* A, double* B, int rows, int cols) {
+__global__ void MatrixTransposeKernel(const double* A, double* B, int rows, int cols) {
 	int col = blockIdx.x * blockDim.x + threadIdx.x;
 	int row = blockIdx.y * blockDim.y + threadIdx.y;
 
@@ -50,38 +52,38 @@ __global__ void matrixTransposeKernel(const double* A, double* B, int rows, int 
 
 // ------------------------------ Host Wrappers ------------------------------
 
-void matrixMultiplication(const double* A, const double* B, double* C, int M, int K, int N) {
+void MatrixMultiplication(const double* A, const double* B, double* C, int M, int K, int N) {
 	const int BLOCK_SIZE = 16;
 	dim3 threadsPerBlock(BLOCK_SIZE, BLOCK_SIZE);
 	dim3 blocksPerGrid(
 		(N + BLOCK_SIZE - 1) / BLOCK_SIZE,
 		(M + BLOCK_SIZE - 1) / BLOCK_SIZE);
 
-	matrixMultiplicationKernel << <blocksPerGrid, threadsPerBlock >> > (A, B, C, M, K, N);
+	MatrixMultiplicationKernel << <blocksPerGrid, threadsPerBlock >> > (A, B, C, M, K, N);
 
 	cudaDeviceSynchronize();
 }
 
-void matrixMultiplication(const double* A, const double* B, double* C, int N) {
-	matrixMultiplication(A, B, C, N, N, N);
+void MatrixMultiplication(const double* A, const double* B, double* C, int N) {
+	MatrixMultiplication(A, B, C, N, N, N);
 }
 
-void vectorMatrixMultiplication(const double* A, const double* x, double* y, int N) {
+void VectorMatrixMultiplication(const double* A, const double* x, double* y, int N) {
 	int threadsPerBlock = (N > 512) ? 512 : N;
 	int blocksPerGrid = (N + threadsPerBlock - 1) / threadsPerBlock;
 
-	matrixVectorMultKernel << < blocksPerGrid, threadsPerBlock >> > (A, x, y, N);
+	MatrixVectorMultKernel << < blocksPerGrid, threadsPerBlock >> > (A, x, y, N);
 	cudaDeviceSynchronize();
 }
 
 // rows, cols - целевые (размеры матрицы B)
-void matrixTranspose(const double* A, double* B, int rows, int cols) {
+void MatrixTranspose(const double* A, double* B, int rows, int cols) {
 	int BLOCK_SIZE = 16;
 	dim3 threadsPerBlock(BLOCK_SIZE, BLOCK_SIZE);
 	dim3 blocksPerGrid((cols + BLOCK_SIZE - 1) / BLOCK_SIZE,
 		(rows + BLOCK_SIZE - 1) / BLOCK_SIZE);
 
-	matrixTransposeKernel << <blocksPerGrid, threadsPerBlock >> > (A, B, rows, cols);
+	MatrixTransposeKernel << <blocksPerGrid, threadsPerBlock >> > (A, B, rows, cols);
 	cudaDeviceSynchronize();
 }
 
@@ -91,6 +93,8 @@ void matrixTranspose(double* A, int N) {
 	dim3 blocksPerGrid((N + BLOCK_SIZE - 1) / BLOCK_SIZE,
 		(N + BLOCK_SIZE - 1) / BLOCK_SIZE);
 
-	matrixTransposeKernel << < blocksPerGrid, threadsPerBlock >> > (A, N);
+	MatrixTransposeKernel << < blocksPerGrid, threadsPerBlock >> > (A, N);
 	cudaDeviceSynchronize();
 }
+
+} // namespace RpiDHT

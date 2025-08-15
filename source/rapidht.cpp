@@ -3,6 +3,7 @@
 #include <utilities.h>
 #include <complex>
 #include <kernel.h>
+#include <cublas_v2.h>
 
 namespace RapiDHT {
 
@@ -385,7 +386,7 @@ void HartleyTransform::DHT1DCuda(double* h_x) {
 
 	// transfer CPU -> GPU
 	d_x.set(h_x, Width());
-	vectorMatrixMultiplication(_dTransformMatrices[static_cast<size_t>(Direction::X)].getData(),
+	VectorMatrixMultiplication(_dTransformMatrices[static_cast<size_t>(Direction::X)].getData(),
 		d_x.getData(), d_y.getData(), Width());
 	// transfer GPU -> CPU
 	d_y.get(h_x, Width());
@@ -398,16 +399,18 @@ void HartleyTransform::DHT2DCuda(double* h_X) {
 
 	// transfer CPU -> GPU
 	d_X.set(&h_X[0], Width() * Height());
-	matrixMultiplication(d_X.getData(), _dTransformMatrices[static_cast<size_t>(Direction::X)].getData(),
+	MatrixMultiplication(d_X.getData(), _dTransformMatrices[static_cast<size_t>(Direction::X)].getData(),
 		d_Y.getData(), Height(), Width(), Width());
 
-	matrixTranspose(d_Y.getData(), d_X.getData(), Height(), Width());
+	MatrixTranspose(d_Y.getData(), d_X.getData(), Height(), Width());
 
-	matrixMultiplication(d_X.getData(), 
+	MatrixMultiplication(d_X.getData(), 
 		_dTransformMatrices[static_cast<size_t>(Direction::Y)].getData(),
 		d_Y.getData(), Width(), Height(), Height());
 
-	matrixTranspose(d_Y.getData(), d_X.getData(), Width(), Height());
+	MatrixTranspose(d_Y.getData(), d_X.getData(), Width(), Height());
+
+	// Bracewell
 
 	// transfer GPU -> CPU
 	d_X.get(&h_X[0], Width() * Height());

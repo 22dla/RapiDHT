@@ -3,13 +3,18 @@
 
 #include <stdint.h>
 
+namespace RapiDHT {
+
 // Квадратные
-void matrixMultiplication(const double* A, const double* B, double* C, int N);
-void matrixTranspose(double* A, int N);
-// Любые
-void matrixMultiplication(const double* A, const double* B, double* C, int M, int K, int N);
-void matrixTranspose(const double* A, double* B, int rows, int cols);
-void vectorMatrixMultiplication(const double* A, const double* B, double* C, int N);
+void MatrixMultiplication(const double* A, const double* B, double* C, int N);
+void MatrixTranspose(double* A, int N);
 void BracewellTransform2D(double* A, int N);
+
+// Любые
+void MatrixMultiplication(const double* A, const double* B, double* C, int M, int K, int N);
+void MatrixTranspose(const double* A, double* B, int rows, int cols);
+void VectorMatrixMultiplication(const double* A, const double* B, double* C, int N);
+
+} // namespace RapiDHT
 
 #endif

@@ -1,25 +1,31 @@
 cmake_minimum_required(VERSION 3.18 FATAL_ERROR)
 
-# GPU using option
-option(RAPI_DHT_USE_GPU "Enable GPU support (requires CUDA)" ON)
-
-# Languages
+# Project
 project(RapiDHT LANGUAGES CXX CUDA)
 set(CMAKE_CXX_STANDARD 17)
 
 # Set folder to installing
 set(CMAKE_INSTALL_PREFIX ${CMAKE_CURRENT_SOURCE_DIR}/install)
 
-# including includes and adding projects
+# Include directories
 include_directories(include)
+
+# Find CUDA
+find_package(CUDA REQUIRED)
+message(STATUS "CUDA found: ${CUDA_VERSION}")
+
+# Add CUDA libraries
+set(CUDA_LIBS cublas cudart)  # cuBLAS + CUDA Runtime
+
+# Add subdirectories
 add_subdirectory(source)
 add_subdirectory(tests)
 
-# setting tests
+# Enable testing
 enable_testing()
 add_test(NAME test1 COMMAND test1)
 add_test(NAME test2 COMMAND test2)
 
-# Set libraries and tests
+# Install targets
 install(TARGETS coreht DESTINATION lib)
 install(DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/include/ DESTINATION include)

@@ -11,8 +11,8 @@ using namespace RapiDHT;
 int main(int argc, char** argv)
 {
     // ---- Размеры массива ----
-    size_t width = 1 << 5;
-    size_t height = 1 << 7;
+    size_t width = 1 << 6;
+    size_t height = 1 << 5;
     auto mode = Modes::GPU;
 
     // ---- Обработка аргументов ----
@@ -47,7 +47,7 @@ int main(int argc, char** argv)
     }
 
     // ---- Создание данных ----
-    auto original_data = make_data<double>({ width, height }, FillMode::Random);
+    auto original_data = make_data<double>({ width, height }, FillMode::Sequential);
     auto transformed_data = original_data;
     //print_data_2d(original_data.data(), width, height);
 
@@ -57,6 +57,7 @@ int main(int argc, char** argv)
     // ---- Преобразование Хартли ----
     HartleyTransform ht(width, height, 0, mode);
     ht.ForwardTransform(transformed_data.data());
+    //print_data_2d(transformed_data.data(), width, height);
     ht.InverseTransform(transformed_data.data());
 
     auto end_time = std::chrono::high_resolution_clock::now();
