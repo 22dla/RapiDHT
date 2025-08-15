@@ -74,10 +74,9 @@ private:
     /**
      * @brief Performs a 1D Hartley Transform using CUDA matrix-vector multiplication.
      * @param hX Pointer to the input data vector.
-     * @param hA Pointer to the transformation matrix.
      * @param length Length of the vector.
      */
-    void DHT1DCuda(double* hX, double* hA, size_t length);
+    void DHT1DCuda(double* hX);
 
     /**
      * @brief Performs a 2D Hartley Transform using CUDA matrix-matrix multiplication.
@@ -143,13 +142,12 @@ private:
     void BracewellTransform2DCPU(double* imagePtr);
 
     std::array<size_t, static_cast<size_t>(Direction::Count)> _dims{};
-    std::array<std::vector<size_t>, static_cast<size_t>(Direction::Count)> _bitReversedIndices
-        ;
+    std::array<std::vector<size_t>, static_cast<size_t>(Direction::Count)> _bitReversedIndices;
 
     Modes _mode = Modes::CPU;
 
-    std::vector<double> _hTransformMatrixX;
-    dev_array<double> _dTransformMatrixX;
+    std::array<std::vector<double>, static_cast<size_t>(Direction::Count)> _hTransformMatrices;
+    std::array<dev_array<double>, static_cast<size_t>(Direction::Count)> _dTransformMatrices;
 };
 }
 

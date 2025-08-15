@@ -13,19 +13,19 @@
 #include <iomanip>
 #include <cmath>
 
+namespace RapiDHT {
+
 #ifdef DEBUG
 #define PROFILE_FUNCTION() Profiler __profiler(__FUNCTION__)
 #else
 #define PROFILE_FUNCTION()
 #endif
 
-class Profiler
-{
+class Profiler {
 public:
 	Profiler(const std::string& functionName) :
 		m_functionName(functionName), m_startTime(std::chrono::high_resolution_clock::now()) {}
-	~Profiler()
-	{
+	~Profiler() {
 		auto endTime = std::chrono::high_resolution_clock::now();
 		auto duration = std::chrono::duration_cast<std::chrono::microseconds>(endTime - m_startTime).count();
 		std::cout << m_functionName << " took " << duration << " microseconds" << std::endl;
@@ -35,23 +35,32 @@ private:
 	std::chrono::high_resolution_clock::time_point m_startTime;
 };
 
+enum class FillMode {
+	Random,
+	Sequential
+};
 /**
- * @brief Создает вектор данных с указанными размерами и заполняет случайными числами.
+ * @brief Создает вектор данных с указанными размерами и заполняет его в одном из режимов.
  *
- * @tparam T Тип данных (например, int, double).
+ * Режимы заполнения:
+ *  - FillMode::Random     — случайные числа в диапазоне [0, 255].
+ *  - FillMode::Sequential — последовательные значения, начиная с 0.
+ *
+ * @tparam T Тип элементов вектора (например, int, float).
  * @param sizes Список размеров по каждой размерности.
- * @return std::vector<T> Вектор данных, размер которого равен произведению всех размеров.
- * @throws std::invalid_argument если sizes пуст или один из размеров равен 0.
- * @throws std::overflow_error если произведение размеров превышает размер size_t.
+ * @param mode  Режим заполнения (по умолчанию FillMode::Random).
+ * @return std::vector<T> Вектор данных размером, равным произведению всех размеров.
+ *
+ * @throws std::invalid_argument Если sizes пуст или один из размеров равен 0.
+ * @throws std::overflow_error  Если произведение размеров превышает допустимый размер size_t.
  */
 template <typename T>
-std::vector<T> make_data(std::initializer_list<size_t> sizes)
-{
+std::vector<T> make_data(std::initializer_list<size_t> sizes, FillMode mode = FillMode::Random) {
 	if (sizes.size() == 0) {
 		throw std::invalid_argument("Sizes list cannot be empty");
 	}
 
-	// Вычисляем общий размер, проверяя на переполнение
+	// Вычисляем общий размер
 	size_t total_size = std::accumulate(sizes.begin(), sizes.end(), size_t{ 1 },
 		[](size_t acc, size_t val) {
 		if (val == 0) throw std::invalid_argument("Dimension size cannot be zero");
@@ -61,14 +70,16 @@ std::vector<T> make_data(std::initializer_list<size_t> sizes)
 
 	std::vector<T> data(total_size);
 
-	// Современный генератор случайных чисел
-	std::random_device rd;
-	std::mt19937 gen(rd());
-	std::uniform_int_distribution<int> dist(0, 255);
+	if (mode == FillMode::Random) {
+		std::random_device rd;
+		std::mt19937 gen(rd());
+		std::uniform_int_distribution<int> dist(0, 255);
 
-	// Параллельное заполнение
-	std::for_each(std::execution::par, data.begin(), data.end(),
-		[&](T& x) { x = static_cast<T>(dist(gen)); });
+		std::for_each(std::execution::par, data.begin(), data.end(),
+			[&](T& x) { x = static_cast<T>(dist(gen)); });
+	} else if (mode == FillMode::Sequential) {
+		std::iota(data.begin(), data.end(), T{ 0 });
+	}
 
 	return data;
 }
@@ -81,8 +92,7 @@ std::vector<T> make_data(std::initializer_list<size_t> sizes)
  * @param length Длина массива.
  */
 template<typename T>
-void print_data_1d(const T* data, int length)
-{
+void print_data_1d(const T* data, int length) {
 	for (int idx = 0; idx < length; ++idx) {
 		std::cout << std::fixed << std::setprecision(2) << data[idx] << "\t";
 	}
@@ -98,11 +108,10 @@ void print_data_1d(const T* data, int length)
  * @param height Количество столбцов.
  */
 template<typename T>
-void print_data_2d(const T* data, int width, int height)
-{
-	for (int i = 0; i < width; ++i) {
-		for (int j = 0; j < height; ++j) {
-			std::cout << std::fixed << std::setprecision(2) << data[i * height + j] << " ";
+void print_data_2d(const T* data, int width, int height) {
+	for (int i = 0; i < height; ++i) {
+		for (int j = 0; j < width; ++j) {
+			std::cout << std::fixed << std::setprecision(2) << data[i * width + j] << " ";
 		}
 		std::cout << "\n";
 	}
@@ -121,17 +130,16 @@ void print_data_2d(const T* data, int width, int height)
  */
 template<typename T>
 void write_matrix_to_csv(const T* matrix, const size_t width,
-	const size_t height, const std::string& file_path)
-{
+	const size_t height, const std::string& file_path) {
 	std::ofstream output_file(file_path);
 	if (!output_file) {
 		throw std::runtime_error("Failed to open file for writing");
 	}
 
-	for (size_t i = 0; i < width; ++i) {
-		for (size_t j = 0; j < height; ++j) {
-			output_file << matrix[i * height + j];
-			if (j < height - 1) output_file << ";";
+	for (size_t i = 0; i < height; ++i) {
+		for (size_t j = 0; j < width; ++j) {
+			output_file << matrix[i * width + j];
+			if (j < width - 1) output_file << ";";
 		}
 		output_file << "\n";
 	}
@@ -148,8 +156,7 @@ void write_matrix_to_csv(const T* matrix, const size_t width,
  * @return std::vector<std::vector<std::vector<T>>> Трёхмерный вектор.
  */
 template <typename T>
-std::vector<std::vector<std::vector<T>>> make_data_3d_vec_vec_vec(int n, int m, int l)
-{
+std::vector<std::vector<std::vector<T>>> make_data_3d_vec_vec_vec(int n, int m, int l) {
 	const double kPi = std::acos(-1);
 	std::vector<std::vector<std::vector<T>>> data(l);
 
@@ -173,9 +180,10 @@ std::vector<std::vector<std::vector<T>>> make_data_3d_vec_vec_vec(int n, int m, 
  * @param finishTime Время окончания.
  * @param message Сообщение для отображения.
  */
-inline void show_time(double startTime, double finishTime, std::string message)
-{
+inline void show_time(double startTime, double finishTime, std::string message) {
 	std::cout << message << ":\t" << finishTime - startTime << " sec" << std::endl;
 }
+
+} // namespace RapiDHT
 
 #endif // !UTILITIES_H

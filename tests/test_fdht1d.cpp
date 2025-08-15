@@ -5,6 +5,8 @@
 #include <numeric>
 #include <cstring>
 
+using namespace RapiDHT;
+
 int main(int argc, char** argv) {
 	size_t width = static_cast<size_t>(pow(2, 3));
 	auto mode = RapiDHT::Modes::GPU;

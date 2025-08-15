@@ -7,19 +7,14 @@
 namespace RapiDHT {
 
 HartleyTransform::HartleyTransform(size_t width, size_t height = 0, size_t depth = 0, Modes mode = Modes::CPU) :_mode(mode) {
-	if (width <= 0 || height < 0 || depth < 0) {
-		throw std::invalid_argument(
-			"Error (initialization): at least Rows must be positive. "
-			"height and depth can be zero (by default) but not negative.");
+	if (width == 0) {
+		throw std::invalid_argument("Width must be positive.");
 	}
 	if (height == 0 && depth > 0) {
-		throw std::invalid_argument(
-			"Error (initialization): if height is zero, depth must be zero.");
+		throw std::invalid_argument("If height is zero, depth must also be zero.");
 	}
 
-	_dims[static_cast<size_t>(Direction::X)] = static_cast<size_t>(width);
-	_dims[static_cast<size_t>(Direction::Y)] = static_cast<size_t>(height);
-	_dims[static_cast<size_t>(Direction::Z)] = static_cast<size_t>(depth);
+	_dims = { width, height, depth };
 
 	// Preparation to 1D transforms
 	if (_mode == Modes::CPU || _mode == Modes::RFFT) {
@@ -29,22 +24,26 @@ HartleyTransform::HartleyTransform(size_t width, size_t height = 0, size_t depth
 		}
 	}
 	if (_mode == Modes::GPU) {
-		// Initialize Vandermonde matrice on the host
-		InitializeKernelHost(&_hTransformMatrixX, width);
-		//initializeKernelHost(h_A, width);
-		//initializeKernelHost(h_A, width);
-
+		// Initialize transform matrices on the host
+		InitializeKernelHost(&_hTransformMatrices[static_cast<size_t>(Direction::X)], Width());
+		InitializeKernelHost(&_hTransformMatrices[static_cast<size_t>(Direction::Y)], Height());
+		InitializeKernelHost(&_hTransformMatrices[static_cast<size_t>(Direction::Z)], Depth());
 
 		// transfer CPU -> GPU
-		_dTransformMatrixX.resize(_dims[0] * _dims[1]);
-		_dTransformMatrixX.set(&_hTransformMatrixX[0], _dims[0] * _dims[1]);
+		_dTransformMatrices[static_cast<size_t>(Direction::X)].resize(Width() * Width());
+		_dTransformMatrices[static_cast<size_t>(Direction::Y)].resize(Height() * Height());
+		_dTransformMatrices[static_cast<size_t>(Direction::Z)].resize(Depth() * Depth());
+
+		_dTransformMatrices[static_cast<size_t>(Direction::X)].set(_hTransformMatrices[static_cast<size_t>(Direction::X)].data(), Width() * Width());
+		_dTransformMatrices[static_cast<size_t>(Direction::Y)].set(_hTransformMatrices[static_cast<size_t>(Direction::Y)].data(), Height() * Height());
+		_dTransformMatrices[static_cast<size_t>(Direction::Z)].set(_hTransformMatrices[static_cast<size_t>(Direction::Z)].data(), Depth() * Depth());
 	}
 }
 
 void HartleyTransform::ForwardTransform(double* data) {
 	bool is1D = (Height() == 0 && Depth() == 0);
 	bool is2D = (Height() > 0 && Depth() == 0);
-	// bool is3D = (Depth() > 0); // пока не используется
+	bool is3D = (Depth() > 0);
 
 	switch (_mode) {
 	case Modes::CPU:
@@ -57,7 +56,7 @@ void HartleyTransform::ForwardTransform(double* data) {
 
 	case Modes::GPU:
 		if (is1D) {
-			DHT1DCuda(data, _hTransformMatrixX.data(), Width());
+			DHT1DCuda(data);
 		} else if (is2D) {
 			DHT2DCuda(data);
 		}
@@ -95,39 +94,23 @@ void HartleyTransform::InverseTransform(double* data) {
 }
 
 void HartleyTransform::BitReverse(std::vector<size_t>* indices_ptr) {
-	std::vector<size_t>& indices = *indices_ptr;
-	if (indices.size() == 0) {
-		return;
-	}
-	const int kLog2n = static_cast<int>(log2f(static_cast<float>(indices.size())));
+	auto& indices = *indices_ptr;
+	if (indices.empty()) return;
 
-	// array to store binary number
-	std::vector<bool> binary_num(indices.size());
+	const size_t n = indices.size();
+	const int kLog2n = static_cast<int>(std::log2(n));
 
 	indices[0] = 0;
-	for (int j = 1; j < indices.size(); ++j) {
-		// counter for binary array
-		size_t count = 0;
-		int base = j;
-		while (base > 0) {
-			// storing remainder in binary array
-			binary_num[count] = static_cast<bool>(base % 2);
-			base /= 2;
-			++count;
-		}
-		for (size_t i = count; i < kLog2n; ++i) {
-			binary_num[i] = false;
-		}
-
-		int dec_value = 0;
-		base = 1;
-		for (int i = kLog2n - 1; i >= 0; --i) {
-			if (binary_num[i]) {
-				dec_value += base;
+	for (size_t j = 1; j < n; ++j) {
+		size_t reversed = 0;
+		size_t temp = j;
+		for (int i = 0; i < kLog2n; ++i) {
+			if (temp & 1) {
+				reversed |= 1 << (kLog2n - 1 - i);
 			}
-			base *= 2;
+			temp >>= 1;
 		}
-		indices[j] = dec_value;
+		indices[j] = reversed;
 	}
 }
 
@@ -393,22 +376,19 @@ void HartleyTransform::RealFFT1D(double* vec, Direction direction) {
 	}
 }
 
-void HartleyTransform::DHT1DCuda(double* h_x, double* h_A, size_t length) {
+void HartleyTransform::DHT1DCuda(double* h_x) {
 	// Allocate memory on the device
-	dev_array<double> d_A(length * length);	// matrix for one line
-	dev_array<double> d_x(length);			// input vector
-	dev_array<double> d_y(length);			// output vector
+	dev_array<double> d_x(Width());			// input vector
+	dev_array<double> d_y(Width());			// output vector
 
 	//write_matrix_to_csv(h_A.data(), length, length, "matrix.csv");
 
 	// transfer CPU -> GPU
-	d_A.set(&h_A[0], length * length);
-	// transfer CPU -> GPU
-	d_x.set(h_x, length * length);
-	vectorMatrixMultiplication(d_A.getData(), d_x.getData(), d_y.getData(), length);
+	d_x.set(h_x, Width());
+	vectorMatrixMultiplication(_dTransformMatrices[static_cast<size_t>(Direction::X)].getData(),
+		d_x.getData(), d_y.getData(), Width());
 	// transfer GPU -> CPU
-	d_y.get(h_x, length);
-	cudaDeviceSynchronize();
+	d_y.get(h_x, Width());
 }
 
 void HartleyTransform::DHT2DCuda(double* h_X) {
@@ -418,10 +398,16 @@ void HartleyTransform::DHT2DCuda(double* h_X) {
 
 	// transfer CPU -> GPU
 	d_X.set(&h_X[0], Width() * Height());
-	matrixMultiplication(_dTransformMatrixX.getData(), d_X.getData(), d_Y.getData(), Height());
-	matrixTranspose(d_Y.getData(), Height());
-	matrixMultiplication(_dTransformMatrixX.getData(), d_Y.getData(), d_X.getData(), Height());
-	matrixTranspose(d_X.getData(), Height());
+	matrixMultiplication(d_X.getData(), _dTransformMatrices[static_cast<size_t>(Direction::X)].getData(),
+		d_Y.getData(), Height(), Width(), Width());
+
+	matrixTranspose(d_Y.getData(), d_X.getData(), Height(), Width());
+
+	matrixMultiplication(d_X.getData(), 
+		_dTransformMatrices[static_cast<size_t>(Direction::Y)].getData(),
+		d_Y.getData(), Width(), Height(), Height());
+
+	matrixTranspose(d_Y.getData(), d_X.getData(), Width(), Height());
 
 	// transfer GPU -> CPU
 	d_X.get(&h_X[0], Width() * Height());

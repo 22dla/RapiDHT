@@ -5,6 +5,8 @@
 #include <numeric>
 #include <vector>
 
+using namespace RapiDHT;
+
 // Функция для сравнения данных с допустимой погрешностью
 template <typename T>
 void ExpectVectorsNear(const std::vector<T>& a, const std::vector<T>& b, double tol = 1e-6) {
@@ -17,12 +19,12 @@ void ExpectVectorsNear(const std::vector<T>& a, const std::vector<T>& b, double 
 // ---- 1D тесты ----
 TEST(FDHT, Test1D_Small_CPU) {
     size_t width = 8;
-    auto mode = RapiDHT::Modes::CPU;
+    auto mode = Modes::CPU;
 
     auto original = make_data<double>({ width });
     auto transformed = original;
 
-    RapiDHT::HartleyTransform ht(width, 0, 0, mode);
+    HartleyTransform ht(width, 0, 0, mode);
     ht.ForwardTransform(transformed.data());
     ht.InverseTransform(transformed.data());
 
@@ -31,12 +33,12 @@ TEST(FDHT, Test1D_Small_CPU) {
 
 TEST(FDHT, Test1D_Large_CPU) {
     size_t width = 1 << 16; // 65536
-    auto mode = RapiDHT::Modes::CPU;
+    auto mode = Modes::CPU;
 
     auto original = make_data<double>({ width });
     auto transformed = original;
 
-    RapiDHT::HartleyTransform ht(width, 0, 0, mode);
+    HartleyTransform ht(width, 0, 0, mode);
     ht.ForwardTransform(transformed.data());
     ht.InverseTransform(transformed.data());
 
@@ -45,12 +47,12 @@ TEST(FDHT, Test1D_Large_CPU) {
 
 TEST(FDHT, Test1D_Small_GPU) {
     size_t width = 8;
-    auto mode = RapiDHT::Modes::GPU;
+    auto mode = Modes::GPU;
 
     auto original = make_data<double>({ width });
     auto transformed = original;
 
-    RapiDHT::HartleyTransform ht(width, 0, 0, mode);
+    HartleyTransform ht(width, 0, 0, mode);
     ht.ForwardTransform(transformed.data());
     ht.InverseTransform(transformed.data());
 
@@ -59,12 +61,12 @@ TEST(FDHT, Test1D_Small_GPU) {
 
 TEST(FDHT, Test1D_Large_GPU) {
     size_t width = 1 << 12; // 4096
-    auto mode = RapiDHT::Modes::GPU;
+    auto mode = Modes::GPU;
 
     auto original = make_data<double>({ width });
     auto transformed = original;
 
-    RapiDHT::HartleyTransform ht(width, 0, 0, mode);
+    HartleyTransform ht(width, 0, 0, mode);
     ht.ForwardTransform(transformed.data());
     ht.InverseTransform(transformed.data());
 
@@ -75,12 +77,12 @@ TEST(FDHT, Test1D_Large_GPU) {
 TEST(FDHT, Test2D_Small_CPU) {
     size_t width = 4;
     size_t height = 4;
-    auto mode = RapiDHT::Modes::CPU;
+    auto mode = Modes::CPU;
 
     auto original = make_data<double>({ height, width });
     auto transformed = original;
 
-    RapiDHT::HartleyTransform ht(width, height, 0, mode);
+    HartleyTransform ht(width, height, 0, mode);
     ht.ForwardTransform(transformed.data());
     ht.InverseTransform(transformed.data());
 
@@ -90,12 +92,12 @@ TEST(FDHT, Test2D_Small_CPU) {
 TEST(FDHT, Test2D_Large_CPU) {
     size_t width = 256;
     size_t height = 256;
-    auto mode = RapiDHT::Modes::CPU;
+    auto mode = Modes::CPU;
 
     auto original = make_data<double>({ height, width });
     auto transformed = original;
 
-    RapiDHT::HartleyTransform ht(width, height, 0, mode);
+    HartleyTransform ht(width, height, 0, mode);
     ht.ForwardTransform(transformed.data());
     ht.InverseTransform(transformed.data());
 
@@ -105,12 +107,12 @@ TEST(FDHT, Test2D_Large_CPU) {
 TEST(FDHT, Test2D_Small_GPU) {
     size_t width = 4;
     size_t height = 4;
-    auto mode = RapiDHT::Modes::GPU;
+    auto mode = Modes::GPU;
 
     auto original = make_data<double>({ height, width });
     auto transformed = original;
 
-    RapiDHT::HartleyTransform ht(width, height, 0, mode);
+    HartleyTransform ht(width, height, 0, mode);
     ht.ForwardTransform(transformed.data());
     ht.InverseTransform(transformed.data());
 
@@ -120,12 +122,12 @@ TEST(FDHT, Test2D_Small_GPU) {
 TEST(FDHT, Test2D_Large_GPU) {
     size_t width = 256;
     size_t height = 256;
-    auto mode = RapiDHT::Modes::GPU;
+    auto mode = Modes::GPU;
 
     auto original = make_data<double>({ height, width });
     auto transformed = original;
 
-    RapiDHT::HartleyTransform ht(width, height, 0, mode);
+    HartleyTransform ht(width, height, 0, mode);
     ht.ForwardTransform(transformed.data());
     ht.InverseTransform(transformed.data());
 

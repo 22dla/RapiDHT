@@ -4,6 +4,8 @@
 #include <cmath>
 #include <cstring>
 
+using namespace RapiDHT;
+
 int main(int argc, char** argv) {
 	// Define global 3D array sizes
 	size_t width = static_cast<int>(pow(2, 10));
