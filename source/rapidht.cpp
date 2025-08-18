@@ -51,46 +51,103 @@ void HartleyTransform::ForwardTransform(double* data) {
 	bool is2D = (Height() > 0 && Depth() == 0);
 	bool is3D = (Depth() > 0);
 
+	// Проверяем, инициализирован ли MPI
+	int mpiInitialized = 0;
+	MPI_Initialized(&mpiInitialized);
+
+	int rank = 0, size = 1;
+	if (mpiInitialized) {
+		MPI_Comm_rank(MPI_COMM_WORLD, &rank);
+		MPI_Comm_size(MPI_COMM_WORLD, &size);
+	}
+
+	if (is1D || is2D) {
+		// Для 1D и 2D нет смысла в MPI
+		switch (_mode) {
+		case Modes::CPU:
+			if (is1D) {
+				FDHT1D(data);
+			} else {
+				FDHT2D(data);
+			}
+			break;
+		case Modes::GPU:
+			if (is1D) {
+				DHT1DCuda(data);
+			} else {
+				DHT2DCuda(data);
+			}
+			break;
+		case Modes::RFFT:
+			if (is1D) {
+				RealFFT1D(data);
+			} else {
+				FDHT2D(data);
+			}
+
+			break;
+		}
+		if (mpiInitialized) MPI_Barrier(MPI_COMM_WORLD);
+		return;
+	}
+
+	// 3D case: делим по Z между процессами, если MPI включен
+	size_t depthPerProc = Depth() / size;
+	size_t remainder = Depth() % size;
+	size_t offset = rank * depthPerProc + std::min(static_cast<size_t>(rank), remainder);
+	depthPerProc += (rank < remainder) ? 1 : 0;
+
+	double* localData = data + offset * Width() * Height();
+
 	switch (_mode) {
 	case Modes::CPU:
-		if (is1D) {
-			FDHT1D(data);
-		} else if (is2D) {
-			FDHT2D(data);
-		} else if (is3D) {
-			FDHT3D(data);
-		}
+		FDHT3D(localData);
 		break;
-
 	case Modes::GPU:
-		if (is1D) {
-			DHT1DCuda(data);
-		} else if (is2D) {
-			DHT2DCuda(data);
-		} else if (is3D) {
-			DHT3DCuda(data);
-		}
+		DHT3DCuda(localData);
 		break;
-
 	case Modes::RFFT:
-		if (is1D) {
-			RealFFT1D(data);
-		} else if (is2D) {
-			FDHT2D(data);
-		} else if (is3D) {
-			FDHT3D(data);
-		}
+		FDHT3D(localData);
 		break;
+	}
 
-	default:
-		break;
+	// Сбор данных только если MPI активен
+	if (mpiInitialized) {
+		std::vector<int> sendcounts(size);
+		std::vector<int> displs(size);
+		int offs = 0;
+		for (int i = 0; i < size; ++i) {
+			sendcounts[i] = static_cast<int>((Depth() / size + (i < remainder ? 1 : 0)) * Width() * Height());
+			displs[i] = offs;
+			offs += sendcounts[i];
+		}
+		MPI_Allgatherv(localData, sendcounts[rank], MPI_DOUBLE,
+			data, sendcounts.data(), displs.data(), MPI_DOUBLE,
+			MPI_COMM_WORLD);
 	}
 }
 
 void HartleyTransform::InverseTransform(double* data) {
 	PROFILE_FUNCTION();
 
+	bool is1D = (Height() == 0 && Depth() == 0);
+	bool is2D = (Height() > 0 && Depth() == 0);
+	bool is3D = (Depth() > 0);
+
+	// Проверяем, инициализирован ли MPI
+	int mpiInitialized = 0;
+	MPI_Initialized(&mpiInitialized);
+
+	int rank = 0, size = 1;
+	if (mpiInitialized) {
+		MPI_Comm_rank(MPI_COMM_WORLD, &rank);
+		MPI_Comm_size(MPI_COMM_WORLD, &size);
+	}
+
+	// Сначала выполняем прямое преобразование
 	ForwardTransform(data);
+
+	// Общий размер данных
 	size_t totalSize = Width();
 	if (Height() > 0) {
 		totalSize *= Height();
@@ -101,8 +158,32 @@ void HartleyTransform::InverseTransform(double* data) {
 
 	auto denominator = 1.0 / static_cast<double>(totalSize);
 
-	for (size_t i = 0; i < totalSize; ++i) {
-		data[i] *= denominator;
+	if (is1D || is2D) {
+		// Масштабируем полностью только на rank=0
+		for (size_t i = 0; i < totalSize; ++i) {
+			data[i] *= denominator;
+		}
+		if (mpiInitialized) MPI_Barrier(MPI_COMM_WORLD);
+		return;
+	}
+
+	// 3D case: делим по Z между процессами
+	size_t depthPerProc = Depth() / size;
+	size_t remainder = Depth() % size;
+	size_t offset = rank * depthPerProc + std::min(static_cast<size_t>(rank), remainder);
+	depthPerProc += (rank < remainder) ? 1 : 0;
+
+	size_t localSize = depthPerProc * Width() * Height();
+	double* localData = data + offset * Width() * Height();
+
+	// Масштабируем локальный блок
+	for (size_t i = 0; i < localSize; ++i) {
+		localData[i] *= denominator;
+	}
+
+	// Синхронизация процессов
+	if (mpiInitialized) {
+		MPI_Barrier(MPI_COMM_WORLD);
 	}
 }
 

@@ -6,9 +6,9 @@ using namespace RapiDHT;
 int main(int argc, char** argv) {
 	// ---- Обработка аргументов ----
 	auto cfg = ParseArgs(argc, argv);
-	cfg.width = 1 << 10;
-	cfg.height = 1 << 10;
-	cfg.mode = Modes::CPU;
+	cfg.width = 1 << 11;
+	cfg.height = 1 << 11;
+	cfg.mode = Modes::GPU;
 
 	auto width = cfg.width;
 	auto height = cfg.height;
