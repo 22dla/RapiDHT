@@ -56,6 +56,8 @@ void HartleyTransform::ForwardTransform(double* data) {
 			FDHT1D(data);
 		} else if (is2D) {
 			FDHT2D(data);
+		} else if (is3D) {
+			FDHT3D(data);
 		}
 		break;
 
@@ -64,6 +66,8 @@ void HartleyTransform::ForwardTransform(double* data) {
 			DHT1DCuda(data);
 		} else if (is2D) {
 			DHT2DCuda(data);
+		} else if (is3D) {
+			DHT3DCuda(data);
 		}
 		break;
 
@@ -72,6 +76,8 @@ void HartleyTransform::ForwardTransform(double* data) {
 			RealFFT1D(data);
 		} else if (is2D) {
 			FDHT2D(data);
+		} else if (is3D) {
+			FDHT3D(data);
 		}
 		break;
 
@@ -223,6 +229,54 @@ void HartleyTransform::Series1D(double* image_ptr, Direction direction) {
 	}
 }
 
+void HartleyTransform::BracewellTransform2DCPU(double* image_ptr) {
+	PROFILE_FUNCTION();
+
+	std::vector<double> H(Width() * Height(), 0.0);
+#pragma omp parallel for
+	for (int i = 0; i < Width(); ++i) {
+		for (int j = 0; j < Height(); ++j) {
+			const double A = image_ptr[i * Height() + j];
+			const double B = (i > 0 && j > 0) ? image_ptr[i * Height() + (Height() - j)] : A;
+			const double C = (i > 0 && j > 0) ? image_ptr[(Width() - i) * Height() + j] : A;
+			const double D = (i > 0 && j > 0) ? image_ptr[(Width() - i) * Height() + (Height() - j)] : A;
+			H[i * Height() + j] = (A + B + C - D) / 2.0;
+		}
+	}
+
+	std::copy(H.begin(), H.end(), image_ptr);
+}
+
+void HartleyTransform::BracewellTransform3DCPU(double* volumePtr, int W, int H, int D) {
+	PROFILE_FUNCTION();
+
+	std::vector<double> result(W * H * D, 0.0);
+
+#pragma omp parallel for collapse(3)
+	for (int x = 0; x < W; ++x) {
+		for (int y = 0; y < H; ++y) {
+			for (int z = 0; z < D; ++z) {
+				const int xm = (x > 0) ? W - x : x;
+				const int ym = (y > 0) ? H - y : y;
+				const int zm = (z > 0) ? D - z : z;
+
+				const double A = volumePtr[z * H * W + y * W + x];
+				const double B = volumePtr[z * H * W + y * W + xm];
+				const double C = volumePtr[z * H * W + ym * W + x];
+				const double D_ = volumePtr[z * H * W + ym * W + xm];
+				const double E = volumePtr[zm * H * W + y * W + x];
+				const double F = volumePtr[zm * H * W + y * W + xm];
+				const double G = volumePtr[zm * H * W + ym * W + x];
+				const double H_ = volumePtr[zm * H * W + ym * W + xm];
+
+				result[z * H * W + y * W + x] = 0.5 * (A + B + C - D_ + E + F + G - H_);
+			}
+		}
+	}
+
+	std::copy(result.begin(), result.end(), volumePtr);
+}
+
 void HartleyTransform::FDHT1D(double* vec, Direction direction) {
 	if (vec == nullptr) {
 		throw std::invalid_argument("The pointer to vector is null.");
@@ -279,24 +333,6 @@ void HartleyTransform::FDHT1D(double* vec, Direction direction) {
 	}
 }
 
-void HartleyTransform::BracewellTransform2DCPU(double* image_ptr) {
-	PROFILE_FUNCTION();
-
-	std::vector<double> H(Width() * Height(), 0.0);
-#pragma omp parallel for
-	for (int i = 0; i < Width(); ++i) {
-		for (int j = 0; j < Height(); ++j) {
-			const double A = image_ptr[i * Height() + j];
-			const double B = (i > 0 && j > 0) ? image_ptr[i * Height() + (Height() - j)] : A;
-			const double C = (i > 0 && j > 0) ? image_ptr[(Width() - i) * Height() + j] : A;
-			const double D = (i > 0 && j > 0) ? image_ptr[(Width() - i) * Height() + (Height() - j)] : A;
-			H[i * Height() + j] = (A + B + C - D) / 2.0;
-		}
-	}
-
-	std::copy(H.begin(), H.end(), image_ptr);
-}
-
 void HartleyTransform::FDHT2D(double* image_ptr) {
 	PROFILE_FUNCTION();
 
@@ -309,24 +345,86 @@ void HartleyTransform::FDHT2D(double* image_ptr) {
 		throw std::invalid_argument("Error: rows, and cols must be non-negative.");
 	}
 
-	// write_matrix_to_csv(image_ptr, width, height, "matrix1.txt");
-
-	// 1D transforms along X dimension
 	Series1D(image_ptr, Direction::X);
-
 	TransposeSimple(image_ptr, Width(), Height());
 
-	// 1D transforms along Y dimension
 	Series1D(image_ptr, Direction::Y);
-
 	TransposeSimple(image_ptr, Height(), Width());
 
 	BracewellTransform2DCPU(image_ptr);
-
-	// write_matrix_to_csv(image_ptr, width, height, "matrix2.txt");
 }
 
-// test functions
+void HartleyTransform::FDHT3D(double* volume_ptr) {
+	PROFILE_FUNCTION();
+
+	if (volume_ptr == nullptr) {
+		std::cout << "The pointer to volume is null." << std::endl;
+		throw std::invalid_argument("The pointer to volume is null.");
+	}
+	if (Width() <= 0 || Height() <= 0 || Depth() <= 0) {
+		std::cout << "Error: dimensions must be positive." << std::endl;
+		throw std::invalid_argument("Error: dimensions must be positive.");
+	}
+
+	const size_t W = Width();
+	const size_t H = Height();
+	const size_t D = Depth();
+
+	// 1D transforms along X dimension
+	for (size_t z = 0; z < D; ++z) {
+		for (size_t y = 0; y < H; ++y) {
+			Series1D(volume_ptr + z * H * W + y * W, Direction::X);
+		}
+	}
+
+	// Transpose XY slices
+	for (size_t z = 0; z < D; ++z) {
+		TransposeSimple(volume_ptr + z * H * W, W, H);
+	}
+
+	// 1D transforms along Y dimension
+	for (size_t z = 0; z < D; ++z) {
+		for (size_t x = 0; x < W; ++x) {
+			double* col = new double[H];
+			for (size_t y = 0; y < H; ++y) {
+				col[y] = volume_ptr[z * H * W + y * W + x];
+			}
+
+			Series1D(col, Direction::Y);
+
+			for (size_t y = 0; y < H; ++y) {
+				volume_ptr[z * H * W + y * W + x] = col[y];
+			}
+			delete[] col;
+		}
+	}
+
+	// Transpose XY slices back
+	for (size_t z = 0; z < D; ++z) {
+		TransposeSimple(volume_ptr + z * H * W, H, W);
+	}
+
+	// 1D transforms along Z dimension
+	for (size_t y = 0; y < H; ++y) {
+		for (size_t x = 0; x < W; ++x) {
+			double* line = new double[D];
+			for (size_t z = 0; z < D; ++z) {
+				line[z] = volume_ptr[z * H * W + y * W + x];
+			}
+
+			Series1D(line, Direction::Z);
+			for (size_t z = 0; z < D; ++z) {
+				volume_ptr[z * H * W + y * W + x] = line[z];
+			}
+
+			delete[] line;
+		}
+	}
+
+	// Bracewell 3D
+	BracewellTransform3DCPU(volume_ptr, W, H, D);
+}
+
 void HartleyTransform::RealFFT1D(double* vec, Direction direction) {
 	PROFILE_FUNCTION();
 
@@ -426,16 +524,83 @@ void HartleyTransform::DHT2DCuda(double* h_X) {
 
 	MatrixTranspose(d_Y.getData(), d_X.getData(), Height(), Width());
 
-	MatrixMultiplication(d_X.getData(), 
+	MatrixMultiplication(d_X.getData(),
 		_dTransformMatrices[static_cast<size_t>(Direction::Y)].getData(),
 		d_Y.getData(), Width(), Height(), Height());
 
 	MatrixTranspose(d_Y.getData(), d_X.getData(), Width(), Height());
 
 	// Bracewell
+	BracewellTransform2D(d_X.getData(), Width());
 
 	// transfer GPU -> CPU
 	d_X.get(&h_X[0], Width() * Height());
+	cudaDeviceSynchronize();
+}
+
+void HartleyTransform::DHT3DCuda(double* h_X) {
+	PROFILE_FUNCTION();
+
+	const auto W = Width();
+	const auto H = Height();
+	const auto D = Depth();
+
+	// Allocate memory on the device
+	dev_array<double> d_X(W * H * D);
+	dev_array<double> d_Y(W * H * D);
+
+	// transfer CPU -> GPU
+	d_X.set(h_X, W * H * D);
+
+	// 1D Hartley along X
+	for (size_t z = 0; z < D; ++z) {
+		for (size_t y = 0; y < H; ++y) {
+			MatrixMultiplication(
+				d_X.getData() + (z * H + y) * W,
+				_dTransformMatrices[static_cast<size_t>(Direction::X)].getData(),
+				d_Y.getData() + (z * H + y) * W,
+				W, W, W
+			);
+		}
+	}
+
+	// transpose XY slices
+	for (size_t z = 0; z < D; ++z) {
+		MatrixTranspose(
+			d_Y.getData() + z * H * W,
+			d_X.getData() + z * H * W,
+			W, H
+		);
+	}
+
+	// 1D Hartley along Y
+	for (size_t z = 0; z < D; ++z) {
+		MatrixMultiplication(
+			d_X.getData() + z * H * W,
+			_dTransformMatrices[static_cast<size_t>(Direction::Y)].getData(),
+			d_Y.getData() + z * H * W,
+			H, H, W
+		);
+	}
+
+	// transpose XY slices back
+	for (int z = 0; z < D; ++z) {
+		MatrixTranspose(
+			d_Y.getData() + z * H * W,
+			d_X.getData() + z * H * W,
+			H, W
+		);
+	}
+
+	// 1D Hartley along Z
+	MatrixMultiplication3D_Z(d_X.getData(), _dTransformMatrices[static_cast<size_t>(Direction::Z)].getData(), d_Y.getData(), W, H, D);
+
+	// Bracewell 3D
+	BracewellTransform3D(d_Y.getData(), W, H, D);
+
+	// transfer GPU -> CPU
+	d_Y.get(h_X, W * H * D);
+
 	cudaDeviceSynchronize();
 }
 

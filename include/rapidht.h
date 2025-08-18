@@ -71,6 +71,12 @@ private:
      */
     void FDHT2D(double* image);
 
+	/**
+     * @brief Performs a 3D Fast Hartley Transform on the given data.
+     * @param data Pointer to the input/output 3D data array.
+     */
+	void FDHT3D(double* data);
+
     /**
      * @brief Performs a 1D Hartley Transform using CUDA matrix-vector multiplication.
      * @param hX Pointer to the input data vector.
@@ -83,6 +89,12 @@ private:
      * @param image Pointer to the input/output 2D data array.
      */
     void DHT2DCuda(double* image);
+
+    /**
+     * @brief Performs a 3D Hartley Transform using CUDA matrix-matrix multiplication.
+     * @param image Pointer to the input/output 3D data array.
+     */
+    void DHT3DCuda(double* data);
 
     /**
      * @brief Performs a 1D Real Fourier Transform along the specified direction.
@@ -140,6 +152,12 @@ private:
      * @param imagePtr Pointer to the input/output 2D data array.
      */
     void BracewellTransform2DCPU(double* imagePtr);
+
+    /**
+     * @brief Performs the 3D Hartley Transform on the CPU using Bracewell's algorithm.
+     * @param imagePtr Pointer to the input/output 3D data array.
+     */
+    void BracewellTransform3DCPU(double* volumePtr, int W, int H, int D);
 
     std::array<size_t, static_cast<size_t>(Direction::Count)> _dims{};
     std::array<std::vector<size_t>, static_cast<size_t>(Direction::Count)> _bitReversedIndices;
