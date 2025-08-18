@@ -10,6 +10,7 @@ add_library(coreht ${SOURCES})
 target_link_libraries(coreht
     PRIVATE
     ${CUDA_LIBS}
+	${MPI_CXX_LIBRARIES}
 )
 
 # installing of library

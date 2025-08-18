@@ -14,6 +14,10 @@ include_directories(include)
 find_package(CUDA REQUIRED)
 message(STATUS "CUDA found: ${CUDA_VERSION}")
 
+# Find MPI
+find_package(MPI REQUIRED)
+include_directories(${MPI_INCLUDE_PATH})
+
 # Add CUDA libraries
 set(CUDA_LIBS cublas cudart)  # cuBLAS + CUDA Runtime
 

@@ -1,4 +1,5 @@
 ﻿#include <omp.h>
+#include <mpi.h>
 #include <rapidht.h>
 #include <utilities.h>
 #include <complex>
