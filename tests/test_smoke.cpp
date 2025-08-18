@@ -21,7 +21,7 @@ TEST(FDHT, Test1D_Small_CPU) {
     size_t width = 8;
     auto mode = Modes::CPU;
 
-    auto original = make_data<double>({ width });
+    auto original = MakeData<double>({ width });
     auto transformed = original;
 
     HartleyTransform ht(width, 0, 0, mode);
@@ -35,7 +35,7 @@ TEST(FDHT, Test1D_Large_CPU) {
     size_t width = 1 << 16; // 65536
     auto mode = Modes::CPU;
 
-    auto original = make_data<double>({ width });
+    auto original = MakeData<double>({ width });
     auto transformed = original;
 
     HartleyTransform ht(width, 0, 0, mode);
@@ -49,7 +49,7 @@ TEST(FDHT, Test1D_Small_GPU) {
     size_t width = 8;
     auto mode = Modes::GPU;
 
-    auto original = make_data<double>({ width });
+    auto original = MakeData<double>({ width });
     auto transformed = original;
 
     HartleyTransform ht(width, 0, 0, mode);
@@ -63,7 +63,7 @@ TEST(FDHT, Test1D_Large_GPU) {
     size_t width = 1 << 12; // 4096
     auto mode = Modes::GPU;
 
-    auto original = make_data<double>({ width });
+    auto original = MakeData<double>({ width });
     auto transformed = original;
 
     HartleyTransform ht(width, 0, 0, mode);
@@ -79,7 +79,7 @@ TEST(FDHT, Test2D_Small_CPU) {
     size_t height = 4;
     auto mode = Modes::CPU;
 
-    auto original = make_data<double>({ height, width });
+    auto original = MakeData<double>({ height, width });
     auto transformed = original;
 
     HartleyTransform ht(width, height, 0, mode);
@@ -94,7 +94,7 @@ TEST(FDHT, Test2D_Large_CPU) {
     size_t height = 256;
     auto mode = Modes::CPU;
 
-    auto original = make_data<double>({ height, width });
+    auto original = MakeData<double>({ height, width });
     auto transformed = original;
 
     HartleyTransform ht(width, height, 0, mode);
@@ -109,7 +109,7 @@ TEST(FDHT, Test2D_Small_GPU) {
     size_t height = 4;
     auto mode = Modes::GPU;
 
-    auto original = make_data<double>({ height, width });
+    auto original = MakeData<double>({ height, width });
     auto transformed = original;
 
     HartleyTransform ht(width, height, 0, mode);
@@ -124,7 +124,7 @@ TEST(FDHT, Test2D_Large_GPU) {
     size_t height = 256;
     auto mode = Modes::GPU;
 
-    auto original = make_data<double>({ height, width });
+    auto original = MakeData<double>({ height, width });
     auto transformed = original;
 
     HartleyTransform ht(width, height, 0, mode);

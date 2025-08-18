@@ -12,6 +12,9 @@
 #include <fstream>
 #include <iomanip>
 #include <cmath>
+#include <iostream>
+#include <sstream>
+#include "rapidht.h"
 
 namespace RapiDHT {
 
@@ -35,6 +38,23 @@ private:
 	std::chrono::high_resolution_clock::time_point m_startTime;
 };
 
+struct LoadingConfig {
+	size_t width = 1 << 3;
+	size_t height = 1;
+	size_t depth = 1;
+	Modes mode = Modes::CPU;
+
+	void print() const {
+		std::cout << "width=" << width
+			<< " height=" << height
+			<< " depth=" << depth
+			<< " mode="
+			<< (mode == RapiDHT::Modes::CPU ? "CPU" :
+				mode == RapiDHT::Modes::GPU ? "GPU" : "RFFT")
+			<< std::endl;
+	}
+};
+
 enum class FillMode {
 	Random,
 	Sequential
@@ -55,7 +75,7 @@ enum class FillMode {
  * @throws std::overflow_error  Если произведение размеров превышает допустимый размер size_t.
  */
 template <typename T>
-std::vector<T> make_data(std::initializer_list<size_t> sizes, FillMode mode = FillMode::Random) {
+std::vector<T> MakeData(std::initializer_list<size_t> sizes, FillMode mode = FillMode::Random) {
 	if (sizes.size() == 0) {
 		throw std::invalid_argument("Sizes list cannot be empty");
 	}
@@ -92,7 +112,7 @@ std::vector<T> make_data(std::initializer_list<size_t> sizes, FillMode mode = Fi
  * @param length Длина массива.
  */
 template<typename T>
-void print_data_1d(const T* data, int length) {
+void PrintData1d(const T* data, int length) {
 	for (int idx = 0; idx < length; ++idx) {
 		std::cout << std::fixed << std::setprecision(2) << data[idx] << "\t";
 	}
@@ -108,7 +128,7 @@ void print_data_1d(const T* data, int length) {
  * @param height Количество столбцов.
  */
 template<typename T>
-void print_data_2d(const T* data, int width, int height) {
+void PrintData2d(const T* data, int width, int height) {
 	for (int i = 0; i < height; ++i) {
 		for (int j = 0; j < width; ++j) {
 			std::cout << std::fixed << std::setprecision(2) << data[i * width + j] << " ";
@@ -129,7 +149,7 @@ void print_data_2d(const T* data, int width, int height) {
  * @throws std::runtime_error если файл не удалось открыть для записи.
  */
 template<typename T>
-void write_matrix_to_csv(const T* matrix, const size_t width,
+void WriteMatrixToCsv(const T* matrix, const size_t width,
 	const size_t height, const std::string& file_path) {
 	std::ofstream output_file(file_path);
 	if (!output_file) {
@@ -156,7 +176,7 @@ void write_matrix_to_csv(const T* matrix, const size_t width,
  * @return std::vector<std::vector<std::vector<T>>> Трёхмерный вектор.
  */
 template <typename T>
-std::vector<std::vector<std::vector<T>>> make_data_3d_vec_vec_vec(int n, int m, int l) {
+std::vector<std::vector<std::vector<T>>> MakeData3dVecVecVec(int n, int m, int l) {
 	const double kPi = std::acos(-1);
 	std::vector<std::vector<std::vector<T>>> data(l);
 
@@ -180,9 +200,48 @@ std::vector<std::vector<std::vector<T>>> make_data_3d_vec_vec_vec(int n, int m, 
  * @param finishTime Время окончания.
  * @param message Сообщение для отображения.
  */
-inline void show_time(double startTime, double finishTime, std::string message) {
+inline void ShowTime(double startTime, double finishTime, std::string message) {
 	std::cout << message << ":\t" << finishTime - startTime << " sec" << std::endl;
 }
+
+// Функция для проверки совпадения массивов
+template <typename T>
+void CompareData(const std::vector<T>& original, const std::vector<T>& transformed, double tolerance = 1e-9) {
+	if (original.size() != transformed.size()) {
+		std::cerr << "Error: sizes differ!" << std::endl;
+		return;
+	}
+
+	// Считаем максимальное отклонение
+	double max_diff = 0.0;
+	double l2_norm = 0.0;
+
+	for (size_t i = 0; i < original.size(); ++i) {
+		double diff = std::abs(original[i] - transformed[i]);
+		max_diff = std::max(max_diff, diff);
+		l2_norm += diff * diff;
+	}
+
+	l2_norm = std::sqrt(l2_norm / original.size());
+
+	std::cout << "Max difference: " << max_diff << std::endl;
+	std::cout << "L2 norm of difference: " << l2_norm << std::endl;
+
+	if (max_diff < tolerance) {
+		std::cout << "Transform verified: data matches within tolerance." << std::endl;
+	} else {
+		std::cout << "Transform mismatch: data differs beyond tolerance." << std::endl;
+	}
+}
+
+// Парсинг строки вида "NxM[xK]"
+std::vector<size_t> ParseDims(const std::string& str);
+
+// Определение режима вычисления
+Modes ParseDevice(const char* device);
+
+LoadingConfig ParseArgs(int argc, char** argv);
+
 
 } // namespace RapiDHT
 

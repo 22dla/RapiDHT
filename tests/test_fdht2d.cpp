@@ -1,77 +1,39 @@
-#include <rapidht.h>
+п»ї#include <rapidht.h>
 #include <utilities.h>
-#include <iostream>
-#include <cmath>
-#include <numeric>
-#include <cstring>
-#include <chrono>
 
 using namespace RapiDHT;
 
-int main(int argc, char** argv)
-{
-    // ---- Размеры массива ----
-    size_t width = 1 << 6;
-    size_t height = 1 << 5;
-    auto mode = Modes::GPU;
+int main(int argc, char** argv) {
+	// ---- РћР±СЂР°Р±РѕС‚РєР° Р°СЂРіСѓРјРµРЅС‚РѕРІ ----
+	auto cfg = ParseArgs(argc, argv);
+	cfg.width = 1 << 10;
+	cfg.height = 1 << 5;
+	cfg.mode = Modes::CPU;
 
-    // ---- Обработка аргументов ----
-    if (argc >= 3) {
-        width = std::atoi(argv[1]);
-        height = std::atoi(argv[2]);
+	auto width = cfg.width;
+	auto height = cfg.height;
+	auto mode = cfg.mode;
 
-        if (argc >= 4) {
-            const char* device = argv[3];
-            if (!strcmp(device, "CPU")) {
-                mode = Modes::CPU;
-            }
-            else if (!strcmp(device, "GPU")) {
-                mode = Modes::GPU;
-            }
-            else if (!strcmp(device, "RFFT")) {
-                mode = Modes::RFFT;
-            }
-            else {
-                std::cerr << "Error: device must be either CPU, GPU or RFFT" << std::endl;
-                return 1;
-            }
-        }
-        if (argc >= 5) {
-            std::cerr << "Usage: " << argv[0] << " rows cols [device]" << std::endl;
-            return 1;
-        }
-    }
-    else if (argc == 2) {
-        std::cerr << "Usage: " << argv[0] << " rows cols [device]" << std::endl;
-        return 1;
-    }
+	// ---- РЎРѕР·РґР°РЅРёРµ РґР°РЅРЅС‹С… ----
+	auto original_data = MakeData<double>({ width, height }, FillMode::Random);
+	auto transformed_data = original_data;
+	//PrintData2d(original_data.data(), width, height);
 
-    // ---- Создание данных ----
-    auto original_data = make_data<double>({ width, height }, FillMode::Sequential);
-    auto transformed_data = original_data;
-    //print_data_2d(original_data.data(), width, height);
+	// ---- Р—Р°СЃРµРєР°РµРј РІСЂРµРјСЏ ----
+	auto start_time = std::chrono::high_resolution_clock::now();
 
-    // ---- Засекаем время ----
-    auto start_time = std::chrono::high_resolution_clock::now();
+	// ---- РџСЂРµРѕР±СЂР°Р·РѕРІР°РЅРёРµ РҐР°СЂС‚Р»Рё ----
+	HartleyTransform ht(width, height, 0, mode);
+	ht.ForwardTransform(transformed_data.data());
+	//PrintData2d(transformed_data.data(), width, height);
+	ht.InverseTransform(transformed_data.data());
 
-    // ---- Преобразование Хартли ----
-    HartleyTransform ht(width, height, 0, mode);
-    ht.ForwardTransform(transformed_data.data());
-    //print_data_2d(transformed_data.data(), width, height);
-    ht.InverseTransform(transformed_data.data());
+	auto end_time = std::chrono::high_resolution_clock::now();
+	std::chrono::duration<double> elapsed = end_time - start_time;
+	ShowTime(0, elapsed.count(), "Common time");
 
-    auto end_time = std::chrono::high_resolution_clock::now();
-    std::chrono::duration<double> elapsed = end_time - start_time;
-    show_time(0, elapsed.count(), "Common time");
-
-    //print_data_2d(transformed_data.data(), width, height);
-    // ---- Подсчёт ошибки ----
-    double sum_sqr = std::transform_reduce(
-        transformed_data.begin(), transformed_data.end(),
-        original_data.begin(), 0.0, std::plus<>(),
-        [](double x, double y) { return (x - y) * (x - y); }
-    );
-
-    std::cout << "Error:\t" << std::sqrt(sum_sqr) << std::endl;
-    return 0;
+	//PrintData2d(transformed_data.data(), width, height);
+	// ---- РџРѕРґСЃС‡С‘С‚ РѕС€РёР±РєРё ----
+	CompareData(original_data, transformed_data);
+	return 0;
 }

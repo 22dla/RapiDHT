@@ -1,55 +1,33 @@
-#include <iostream>
 #include <rapidht.h>
 #include <utilities.h>
-#include <cmath>
-#include <cstring>
 
 using namespace RapiDHT;
 
 int main(int argc, char** argv) {
-	// Define global 3D array sizes
-	size_t width = static_cast<int>(pow(2, 10));
-	size_t height = width;
-	size_t images_num = 10;
-	auto mode = RapiDHT::Modes::CPU;
+	// ---- Обработка аргументов ----
+	auto cfg = ParseArgs(argc, argv);
+	cfg.width = 1 << 10;
+	cfg.height = 1 << 5;
+	cfg.depth = 1 << 6;
+	cfg.mode = Modes::CPU;
 
-	// If arguments are parced then exactly two arguments are required
-	if (argc >= 2) {
-		if (argc >= 3) {
-			width = std::atoi(argv[1]);
-			height = width;
-			images_num = std::atoi(argv[2]);
-			if (argc >= 4) {
-				auto device = argv[3];
-				if (!strcmp(device, "CPU")) {
-					mode = RapiDHT::Modes::CPU;
-				} else if (!strcmp(device, "GPU")) {
-					mode = RapiDHT::Modes::GPU;
-				} else if (!strcmp(device, "RFFT")) {
-					mode = RapiDHT::Modes::RFFT;
-				} else {
-					std::cerr << "Error: device must be either CPU, GPU or RFFT" << std::endl;
-					return 1;
-				}
-			}
-		} else {
-			std::cerr << "Usage: " << argv[0] << " rows images_num" << std::endl;
-			return 1;
-		}
-	}
+	auto width = cfg.width;
+	auto height = cfg.height;
+	auto depth = cfg.depth;
+	auto mode = cfg.mode;
 
 	auto common_start = std::chrono::high_resolution_clock::now();
 
 	std::cout << "making data...";
 	auto making_start = std::chrono::high_resolution_clock::now();
-	auto a3 = make_data<double>({ width, height, images_num });
+	auto a3 = MakeData<double>({ width, height, depth });
 	auto making_finish = std::chrono::high_resolution_clock::now();
 	auto making_time = std::chrono::duration_cast<std::chrono::milliseconds>(making_finish - making_start);
 	std::cout << "time:\t" << making_time.count() / 1000.0 << std::endl;
 
 	std::cout << "HT calculation...";
 	auto calculation_start = std::chrono::high_resolution_clock::now();
-	RapiDHT::HartleyTransform ht(width, height, images_num, mode);
+	RapiDHT::HartleyTransform ht(width, height, depth, mode);
 	ht.ForwardTransform(a3.data());
 	auto calculation_finish = std::chrono::high_resolution_clock::now();
 	auto calculation_time = std::chrono::duration_cast<std::chrono::milliseconds>(calculation_finish - calculation_start);

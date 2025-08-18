@@ -42,7 +42,7 @@ int main(int argc, char** argv) {
 
 	std::cout << "making data...";
 	auto making_start = std::chrono::high_resolution_clock::now();
-	auto a3 = make_data<double>({ width, height, images_num });
+	auto a3 = MakeData<double>({ width, height, images_num });
 	auto making_finish = std::chrono::high_resolution_clock::now();
 	auto making_time = std::chrono::duration_cast<std::chrono::milliseconds>(making_finish - making_start);
 	std::cout << "time:\t" << making_time.count() / 1000.0 << std::endl;
