@@ -22,11 +22,10 @@ int main(int argc, char** argv) {
 	//PrintData2d(original_data.data(), width, height);
 
 	// ---- Засекаем время ----
-	
+	auto start_time = std::chrono::high_resolution_clock::now();
 
 	// ---- Преобразование Хартли ----
 	HartleyTransform ht(width, height, 0, mode);
-	auto start_time = std::chrono::high_resolution_clock::now();
 	ht.ForwardTransform(transformed_data.data());
 	//PrintData2d(transformed_data.data(), width, height);
 	ht.InverseTransform(transformed_data.data());

@@ -23,14 +23,14 @@ HartleyTransform::HartleyTransform(size_t width, size_t height = 0, size_t depth
 	if (_mode == Modes::CPU || _mode == Modes::RFFT) {
 		for (size_t i = 0; i < _bitReversedIndices.size(); ++i) {
 			_bitReversedIndices[i].resize(_dims[i]);
-			BitReverse(&_bitReversedIndices[i]);
+			BitReverse(_bitReversedIndices[i]);
 		}
 	}
 	if (_mode == Modes::GPU) {
 		// Initialize transform matrices on the host
-		InitializeKernelHost(&_hTransformMatrices[static_cast<size_t>(Direction::X)], Width());
-		InitializeKernelHost(&_hTransformMatrices[static_cast<size_t>(Direction::Y)], Height());
-		InitializeKernelHost(&_hTransformMatrices[static_cast<size_t>(Direction::Z)], Depth());
+		InitializeKernelHost(_hTransformMatrices[static_cast<size_t>(Direction::X)], Width());
+		InitializeKernelHost(_hTransformMatrices[static_cast<size_t>(Direction::Y)], Height());
+		InitializeKernelHost(_hTransformMatrices[static_cast<size_t>(Direction::Z)], Depth());
 
 		// transfer CPU -> GPU
 		_dTransformMatrices[static_cast<size_t>(Direction::X)].resize(Width() * Width());
@@ -99,10 +99,9 @@ void HartleyTransform::InverseTransform(double* data) {
 	}
 }
 
-void HartleyTransform::BitReverse(std::vector<size_t>* indices_ptr) {
+void HartleyTransform::BitReverse(std::vector<size_t>& indices) {
 	PROFILE_FUNCTION();
 
-	auto& indices = *indices_ptr;
 	if (indices.empty()) {
 		return;
 	}
@@ -124,20 +123,16 @@ void HartleyTransform::BitReverse(std::vector<size_t>* indices_ptr) {
 	}
 }
 
-void HartleyTransform::InitializeKernelHost(std::vector<double>* kernel, size_t height) {
+void HartleyTransform::InitializeKernelHost(std::vector<double>& kernel, size_t height) {
 	PROFILE_FUNCTION();
 
-	if (kernel == nullptr) {
-		throw std::invalid_argument("Error: kernell==nullptr (InitializeKernelHost)");
-	}
-	auto& ker = *kernel;
-	ker.resize(height * height);
-	const double m_pi = std::acos(-1);
+	kernel.resize(height * height);
+	const auto m_pi = std::acos(-1);
 
 	// Initialize the matrice on the host
 	for (size_t k = 0; k < height; ++k) {
 		for (size_t j = 0; j < height; ++j) {
-			ker[k * height + j] = std::cos(2 * m_pi * k * j / height) + std::sin(2 * m_pi * k * j / height);
+			kernel[k * height + j] = std::cos(2 * m_pi * k * j / height) + std::sin(2 * m_pi * k * j / height);
 		}
 	}
 }
@@ -147,7 +142,6 @@ std::vector<double> HartleyTransform::DHT1D(const std::vector<double>& a, const 
 	PROFILE_FUNCTION();
 
 	std::vector<double> result(a.size());
-
 	for (size_t i = 0; i < a.size(); i++) {
 		for (size_t j = 0; j < a.size(); j++) {
 			result[i] += (kernel[i * a.size() + j] * a[j]);
@@ -159,10 +153,8 @@ std::vector<double> HartleyTransform::DHT1D(const std::vector<double>& a, const 
 }
 
 template <typename T>
-void HartleyTransform::Transpose(std::vector<std::vector<T>>* matrix_ptr) {
+void HartleyTransform::Transpose(std::vector<std::vector<T>>& matrix) {
 	PROFILE_FUNCTION();
-
-	std::vector<std::vector<T>>& matrix = *matrix_ptr;
 
 	const size_t width = matrix.size();
 	const size_t height = matrix[0].size();
@@ -231,53 +223,55 @@ void HartleyTransform::Series1D(double* image_ptr, Direction direction) {
 	}
 }
 
-void HartleyTransform::FDHT1D(double* vec, const Direction& direction) {
+void HartleyTransform::FDHT1D(double* vec, Direction direction) {
 	if (vec == nullptr) {
 		throw std::invalid_argument("The pointer to vector is null.");
 	}
 
+	const size_t n = Length(direction);
+
 	// Indices for bit reversal operation
 	// and length of vector depending of direction
-	if (Length(direction) < 0) {
+	if (n < 0) {
 		std::cout << "Error: length must be non-negative." << std::endl;
 		throw std::invalid_argument("Error: length must be non-negative.");
 	}
 	// Check that length is power of 2
-	if (std::ceil(std::log2(Length(direction))) != std::floor(std::log2(Length(direction)))) {
+	if (std::ceil(std::log2(n)) != std::floor(std::log2(n))) {
 		std::cout << "Error: length must be a power of two." << std::endl;
 		throw std::invalid_argument("Error: length must be a power of two.");
 	}
 
-	for (int i = 1; i < Length(direction); ++i) {
-		size_t j = BitReversedIndex(direction, i);
+	for (size_t i = 1; i < n; ++i) {
+		auto j = BitReversedIndex(direction, i);
 		if (j > i) {
 			std::swap(vec[i], vec[j]);
 		}
 	}
 
 	// FHT for 1rd axis
-	const int kLog2n = static_cast<int>(log2f(static_cast<float>(Length(direction))));
-	const double kPi = std::acos(-1);
+	const auto kLog2n = static_cast<size_t>(std::log2(n));
+	const auto kPi = std::acos(-1);
 
 	// Main cicle
-	for (int s = 1; s <= kLog2n; ++s) {
-		int m = static_cast<int>(powf(2, s));
-		int m2 = m / 2;
-		int m4 = m / 4;
+	for (size_t s = 1; s <= kLog2n; ++s) {
+		const auto m = size_t(1) << s;
+		const auto m2 = m / 2;
+		const auto m4 = m / 4;
 
-		for (size_t r = 0; r <= Length(direction) - m; r = r + m) {
+		for (size_t r = 0; r <= n - m; r = r + m) {
 			for (size_t j = 1; j < m4; ++j) {
 				int k = m2 - j;
-				double u = vec[r + m2 + j];
-				double v = vec[r + m2 + k];
-				double c = std::cos(static_cast<double>(j) * kPi / m2);
-				double s = std::sin(static_cast<double>(j) * kPi / m2);
+				const auto u = vec[r + m2 + j];
+				const auto v = vec[r + m2 + k];
+				const auto c = std::cos(j * kPi / m2);
+				const auto s = std::sin(j * kPi / m2);
 				vec[r + m2 + j] = u * c + v * s;
 				vec[r + m2 + k] = u * s - v * c;
 			}
 			for (size_t j = 0; j < m2; ++j) {
-				double u = vec[r + j];
-				double v = vec[r + j + m2];
+				const auto u = vec[r + j];
+				const auto v = vec[r + j + m2];
 				vec[r + j] = u + v;
 				vec[r + j + m2] = u - v;
 			}
@@ -292,10 +286,10 @@ void HartleyTransform::BracewellTransform2DCPU(double* image_ptr) {
 #pragma omp parallel for
 	for (int i = 0; i < Width(); ++i) {
 		for (int j = 0; j < Height(); ++j) {
-			double A = image_ptr[i * Height() + j];
-			double B = (i > 0 && j > 0) ? image_ptr[i * Height() + (Height() - j)] : A;
-			double C = (i > 0 && j > 0) ? image_ptr[(Width() - i) * Height() + j] : A;
-			double D = (i > 0 && j > 0) ? image_ptr[(Width() - i) * Height() + (Height() - j)] : A;
+			const double A = image_ptr[i * Height() + j];
+			const double B = (i > 0 && j > 0) ? image_ptr[i * Height() + (Height() - j)] : A;
+			const double C = (i > 0 && j > 0) ? image_ptr[(Width() - i) * Height() + j] : A;
+			const double D = (i > 0 && j > 0) ? image_ptr[(Width() - i) * Height() + (Height() - j)] : A;
 			H[i * Height() + j] = (A + B + C - D) / 2.0;
 		}
 	}
@@ -360,18 +354,18 @@ void HartleyTransform::RealFFT1D(double* vec, Direction direction) {
 	for (int i = 0; i < Length(direction); i++) {
 		x[i] = std::complex<double>(vec[i], 0);
 	}
-	unsigned int k = Length(direction);
-	unsigned int n;
-	double thetaT = 3.14159265358979323846264338328L / Length(direction);
-	std::complex<double> phiT = std::complex<double>(cos(thetaT), -sin(thetaT)), T;
+	size_t k = Length(direction);
+	size_t n;
+	const double thetaT = std::acos(-1) / Length(direction);
+	std::complex<double> phiT = std::complex<double>(std::cos(thetaT), -std::sin(thetaT)), T;
 	while (k > 1) {
 		n = k;
 		k >>= 1;
 		phiT = phiT * phiT;
 		T = 1.0L;
-		for (unsigned int l = 0; l < k; l++) {
-			for (unsigned int a = l; a < Length(direction); a += n) {
-				unsigned int b = a + k;
+		for (size_t l = 0; l < k; l++) {
+			for (size_t a = l; a < Length(direction); a += n) {
+				size_t b = a + k;
 				std::complex<double> t = x[a] - x[b];
 				x[a] += x[b];
 				x[b] = t * T;
@@ -380,9 +374,9 @@ void HartleyTransform::RealFFT1D(double* vec, Direction direction) {
 		}
 	}
 	// Decimate
-	unsigned int m = (unsigned int)log2(Length(direction));
-	for (unsigned int a = 0; a < Length(direction); a++) {
-		unsigned int b = a;
+	size_t m = (size_t)log2(Length(direction));
+	for (size_t a = 0; a < Length(direction); a++) {
+		size_t b = a;
 		// Reverse bits
 		b = (((b & 0xaaaaaaaa) >> 1) | ((b & 0x55555555) << 1));
 		b = (((b & 0xcccccccc) >> 2) | ((b & 0x33333333) << 2));

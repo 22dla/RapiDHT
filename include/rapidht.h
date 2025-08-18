@@ -63,7 +63,7 @@ private:
      * @param vector Pointer to the input/output data array.
      * @param direction Direction along which to perform the transform.
      */
-    void FDHT1D(double* vector, const Direction& direction = Direction::X);
+    void FDHT1D(double* vector, Direction direction = Direction::X);
 
     /**
      * @brief Performs a 2D Fast Hartley Transform on the given image.
@@ -102,14 +102,14 @@ private:
      * @brief Computes bit-reversed indices for FFT.
      * @param indices Pointer to the vector of indices to fill.
      */
-    static void BitReverse(std::vector<size_t>* indices);
+    static void BitReverse(std::vector<size_t>& indices);
 
     /**
      * @brief Initializes the kernel used for 1D Hartley transform.
      * @param kernel Pointer to the kernel vector to initialize.
      * @param height Height of the 1D transform.
      */
-    static void InitializeKernelHost(std::vector<double>* kernel, size_t height);
+    static void InitializeKernelHost(std::vector<double>& kernel, size_t height);
 
     /**
      * @brief Computes the 1D Hartley transform using a given kernel.
@@ -125,7 +125,7 @@ private:
      * @param image Pointer to the 2D vector to transpose.
      */
     template <typename T>
-    static void Transpose(std::vector<std::vector<T>>* image);
+    static void Transpose(std::vector<std::vector<T>>& image);
 
     /**
      * @brief Performs a simple transpose of a 2D array in place.
