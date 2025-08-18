@@ -6,13 +6,15 @@ using namespace RapiDHT;
 int main(int argc, char** argv) {
 	// ---- Обработка аргументов ----
 	auto cfg = ParseArgs(argc, argv);
-	cfg.width = 1 << 10;
-	cfg.height = 1 << 5;
+	cfg.width = 1 << 12;
+	cfg.height = 1 << 12;
 	cfg.mode = Modes::CPU;
 
 	auto width = cfg.width;
 	auto height = cfg.height;
 	auto mode = cfg.mode;
+
+	cfg.print();
 
 	// ---- Создание данных ----
 	auto original_data = MakeData<double>({ width, height }, FillMode::Random);
@@ -20,10 +22,11 @@ int main(int argc, char** argv) {
 	//PrintData2d(original_data.data(), width, height);
 
 	// ---- Засекаем время ----
-	auto start_time = std::chrono::high_resolution_clock::now();
+	
 
 	// ---- Преобразование Хартли ----
 	HartleyTransform ht(width, height, 0, mode);
+	auto start_time = std::chrono::high_resolution_clock::now();
 	ht.ForwardTransform(transformed_data.data());
 	//PrintData2d(transformed_data.data(), width, height);
 	ht.InverseTransform(transformed_data.data());

@@ -8,6 +8,8 @@
 namespace RapiDHT {
 
 HartleyTransform::HartleyTransform(size_t width, size_t height = 0, size_t depth = 0, Modes mode = Modes::CPU) :_mode(mode) {
+	PROFILE_FUNCTION();
+
 	if (width == 0) {
 		throw std::invalid_argument("Width must be positive.");
 	}
@@ -42,6 +44,8 @@ HartleyTransform::HartleyTransform(size_t width, size_t height = 0, size_t depth
 }
 
 void HartleyTransform::ForwardTransform(double* data) {
+	PROFILE_FUNCTION();
+
 	bool is1D = (Height() == 0 && Depth() == 0);
 	bool is2D = (Height() > 0 && Depth() == 0);
 	bool is3D = (Depth() > 0);
@@ -77,8 +81,9 @@ void HartleyTransform::ForwardTransform(double* data) {
 }
 
 void HartleyTransform::InverseTransform(double* data) {
-	ForwardTransform(data);
+	PROFILE_FUNCTION();
 
+	ForwardTransform(data);
 	size_t totalSize = Width();
 	if (Height() > 0) {
 		totalSize *= Height();
@@ -95,8 +100,12 @@ void HartleyTransform::InverseTransform(double* data) {
 }
 
 void HartleyTransform::BitReverse(std::vector<size_t>* indices_ptr) {
+	PROFILE_FUNCTION();
+
 	auto& indices = *indices_ptr;
-	if (indices.empty()) return;
+	if (indices.empty()) {
+		return;
+	}
 
 	const size_t n = indices.size();
 	const int kLog2n = static_cast<int>(std::log2(n));
@@ -116,6 +125,8 @@ void HartleyTransform::BitReverse(std::vector<size_t>* indices_ptr) {
 }
 
 void HartleyTransform::InitializeKernelHost(std::vector<double>* kernel, size_t height) {
+	PROFILE_FUNCTION();
+
 	if (kernel == nullptr) {
 		throw std::invalid_argument("Error: kernell==nullptr (InitializeKernelHost)");
 	}
@@ -132,13 +143,16 @@ void HartleyTransform::InitializeKernelHost(std::vector<double>* kernel, size_t 
 }
 
 // test function
-std::vector<double> HartleyTransform::DHT1D(
-	const std::vector<double>& a, const std::vector<double>& kernel) {
+std::vector<double> HartleyTransform::DHT1D(const std::vector<double>& a, const std::vector<double>& kernel) {
+	PROFILE_FUNCTION();
+
 	std::vector<double> result(a.size());
 
-	for (size_t i = 0; i < a.size(); i++)
-		for (size_t j = 0; j < a.size(); j++)
+	for (size_t i = 0; i < a.size(); i++) {
+		for (size_t j = 0; j < a.size(); j++) {
 			result[i] += (kernel[i * a.size() + j] * a[j]);
+		}
+	}
 
 	// RVO works
 	return result;
@@ -146,6 +160,8 @@ std::vector<double> HartleyTransform::DHT1D(
 
 template <typename T>
 void HartleyTransform::Transpose(std::vector<std::vector<T>>* matrix_ptr) {
+	PROFILE_FUNCTION();
+
 	std::vector<std::vector<T>>& matrix = *matrix_ptr;
 
 	const size_t width = matrix.size();
@@ -161,6 +177,8 @@ void HartleyTransform::Transpose(std::vector<std::vector<T>>* matrix_ptr) {
 }
 
 void HartleyTransform::TransposeSimple(double* matrix, size_t width, size_t height) {
+	PROFILE_FUNCTION();
+
 	if (matrix == nullptr) {
 		throw std::invalid_argument("The pointer to matrix is null.");
 	}
@@ -200,14 +218,16 @@ void HartleyTransform::Series1D(double* image_ptr, Direction direction) {
 	if (_mode == Modes::CPU) {
 	#pragma omp parallel for
 		for (int i = 0; i < Width(); ++i) {
-			this->FDHT1D(image_ptr + i * Height(), direction);
+			FDHT1D(image_ptr + i * Height(), direction);
 		}
+		return;
 	}
 	if (_mode == Modes::RFFT) {
 	#pragma omp parallel for
 		for (int i = 0; i < Width(); ++i) {
 			RealFFT1D(image_ptr + i * Height(), direction);
 		}
+		return;
 	}
 }
 
@@ -266,7 +286,8 @@ void HartleyTransform::FDHT1D(double* vec, const Direction& direction) {
 }
 
 void HartleyTransform::BracewellTransform2DCPU(double* image_ptr) {
-	//PROFILE_FUNCTION();
+	PROFILE_FUNCTION();
+
 	std::vector<double> H(Width() * Height(), 0.0);
 #pragma omp parallel for
 	for (int i = 0; i < Width(); ++i) {
@@ -279,11 +300,12 @@ void HartleyTransform::BracewellTransform2DCPU(double* image_ptr) {
 		}
 	}
 
-	//image = std::move(H);
 	std::copy(H.begin(), H.end(), image_ptr);
 }
 
 void HartleyTransform::FDHT2D(double* image_ptr) {
+	PROFILE_FUNCTION();
+
 	if (image_ptr == nullptr) {
 		std::cout << "The pointer to image is null." << std::endl;
 		throw std::invalid_argument("The pointer to image is null.");
@@ -312,6 +334,8 @@ void HartleyTransform::FDHT2D(double* image_ptr) {
 
 // test functions
 void HartleyTransform::RealFFT1D(double* vec, Direction direction) {
+	PROFILE_FUNCTION();
+
 	if (vec == nullptr) {
 		std::cout << "The pointer to vector is null." << std::endl;
 		throw std::invalid_argument("The pointer to vector is null.");
@@ -378,6 +402,8 @@ void HartleyTransform::RealFFT1D(double* vec, Direction direction) {
 }
 
 void HartleyTransform::DHT1DCuda(double* h_x) {
+	PROFILE_FUNCTION();
+
 	// Allocate memory on the device
 	dev_array<double> d_x(Width());			// input vector
 	dev_array<double> d_y(Width());			// output vector
@@ -393,6 +419,8 @@ void HartleyTransform::DHT1DCuda(double* h_x) {
 }
 
 void HartleyTransform::DHT2DCuda(double* h_X) {
+	PROFILE_FUNCTION();
+
 	// Allocate memory on the device
 	dev_array<double> d_X(Width() * Height()); // one slice
 	dev_array<double> d_Y(Width() * Height()); // one slice

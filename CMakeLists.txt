@@ -17,6 +17,13 @@ message(STATUS "CUDA found: ${CUDA_VERSION}")
 # Add CUDA libraries
 set(CUDA_LIBS cublas cudart)  # cuBLAS + CUDA Runtime
 
+# Profiler option
+option(ENABLE_PROFILING "Enable function profiling" OFF)
+
+if(ENABLE_PROFILING)
+    add_compile_definitions(DEBUG)
+endif()
+
 # Add subdirectories
 add_subdirectory(source)
 add_subdirectory(tests)

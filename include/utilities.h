@@ -27,15 +27,33 @@ namespace RapiDHT {
 class Profiler {
 public:
 	Profiler(const std::string& functionName) :
-		m_functionName(functionName), m_startTime(std::chrono::high_resolution_clock::now()) {}
+		_functionName(functionName), _startTime(std::chrono::high_resolution_clock::now()) {}
 	~Profiler() {
 		auto endTime = std::chrono::high_resolution_clock::now();
-		auto duration = std::chrono::duration_cast<std::chrono::microseconds>(endTime - m_startTime).count();
-		std::cout << m_functionName << " took " << duration << " microseconds" << std::endl;
+		auto duration_us = std::chrono::duration_cast<std::chrono::microseconds>(endTime - _startTime).count();
+
+		// Автоматический выбор единиц
+		std::string unit = "mics";
+		double duration = static_cast<double>(duration_us);
+		if (duration > 1000.0) {
+			duration /= 1000.0;
+			unit = "ms";
+		}
+		if (duration > 1000.0) {
+			duration /= 1000.0;
+			unit = "s";
+		}
+
+		// Форматированный вывод: сначала время, потом имя функции
+		std::cout << std::setw(10) << std::fixed << std::setprecision(3) << duration << " " << unit
+			<< "\t|\t"
+			<< std::setw(30) << std::left << _functionName
+			<< std::endl;
 	}
+
 private:
-	std::string m_functionName;
-	std::chrono::high_resolution_clock::time_point m_startTime;
+	std::string _functionName;
+	std::chrono::high_resolution_clock::time_point _startTime;
 };
 
 struct LoadingConfig {
