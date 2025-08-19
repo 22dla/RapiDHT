@@ -1,0 +1,11 @@
+{
+	"cmake.buildDirectory": "${workspaceFolder}/build",
+	"C_Cpp.default.configurationProvider": "ms-vscode.cmake-tools",
+	"clangd.arguments": [
+		"--compile-commands-dir=build"
+	],
+	"files.associations": {
+		"*.cu": "cuda-cpp",
+		"*.cuh": "cuda-cpp"
+	}
+}

@@ -1,0 +1,8 @@
+CompileFlags:
+  CompilationDatabase: build
+  Add:
+    - --cuda-path="C:/Program Files/NVIDIA GPU Computing Toolkit/CUDA/v13.0"
+    - --cuda-gpu-arch=sm_75
+    - -DDEBUG=0
+    - -fms-compatibility
+    - -fms-compatibility-version=19.3
