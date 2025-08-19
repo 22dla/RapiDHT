@@ -1,14 +1,22 @@
-﻿#include <omp.h>
-#include <mpi.h>
-#include <rapidht.h>
-#include <utilities.h>
+﻿/*
+ * Project: RapiDHT
+ * File: rapidht.cpp
+ * Brief: Реализация ND-преобразований Хартли (CPU/OpenMP и GPU/CUDA), транспонирования и Bracewell.
+ * Author: Волков Евгений Александрович, volkov22dla@yandex.ru
+ */
+
 #include <complex>
-#include <kernel.h>
+#include <mpi.h>
 #include <cublas_v2.h>
+#include <omp.h>
+
+#include "kernel.h"
+#include "rapidht.h"
+#include "utilities.h"
 
 namespace RapiDHT {
 
-HartleyTransform::HartleyTransform(size_t width, size_t height = 0, size_t depth = 0, Modes mode = Modes::CPU) :_mode(mode) {
+HartleyTransform::HartleyTransform(size_t width, size_t height, size_t depth, Modes mode) : _mode(mode) {
 	PROFILE_FUNCTION();
 
 	if (width == 0) {
@@ -595,6 +603,9 @@ void HartleyTransform::DHT1DCuda(double* h_x) {
 void HartleyTransform::DHT2DCuda(double* h_X) {
 	PROFILE_FUNCTION();
 
+	// TODO: Перевести умножения матриц/векторов на cuBLAS для повышения производительности
+	// (cublasDgemm/cublasDgemv). Текущая реализация использует собственные CUDA-ядра.
+
 	// Allocate memory on the device
 	dev_array<double> d_X(Width() * Height()); // one slice
 	dev_array<double> d_Y(Width() * Height()); // one slice
@@ -622,6 +633,10 @@ void HartleyTransform::DHT2DCuda(double* h_X) {
 
 void HartleyTransform::DHT3DCuda(double* h_X) {
 	PROFILE_FUNCTION();
+
+	// TODO: Перенести вычисления (все умножения матриц, в т.ч. по Z) на cuBLAS
+	// для повышения производительности и лучшего использования GPU-памяти
+	// (например, cublasDgemmStridedBatched для батчей, cublasDgemm/cublasDgemv для одиночных вызовов).
 
 	const auto W = Width();
 	const auto H = Height();

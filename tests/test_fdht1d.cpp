@@ -1,10 +1,10 @@
-#include <rapidht.h>
-#include <utilities.h>
+#include "rapidht.h"
+#include "utilities.h"
 
 using namespace RapiDHT;
 
 int main(int argc, char** argv) {
-	// ---- Обработка аргументов ----
+	// ---- РћР±СЂР°Р±РѕС‚РєР° Р°СЂРіСѓРјРµРЅС‚РѕРІ ----
 	auto cfg = ParseArgs(argc, argv);
 	cfg.width = 1 << 10;
 
@@ -12,16 +12,16 @@ int main(int argc, char** argv) {
 	auto height = cfg.height;
 	auto mode = cfg.mode;
 
-	// ---- Создание данных ----
+	// ---- РЎРѕР·РґР°РЅРёРµ РґР°РЅРЅС‹С… ----
 	auto original_data = MakeData<double>({ width });
 	auto transformed_data = original_data;
 
 	PrintData1d(original_data.data(), width);
 
-	// ---- Засекаем время ----
+	// ---- Р—Р°СЃРµРєР°РµРј РІСЂРµРјСЏ ----
 	auto start_time = std::chrono::high_resolution_clock::now();
 
-	// ---- Преобразование Хартли ----
+	// ---- РџСЂРµРѕР±СЂР°Р·РѕРІР°РЅРёРµ ----
 	HartleyTransform ht(width, 0, 0, mode);
 	ht.ForwardTransform(transformed_data.data());
 	ht.InverseTransform(transformed_data.data());
@@ -32,7 +32,7 @@ int main(int argc, char** argv) {
 	std::chrono::duration<double> elapsed = end_time - start_time;
 	ShowTime(0, elapsed.count(), "Common time");
 
-	// ---- Подсчёт ошибки ----
+	// ---- РџРѕРґСЃС‡С‘С‚ РѕС€РёР±РєРё ----
 	double sum_sqr = std::transform_reduce(
 		transformed_data.begin(), transformed_data.end(),
 		original_data.begin(), 0.0, std::plus<>(),

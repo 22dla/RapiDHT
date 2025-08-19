@@ -1,9 +1,16 @@
-#ifndef FHT_H
-#define FHT_H
+/*
+ * Project: RapiDHT
+ * File: rapidht.h
+ * Brief: Публичный API дискретного преобразования Хартли (1D/2D/3D), CPU/GPU режимы.
+ * Author: Волков Евгений Александрович, volков22dla@yandex.ru
+ */
+
+#ifndef RAPIDHT_H
+#define RAPIDHT_H
 
 #include <vector>
 #include <array>
-#include <dev_array.h>
+#include "dev_array.h"
 
 namespace RapiDHT {
 enum class Direction : size_t { X = 0, Y = 1, Z = 2, Count };
@@ -169,4 +176,4 @@ private:
 };
 }
 
-#endif // !FHT_H
+#endif // RAPIDHT_H

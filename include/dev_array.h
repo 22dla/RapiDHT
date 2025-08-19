@@ -1,5 +1,12 @@
-#ifndef _DEV_ARRAY_H_
-#define _DEV_ARRAY_H_
+/*
+ * Project: RapiDHT
+ * File: dev_array.h
+ * Brief: RAII-обёртка над памятью GPU (CUDA) для одномерных массивов.
+ * Author: Волков Евгений Александрович, volkov22dla@yandex.ru
+ */
+
+#ifndef DEV_ARRAY_H
+#define DEV_ARRAY_H
 
 #include <stdexcept>
 #include <algorithm>
@@ -94,4 +101,4 @@ private:
 	T* end_;
 };
 
-#endif
+#endif // DEV_ARRAY_H

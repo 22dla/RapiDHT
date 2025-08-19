@@ -1,3 +1,10 @@
+/*
+ * Project: RapiDHT
+ * File: utilities.h
+ * Brief: Р’СЃРїРѕРјРѕРіР°С‚РµР»СЊРЅС‹Рµ СѓС‚РёР»РёС‚С‹: РїСЂРѕС„РёР»РёСЂРѕРІР°РЅРёРµ, РіРµРЅРµСЂР°С†РёСЏ РґР°РЅРЅС‹С…, РїР°СЂСЃРёРЅРі Р°СЂРіСѓРјРµРЅС‚РѕРІ.
+ * Author: Р’РѕР»РєРѕРІ Р•РІРіРµРЅРёР№ РђР»РµРєСЃР°РЅРґСЂРѕРІРёС‡, volkov22dla@yandex.ru
+ */
+
 #ifndef UTILITIES_H
 #define UTILITIES_H
 
@@ -6,13 +13,13 @@
 #include <vector>
 #include <iostream>
 #include <numeric>
+#include <algorithm>
 #include <random>
 #include <stdexcept>
 #include <execution>
 #include <fstream>
 #include <iomanip>
 #include <cmath>
-#include <iostream>
 #include <sstream>
 #include "rapidht.h"
 
@@ -32,7 +39,7 @@ public:
 		auto endTime = std::chrono::high_resolution_clock::now();
 		auto duration_us = std::chrono::duration_cast<std::chrono::microseconds>(endTime - _startTime).count();
 
-		// Автоматический выбор единиц
+		// пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅ
 		std::string unit = "mics";
 		double duration = static_cast<double>(duration_us);
 		if (duration > 1000.0) {
@@ -44,7 +51,7 @@ public:
 			unit = "s";
 		}
 
-		// Форматированный вывод: сначала время, потом имя функции
+		// пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅ: пїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅ, пїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅ
 		std::cout << std::setw(10) << std::fixed << std::setprecision(3) << duration << " " << unit
 			<< "\t|\t"
 			<< std::setw(30) << std::left << _functionName
@@ -78,19 +85,19 @@ enum class FillMode {
 	Sequential
 };
 /**
- * @brief Создает вектор данных с указанными размерами и заполняет его в одном из режимов.
+ * @brief пїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅ пїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅ пїЅ пїЅпїЅпїЅпїЅпїЅ пїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅ.
  *
- * Режимы заполнения:
- *  - FillMode::Random     — случайные числа в диапазоне [0, 255].
- *  - FillMode::Sequential — последовательные значения, начиная с 0.
+ * пїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ:
+ *  - FillMode::Random     пїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅ пїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ [0, 255].
+ *  - FillMode::Sequential пїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ, пїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅ 0.
  *
- * @tparam T Тип элементов вектора (например, int, float).
- * @param sizes Список размеров по каждой размерности.
- * @param mode  Режим заполнения (по умолчанию FillMode::Random).
- * @return std::vector<T> Вектор данных размером, равным произведению всех размеров.
+ * @tparam T пїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅ (пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ, int, float).
+ * @param sizes пїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ.
+ * @param mode  пїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ (пїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ FillMode::Random).
+ * @return std::vector<T> пїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ, пїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ.
  *
- * @throws std::invalid_argument Если sizes пуст или один из размеров равен 0.
- * @throws std::overflow_error  Если произведение размеров превышает допустимый размер size_t.
+ * @throws std::invalid_argument пїЅпїЅпїЅпїЅ sizes пїЅпїЅпїЅпїЅ пїЅпїЅпїЅ пїЅпїЅпїЅпїЅ пїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅ 0.
+ * @throws std::overflow_error  пїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅ size_t.
  */
 template <typename T>
 std::vector<T> MakeData(std::initializer_list<size_t> sizes, FillMode mode = FillMode::Random) {
@@ -98,7 +105,7 @@ std::vector<T> MakeData(std::initializer_list<size_t> sizes, FillMode mode = Fil
 		throw std::invalid_argument("Sizes list cannot be empty");
 	}
 
-	// Вычисляем общий размер
+	// пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅ
 	size_t total_size = std::accumulate(sizes.begin(), sizes.end(), size_t{ 1 },
 		[](size_t acc, size_t val) {
 		if (val == 0) throw std::invalid_argument("Dimension size cannot be zero");
@@ -123,11 +130,11 @@ std::vector<T> MakeData(std::initializer_list<size_t> sizes, FillMode mode = Fil
 }
 
 /**
- * @brief Выводит одномерный массив в консоль с форматированием.
+ * @brief пїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅ пїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ.
  *
- * @tparam T Тип данных массива.
- * @param data Указатель на данные массива.
- * @param length Длина массива.
+ * @tparam T пїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅ.
+ * @param data пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅ.
+ * @param length пїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅ.
  */
 template<typename T>
 void PrintData1d(const T* data, int length) {
@@ -138,12 +145,12 @@ void PrintData1d(const T* data, int length) {
 }
 
 /**
- * @brief Выводит двумерный массив в консоль с форматированием.
+ * @brief пїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅ пїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ.
  *
- * @tparam T Тип данных массива.
- * @param data Указатель на данные массива.
- * @param width Количество строк.
- * @param height Количество столбцов.
+ * @tparam T пїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅ.
+ * @param data пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅ.
+ * @param width пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅ.
+ * @param height пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ.
  */
 template<typename T>
 void PrintData2d(const T* data, int width, int height) {
@@ -157,14 +164,14 @@ void PrintData2d(const T* data, int width, int height) {
 }
 
 /**
- * @brief Сохраняет матрицу в CSV файл.
+ * @brief пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅ CSV пїЅпїЅпїЅпїЅ.
  *
- * @tparam T Тип данных матрицы.
- * @param matrix Указатель на данные матрицы.
- * @param width Количество строк.
- * @param height Количество столбцов.
- * @param file_path Путь к CSV файлу для записи.
- * @throws std::runtime_error если файл не удалось открыть для записи.
+ * @tparam T пїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅ.
+ * @param matrix пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅ.
+ * @param width пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅ.
+ * @param height пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ.
+ * @param file_path пїЅпїЅпїЅпїЅ пїЅ CSV пїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅ.
+ * @throws std::runtime_error пїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅ пїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅ.
  */
 template<typename T>
 void WriteMatrixToCsv(const T* matrix, const size_t width,
@@ -184,14 +191,14 @@ void WriteMatrixToCsv(const T* matrix, const size_t width,
 }
 
 /**
- * @brief Создает трёхмерный вектор std::vector<std::vector<std::vector<T>>>
- * и заполняет его значениями по формуле.
+ * @brief пїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅ std::vector<std::vector<std::vector<T>>>
+ * пїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅ.
  *
- * @tparam T Тип данных.
- * @param n Размер второй размерности.
- * @param m Размер третьей размерности.
- * @param l Размер первой размерности.
- * @return std::vector<std::vector<std::vector<T>>> Трёхмерный вектор.
+ * @tparam T пїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅ.
+ * @param n пїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ.
+ * @param m пїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ.
+ * @param l пїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ.
+ * @return std::vector<std::vector<std::vector<T>>> пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅ.
  */
 template <typename T>
 std::vector<std::vector<std::vector<T>>> MakeData3dVecVecVec(int n, int m, int l) {
@@ -212,17 +219,17 @@ std::vector<std::vector<std::vector<T>>> MakeData3dVecVecVec(int n, int m, int l
 }
 
 /**
- * @brief Выводит на консоль время выполнения с сообщением.
+ * @brief пїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ.
  *
- * @param startTime Время начала.
- * @param finishTime Время окончания.
- * @param message Сообщение для отображения.
+ * @param startTime пїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅ.
+ * @param finishTime пїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ.
+ * @param message пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ.
  */
 inline void ShowTime(double startTime, double finishTime, std::string message) {
 	std::cout << message << ":\t" << finishTime - startTime << " sec" << std::endl;
 }
 
-// Функция для проверки совпадения массивов
+// пїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ
 template <typename T>
 void CompareData(const std::vector<T>& original, const std::vector<T>& transformed, double tolerance = 1e-9) {
 	if (original.size() != transformed.size()) {
@@ -230,7 +237,7 @@ void CompareData(const std::vector<T>& original, const std::vector<T>& transform
 		return;
 	}
 
-	// Считаем максимальное отклонение
+	// пїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ
 	double max_diff = 0.0;
 	double l2_norm = 0.0;
 
@@ -252,10 +259,10 @@ void CompareData(const std::vector<T>& original, const std::vector<T>& transform
 	}
 }
 
-// Парсинг строки вида "NxM[xK]"
+// пїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅ "NxM[xK]"
 std::vector<size_t> ParseDims(const std::string& str);
 
-// Определение режима вычисления
+// пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ
 Modes ParseDevice(const char* device);
 
 LoadingConfig ParseArgs(int argc, char** argv);
