@@ -2,7 +2,7 @@
 
 namespace RapiDHT {
 
-// Парсинг строки вида "NxM[xK]"
+// пїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅ "NxM[xK]"
 std::vector<size_t> ParseDims(const std::string& str) {
 	std::vector<size_t> dims;
 	std::stringstream ss(str);
@@ -13,10 +13,17 @@ std::vector<size_t> ParseDims(const std::string& str) {
 	return dims;
 }
 
-// Определение устройства
+// пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ
 Modes ParseDevice(const char* device) {
 	if (!strcmp(device, "CPU")) return Modes::CPU;
-	if (!strcmp(device, "GPU")) return Modes::GPU;
+	if (!strcmp(device, "GPU")) {
+#ifndef USE_CUDA
+		// Fallback to CPU if CUDA is not available
+		return Modes::CPU;
+#else
+		return Modes::GPU;
+#endif
+	}
 	if (!strcmp(device, "RFFT")) return Modes::RFFT;
 	throw std::runtime_error("Error: device must be CPU, GPU or RFFT");
 }

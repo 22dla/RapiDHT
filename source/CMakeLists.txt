@@ -1,16 +1,26 @@
-# Find OpenMP
-find_package(OpenMP REQUIRED)
-set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} ${OpenMP_CXX_FLAGS}")
+# Find OpenMP (optional)
+find_package(OpenMP)
+if(OpenMP_CXX_FOUND)
+    set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} ${OpenMP_CXX_FLAGS}")
+    message(STATUS "OpenMP found")
+else()
+    message(STATUS "OpenMP not found; building without OpenMP")
+endif()
 
 
 # adding files from source
-file(GLOB SOURCES *.cpp *.cu)
+if(USE_CUDA)
+    file(GLOB SOURCES *.cpp *.cu)
+else()
+    file(GLOB SOURCES *.cpp)
+endif()
 add_library(coreht ${SOURCES})
 
 target_link_libraries(coreht
     PRIVATE
     ${CUDA_LIBS}
-	${MPI_CXX_LIBRARIES}
+    $<$<BOOL:${MPI_FOUND}>:${MPI_CXX_LIBRARIES}>
+    $<$<BOOL:${OpenMP_CXX_FOUND}>:OpenMP::OpenMP_CXX>
 )
 
 # installing of library

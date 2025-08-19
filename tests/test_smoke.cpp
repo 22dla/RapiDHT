@@ -7,7 +7,7 @@
 
 using namespace RapiDHT;
 
-// Функция для сравнения данных с допустимой погрешностью
+// пїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅ пїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ
 template <typename T>
 void ExpectVectorsNear(const std::vector<T>& a, const std::vector<T>& b, double tol = 1e-6) {
     ASSERT_EQ(a.size(), b.size());
@@ -16,7 +16,7 @@ void ExpectVectorsNear(const std::vector<T>& a, const std::vector<T>& b, double 
     }
 }
 
-// ---- 1D тесты ----
+// ---- 1D пїЅпїЅпїЅпїЅпїЅ ----
 TEST(FDHT, Test1D_Small_CPU) {
     size_t width = 8;
     auto mode = Modes::CPU;
@@ -45,6 +45,7 @@ TEST(FDHT, Test1D_Large_CPU) {
     ExpectVectorsNear(original, transformed);
 }
 
+#ifdef USE_CUDA
 TEST(FDHT, Test1D_Small_GPU) {
     size_t width = 8;
     auto mode = Modes::GPU;
@@ -72,8 +73,9 @@ TEST(FDHT, Test1D_Large_GPU) {
 
     ExpectVectorsNear(original, transformed);
 }
+#endif
 
-// ---- 2D тесты ----
+// ---- 2D  ----
 TEST(FDHT, Test2D_Small_CPU) {
     size_t width = 4;
     size_t height = 4;
@@ -104,6 +106,7 @@ TEST(FDHT, Test2D_Large_CPU) {
     ExpectVectorsNear(original, transformed);
 }
 
+#ifdef USE_CUDA
 TEST(FDHT, Test2D_Small_GPU) {
     size_t width = 4;
     size_t height = 4;
@@ -133,4 +136,5 @@ TEST(FDHT, Test2D_Large_GPU) {
 
     ExpectVectorsNear(original, transformed);
 }
+#endif
 

@@ -3,7 +3,9 @@
 
 #include <stdexcept>
 #include <algorithm>
+#ifdef USE_CUDA
 #include <cuda_runtime.h>
+#endif
 
 template <class T>
 class dev_array {
@@ -44,25 +46,36 @@ public:
 
 	// set
 	void set(const T* src, size_t size) {
+#ifdef USE_CUDA
 		size_t min = std::min(size, getSize());
 		cudaError_t result = cudaMemcpy(start_, src, min * sizeof(T), cudaMemcpyHostToDevice);
 		if (result != cudaSuccess) {
 			throw std::runtime_error("failed to copy to device memory");
 		}
+#else
+		(void)src; (void)size;
+		throw std::runtime_error("CUDA disabled: cannot copy to device memory");
+#endif
 	}
 	// get
 	void get(T* dest, size_t size) {
+#ifdef USE_CUDA
 		size_t min = std::min(size, getSize());
 		cudaError_t result = cudaMemcpy(dest, start_, min * sizeof(T), cudaMemcpyDeviceToHost);
 		if (result != cudaSuccess) {
 			throw std::runtime_error("failed to copy to host memory");
 		}
+#else
+		(void)dest; (void)size;
+		throw std::runtime_error("CUDA disabled: cannot copy from device memory");
+#endif
 	}
 
 
 private:
 	// allocate memory on the device
 	void allocate(size_t size) {
+#ifdef USE_CUDA
 		size_t free_bytes, total_bytes;
 		cudaError_t result = cudaMemGetInfo(&free_bytes, &total_bytes);
 		if (result != cudaSuccess) {
@@ -79,15 +92,23 @@ private:
 			throw std::runtime_error("failed to allocate device memory");
 		}
 		end_ = start_ + size;
+#else
+		(void)size;
+		throw std::runtime_error("CUDA disabled: cannot allocate device memory");
+#endif
 	}
 
 
 	// free memory on the device
 	void free() {
+#ifdef USE_CUDA
 		if (start_ != 0) {
 			cudaFree(start_);
 			start_ = end_ = 0;
 		}
+#else
+		start_ = end_ = 0;
+#endif
 	}
 
 	T* start_;
