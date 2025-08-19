@@ -1,3 +1,10 @@
+/*
+ * Project: RapiDHT
+ * File: utilities.h
+ * Brief: Р’СЃРїРѕРјРѕРіР°С‚РµР»СЊРЅС‹Рµ СѓС‚РёР»РёС‚С‹: РїСЂРѕС„РёР»РёСЂРѕРІР°РЅРёРµ, РіРµРЅРµСЂР°С†РёСЏ РґР°РЅРЅС‹С…, РїР°СЂСЃРёРЅРі Р°СЂРіСѓРјРµРЅС‚РѕРІ.
+ * Author: Р’РѕР»РєРѕРІ Р•РІРіРµРЅРёР№ РђР»РµРєСЃР°РЅРґСЂРѕРІРёС‡, volkov22dla@yandex.ru
+ */
+
 #ifndef UTILITIES_H
 #define UTILITIES_H
 
@@ -6,13 +13,12 @@
 #include <vector>
 #include <iostream>
 #include <numeric>
+#include <algorithm>
 #include <random>
 #include <stdexcept>
-#include <execution>
 #include <fstream>
 #include <iomanip>
 #include <cmath>
-#include <iostream>
 #include <sstream>
 #include "rapidht.h"
 
@@ -32,7 +38,7 @@ public:
 		auto endTime = std::chrono::high_resolution_clock::now();
 		auto duration_us = std::chrono::duration_cast<std::chrono::microseconds>(endTime - _startTime).count();
 
-		// Автоматический выбор единиц
+		// Р§РµР»РѕРІРµРєРѕС‡РёС‚Р°РµРјС‹Рµ РµРґРёРЅРёС†С‹ РІСЂРµРјРµРЅРё
 		std::string unit = "mics";
 		double duration = static_cast<double>(duration_us);
 		if (duration > 1000.0) {
@@ -44,7 +50,7 @@ public:
 			unit = "s";
 		}
 
-		// Форматированный вывод: сначала время, потом имя функции
+		// Р¤РѕСЂРјР°С‚РёСЂРѕРІР°РЅРЅС‹Р№ РІС‹РІРѕРґ: РІСЂРµРјСЏ Рё РёРјСЏ С„СѓРЅРєС†РёРё
 		std::cout << std::setw(10) << std::fixed << std::setprecision(3) << duration << " " << unit
 			<< "\t|\t"
 			<< std::setw(30) << std::left << _functionName
@@ -78,19 +84,19 @@ enum class FillMode {
 	Sequential
 };
 /**
- * @brief Создает вектор данных с указанными размерами и заполняет его в одном из режимов.
+ * @brief Р“РµРЅРµСЂРёСЂСѓРµС‚ РјР°СЃСЃРёРІ РґР°РЅРЅС‹С… СЃ СѓРєР°Р·Р°РЅРЅС‹РјРё СЂР°Р·РјРµСЂР°РјРё Рё Р·Р°РїРёСЃС‹РІР°РµС‚ РµРіРѕ РІ РІРµРєС‚РѕСЂ.
  *
- * Режимы заполнения:
- *  - FillMode::Random     — случайные числа в диапазоне [0, 255].
- *  - FillMode::Sequential — последовательные значения, начиная с 0.
+ * Р РµР¶РёРјС‹ Р·Р°РїРѕР»РЅРµРЅРёСЏ:
+ *  - FillMode::Random     вЂ” СЃР»СѓС‡Р°Р№РЅС‹Рµ Р·РЅР°С‡РµРЅРёСЏ РІ РґРёР°РїР°Р·РѕРЅРµ [0, 255].
+ *  - FillMode::Sequential вЂ” РїРѕСЃР»РµРґРѕРІР°С‚РµР»СЊРЅС‹Рµ Р·РЅР°С‡РµРЅРёСЏ, РЅР°С‡РёРЅР°СЏ СЃ 0.
  *
- * @tparam T Тип элементов вектора (например, int, float).
- * @param sizes Список размеров по каждой размерности.
- * @param mode  Режим заполнения (по умолчанию FillMode::Random).
- * @return std::vector<T> Вектор данных размером, равным произведению всех размеров.
+ * @tparam T С‚РёРї СЌР»РµРјРµРЅС‚РѕРІ РјР°СЃСЃРёРІР° (РЅР°РїСЂРёРјРµСЂ, int, float, double).
+ * @param sizes СЃРїРёСЃРѕРє СЂР°Р·РјРµСЂРѕРІ РїРѕ РєР°Р¶РґРѕРјСѓ РёР·РјРµСЂРµРЅРёСЋ.
+ * @param mode  СЂРµР¶РёРј Р·Р°РїРѕР»РЅРµРЅРёСЏ (РїРѕ СѓРјРѕР»С‡Р°РЅРёСЋ FillMode::Random).
+ * @return std::vector<T> РІРµРєС‚РѕСЂ СЃРѕ СЃРіРµРЅРµСЂРёСЂРѕРІР°РЅРЅС‹РјРё РґР°РЅРЅС‹РјРё, РґР»РёРЅРѕР№ СЂР°РІРЅРѕР№ РїСЂРѕРёР·РІРµРґРµРЅРёСЋ СЂР°Р·РјРµСЂРѕРІ.
  *
- * @throws std::invalid_argument Если sizes пуст или один из размеров равен 0.
- * @throws std::overflow_error  Если произведение размеров превышает допустимый размер size_t.
+ * @throws std::invalid_argument РµСЃР»Рё sizes РїСѓСЃС‚ РёР»Рё СЃРѕРґРµСЂР¶РёС‚ РЅСѓР»РµРІРѕРµ РёР·РјРµСЂРµРЅРёРµ.
+ * @throws std::overflow_error  РµСЃР»Рё РїСЂРѕРёР·РІРµРґРµРЅРёРµ СЂР°Р·РјРµСЂРѕРІ РїСЂРµРІС‹С€Р°РµС‚ РјР°РєСЃРёРјР°Р»СЊРЅС‹Р№ СЂР°Р·РјРµСЂ size_t.
  */
 template <typename T>
 std::vector<T> MakeData(std::initializer_list<size_t> sizes, FillMode mode = FillMode::Random) {
@@ -98,7 +104,7 @@ std::vector<T> MakeData(std::initializer_list<size_t> sizes, FillMode mode = Fil
 		throw std::invalid_argument("Sizes list cannot be empty");
 	}
 
-	// Вычисляем общий размер
+	// РћР±С‰РёР№ РѕР±СЉС‘Рј РґР°РЅРЅС‹С… = РїСЂРѕРёР·РІРµРґРµРЅРёРµ СЂР°Р·РјРµСЂРѕРІ
 	size_t total_size = std::accumulate(sizes.begin(), sizes.end(), size_t{ 1 },
 		[](size_t acc, size_t val) {
 		if (val == 0) throw std::invalid_argument("Dimension size cannot be zero");
@@ -113,7 +119,7 @@ std::vector<T> MakeData(std::initializer_list<size_t> sizes, FillMode mode = Fil
 		std::mt19937 gen(rd());
 		std::uniform_int_distribution<int> dist(0, 255);
 
-		std::for_each(std::execution::par, data.begin(), data.end(),
+		std::for_each(data.begin(), data.end(),
 			[&](T& x) { x = static_cast<T>(dist(gen)); });
 	} else if (mode == FillMode::Sequential) {
 		std::iota(data.begin(), data.end(), T{ 0 });
@@ -123,11 +129,11 @@ std::vector<T> MakeData(std::initializer_list<size_t> sizes, FillMode mode = Fil
 }
 
 /**
- * @brief Выводит одномерный массив в консоль с форматированием.
+ * @brief РџРµС‡Р°С‚Р°РµС‚ РѕРґРЅРѕРјРµСЂРЅС‹Р№ РјР°СЃСЃРёРІ СЃ С„РёРєСЃРёСЂРѕРІР°РЅРЅРѕР№ С‚РѕС‡РЅРѕСЃС‚СЊСЋ.
  *
- * @tparam T Тип данных массива.
- * @param data Указатель на данные массива.
- * @param length Длина массива.
+ * @tparam T С‚РёРї РґР°РЅРЅС‹С… РјР°СЃСЃРёРІР°.
+ * @param data СѓРєР°Р·Р°С‚РµР»СЊ РЅР° РјР°СЃСЃРёРІ РґР°РЅРЅС‹С….
+ * @param length РґР»РёРЅР° РјР°СЃСЃРёРІР°.
  */
 template<typename T>
 void PrintData1d(const T* data, int length) {
@@ -138,12 +144,12 @@ void PrintData1d(const T* data, int length) {
 }
 
 /**
- * @brief Выводит двумерный массив в консоль с форматированием.
+ * @brief РџРµС‡Р°С‚Р°РµС‚ РґРІСѓРјРµСЂРЅС‹Р№ РјР°СЃСЃРёРІ РІ С‚Р°Р±Р»РёС‡РЅРѕРј РІРёРґРµ.
  *
- * @tparam T Тип данных массива.
- * @param data Указатель на данные массива.
- * @param width Количество строк.
- * @param height Количество столбцов.
+ * @tparam T С‚РёРї РґР°РЅРЅС‹С… РјР°СЃСЃРёРІР°.
+ * @param data СѓРєР°Р·Р°С‚РµР»СЊ РЅР° РјР°СЃСЃРёРІ (row-major).
+ * @param width РєРѕР»РёС‡РµСЃС‚РІРѕ СЃС‚РѕР»Р±С†РѕРІ.
+ * @param height РєРѕР»РёС‡РµСЃС‚РІРѕ СЃС‚СЂРѕРє.
  */
 template<typename T>
 void PrintData2d(const T* data, int width, int height) {
@@ -157,14 +163,14 @@ void PrintData2d(const T* data, int width, int height) {
 }
 
 /**
- * @brief Сохраняет матрицу в CSV файл.
+ * @brief Р—Р°РїРёСЃС‹РІР°РµС‚ РјР°С‚СЂРёС†Сѓ РІ CSV-С„Р°Р№Р».
  *
- * @tparam T Тип данных матрицы.
- * @param matrix Указатель на данные матрицы.
- * @param width Количество строк.
- * @param height Количество столбцов.
- * @param file_path Путь к CSV файлу для записи.
- * @throws std::runtime_error если файл не удалось открыть для записи.
+ * @tparam T С‚РёРї СЌР»РµРјРµРЅС‚РѕРІ РјР°С‚СЂРёС†С‹.
+ * @param matrix СѓРєР°Р·Р°С‚РµР»СЊ РЅР° РґР°РЅРЅС‹Рµ РјР°С‚СЂРёС†С‹ (row-major).
+ * @param width РєРѕР»РёС‡РµСЃС‚РІРѕ СЃС‚РѕР»Р±С†РѕРІ.
+ * @param height РєРѕР»РёС‡РµСЃС‚РІРѕ СЃС‚СЂРѕРє.
+ * @param file_path РїСѓС‚СЊ Рє CSV-С„Р°Р№Р»Сѓ РґР»СЏ Р·Р°РїРёСЃРё.
+ * @throws std::runtime_error РµСЃР»Рё С„Р°Р№Р» РЅРµ СѓРґР°Р»РѕСЃСЊ РѕС‚РєСЂС‹С‚СЊ РґР»СЏ Р·Р°РїРёСЃРё.
  */
 template<typename T>
 void WriteMatrixToCsv(const T* matrix, const size_t width,
@@ -184,14 +190,14 @@ void WriteMatrixToCsv(const T* matrix, const size_t width,
 }
 
 /**
- * @brief Создает трёхмерный вектор std::vector<std::vector<std::vector<T>>>
- * и заполняет его значениями по формуле.
+ * @brief Р“РµРЅРµСЂРёСЂСѓРµС‚ С‚СЂС‘С…РјРµСЂРЅС‹Р№ РІРµРєС‚РѕСЂ РІ С„РѕСЂРјР°С‚Рµ std::vector<std::vector<std::vector<T>>>
+ * СЃ СЃРёРЅС‚РµС‚РёС‡РµСЃРєРёРјРё РґР°РЅРЅС‹РјРё РґР»СЏ С‚РµСЃС‚РѕРІ.
  *
- * @tparam T Тип данных.
- * @param n Размер второй размерности.
- * @param m Размер третьей размерности.
- * @param l Размер первой размерности.
- * @return std::vector<std::vector<std::vector<T>>> Трёхмерный вектор.
+ * @tparam T С‚РёРї РґР°РЅРЅС‹С….
+ * @param n СЂР°Р·РјРµСЂ РїРѕ РІС‚РѕСЂРѕР№ СЂР°Р·РјРµСЂРЅРѕСЃС‚Рё.
+ * @param m СЂР°Р·РјРµСЂ РїРѕ С‚СЂРµС‚СЊРµР№ СЂР°Р·РјРµСЂРЅРѕСЃС‚Рё.
+ * @param l СЂР°Р·РјРµСЂ РїРѕ РїРµСЂРІРѕР№ СЂР°Р·РјРµСЂРЅРѕСЃС‚Рё.
+ * @return std::vector<std::vector<std::vector<T>>> СЃРіРµРЅРµСЂРёСЂРѕРІР°РЅРЅС‹Рµ РґР°РЅРЅС‹Рµ.
  */
 template <typename T>
 std::vector<std::vector<std::vector<T>>> MakeData3dVecVecVec(int n, int m, int l) {
@@ -212,17 +218,17 @@ std::vector<std::vector<std::vector<T>>> MakeData3dVecVecVec(int n, int m, int l
 }
 
 /**
- * @brief Выводит на консоль время выполнения с сообщением.
+ * @brief Р’С‹РІРѕРґРёС‚ РІ РєРѕРЅСЃРѕР»СЊ СЂР°Р·РЅРёС†Сѓ РјРµР¶РґСѓ РґРІСѓРјСЏ РѕС‚РјРµС‚РєР°РјРё РІСЂРµРјРµРЅРё СЃ СЃРѕРѕР±С‰РµРЅРёРµРј.
  *
- * @param startTime Время начала.
- * @param finishTime Время окончания.
- * @param message Сообщение для отображения.
+ * @param startTime РІСЂРµРјСЏ РЅР°С‡Р°Р»Р°.
+ * @param finishTime РІСЂРµРјСЏ РѕРєРѕРЅС‡Р°РЅРёСЏ.
+ * @param message РїРѕСЏСЃРЅСЏСЋС‰РµРµ СЃРѕРѕР±С‰РµРЅРёРµ.
  */
 inline void ShowTime(double startTime, double finishTime, std::string message) {
 	std::cout << message << ":\t" << finishTime - startTime << " sec" << std::endl;
 }
 
-// Функция для проверки совпадения массивов
+// РЈС‚РёР»РёС‚Р° РґР»СЏ СЃСЂР°РІРЅРµРЅРёСЏ РјР°СЃСЃРёРІРѕРІ СЃ РІС‹РІРѕРґРѕРј РјРµС‚СЂРёРє
 template <typename T>
 void CompareData(const std::vector<T>& original, const std::vector<T>& transformed, double tolerance = 1e-9) {
 	if (original.size() != transformed.size()) {
@@ -230,7 +236,7 @@ void CompareData(const std::vector<T>& original, const std::vector<T>& transform
 		return;
 	}
 
-	// Считаем максимальное отклонение
+	// РњРµС‚СЂРёРєРё РѕС‚РєР»РѕРЅРµРЅРёСЏ
 	double max_diff = 0.0;
 	double l2_norm = 0.0;
 
@@ -252,10 +258,10 @@ void CompareData(const std::vector<T>& original, const std::vector<T>& transform
 	}
 }
 
-// Парсинг строки вида "NxM[xK]"
+// Р Р°Р·Р±РѕСЂ СЃС‚СЂРѕРєРё СЂР°Р·РјРµСЂРѕРІ РІРёРґР° "NxM[xK]"
 std::vector<size_t> ParseDims(const std::string& str);
 
-// Определение режима вычисления
+// Р Р°Р·Р±РѕСЂ С‚РёРїР° СѓСЃС‚СЂРѕР№СЃС‚РІР° РІС‹РїРѕР»РЅРµРЅРёСЏ
 Modes ParseDevice(const char* device);
 
 LoadingConfig ParseArgs(int argc, char** argv);

@@ -1,6 +1,6 @@
 #include <iostream>
-#include <rapidht.h>
-#include <utilities.h>
+#include "rapidht.h"
+#include "utilities.h"
 #include <cmath>
 #include <cstring>
 
@@ -13,7 +13,7 @@ int main(int argc, char** argv) {
 	size_t images_num = 1;
 	auto mode = RapiDHT::Modes::CPU;
 
-	// If arguments are parced then exactly two arguments are required
+	// If arguments are parsed then exactly two arguments are required
 	if (argc >= 2) {
 		if (argc >= 3) {
 			width = std::atoi(argv[1]);
@@ -51,10 +51,10 @@ int main(int argc, char** argv) {
 	auto calculation_start = std::chrono::high_resolution_clock::now();
 	RapiDHT::HartleyTransform ht(-1, height, 0, mode);
 	for (int i = 0; i < images_num; ++i) {
-		//printData2D(ptr + i * height * width, width, height);
+		//PrintData2d(ptr + i * height * width, width, height);
 		//ht.ForwardTransform(ptr + i * height * width);
 		ht.ForwardTransform(a3.data());
-		//printData2D(ptr + i * height * width, width, height);
+		//PrintData2d(ptr + i * height * width, width, height);
 	}
 	auto calculation_finish = std::chrono::high_resolution_clock::now();
 	auto calculation_time = std::chrono::duration_cast<std::chrono::milliseconds>(calculation_finish - calculation_start);

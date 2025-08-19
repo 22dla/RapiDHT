@@ -1,4 +1,11 @@
-﻿#include "kernel.h"
+﻿/*
+ * Project: RapiDHT
+ * File: kernel.cu
+ * Brief: CUDA-ядра и хост-обёртки для матричных операций и преобразования Хартли.
+ * Author: Волков Евгений Александрович, volkov22dla@yandex.ru
+ */
+
+#include "kernel.h"
 #include "device_launch_parameters.h"
 #include "dev_array.h"
 
@@ -146,7 +153,7 @@ void MatrixTranspose(const double* A, double* B, int rows, int cols) {
 	cudaDeviceSynchronize();
 }
 
-void matrixTranspose(double* A, int N) {
+void MatrixTranspose(double* A, int N) {
 	int BLOCK_SIZE = 16;  // оптимальный размер блока
 	dim3 threadsPerBlock(BLOCK_SIZE, BLOCK_SIZE);
 	dim3 blocksPerGrid((N + BLOCK_SIZE - 1) / BLOCK_SIZE,
@@ -184,4 +191,4 @@ void BracewellTransform3D(double* d_A, int W, int H, int D) {
 	cudaDeviceSynchronize();
 }
 
-} // namespace RpiDHT
+} // namespace RapiDHT

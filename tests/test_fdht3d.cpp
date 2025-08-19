@@ -1,10 +1,10 @@
-#include <rapidht.h>
-#include <utilities.h>
+#include "rapidht.h"
+#include "utilities.h"
 
 using namespace RapiDHT;
 
 int main(int argc, char** argv) {
-	// ---- Обработка аргументов ----
+	// ---- РћР±СЂР°Р±РѕС‚РєР° Р°СЂРіСѓРјРµРЅС‚РѕРІ ----
 	auto cfg = ParseArgs(argc, argv);
 	cfg.width = 1 << 10;
 	cfg.height = 1 << 5;
