@@ -2,7 +2,7 @@
 
 namespace RapiDHT {
 
-// Парсинг строки вида "NxM[xK]"
+// Р Р°Р·Р±РѕСЂ СЃС‚СЂРѕРєРё СЂР°Р·РјРµСЂРѕРІ РІРёРґР° "NxM[xK]"
 std::vector<size_t> ParseDims(const std::string& str) {
 	std::vector<size_t> dims;
 	std::stringstream ss(str);
@@ -13,7 +13,7 @@ std::vector<size_t> ParseDims(const std::string& str) {
 	return dims;
 }
 
-// Определение устройства
+// Р Р°Р·Р±РѕСЂ СѓСЃС‚СЂРѕР№СЃС‚РІР° РІС‹РїРѕР»РЅРµРЅРёСЏ
 Modes ParseDevice(const char* device) {
 	if (!strcmp(device, "CPU")) return Modes::CPU;
 	if (!strcmp(device, "GPU")) return Modes::GPU;
