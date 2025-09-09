@@ -13,16 +13,33 @@
 namespace RapiDHT {
 
 // Базовые операции
+template <typename T>
 void MatrixMultiplication(const double* A, const double* B, double* C, int N);
+
+template <typename T>
 void MatrixTranspose(double* A, int N);
+
+template <typename T>
 void BracewellTransform2D(double* A, int N);
 
 // Расширенные операции (с параметрами размеров)
-void MatrixMultiplication3D_Z(const double* d_input, const double* d_transformZ, double* d_output, int W, int H, int D);
-void MatrixMultiplication(const double* A, const double* B, double* C, int M, int K, int N);
-void MatrixTranspose(const double* A, double* B, int rows, int cols);
-void VectorMatrixMultiplication(const double* A, const double* x, double* y, int N);
-void BracewellTransform3D(double* d_A, int W, int H, int D);
+template <typename T>
+void MatrixMultiplication3D_Z(const T* d_input, const T* d_transformZ, T* d_output, int W, int H, int D);
+
+template <typename T>
+void MatrixMultiplication(const T* A, const T* B, T* C, int M, int K, int N);
+
+template <typename T>
+void MatrixTranspose(const T* A, T* B, int rows, int cols);
+
+template<typename T>
+void VectorMatrixMultiplication(const T* A, const T* x, T* y, int N);
+
+template <typename T>
+void BracewellTransform3D(T* d_A, int W, int H, int D);
+
+void InitializeHartleyMatrix(double* dKernel, size_t height, cudaStream_t stream = 0);
+void InitializeHartleyMatrix(float* dKernel, size_t height, cudaStream_t stream = 0);
 
 } // namespace RapiDHT
 

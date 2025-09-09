@@ -162,6 +162,20 @@ void PrintData2d(const T* data, int width, int height) {
 	std::cout << std::endl;
 }
 
+template <typename T> void PrintData3d(const T* data, int width, int height, int depth) {
+	for (int l = 0; l < depth; ++l) {
+		std::cout << "Layer " << l << ":\n";
+		for (int i = 0; i < height; ++i) {
+			for (int j = 0; j < width; ++j) {
+				int idx = l * width * height + i * width + j;
+				std::cout << std::setw(8) << std::fixed << std::setprecision(2) << data[idx] << " ";
+			}
+			std::cout << "\n";
+		}
+		std::cout << "\n";
+	}
+}
+
 /**
  * @brief Записывает матрицу в CSV-файл.
  *
@@ -220,12 +234,20 @@ std::vector<std::vector<std::vector<T>>> MakeData3dVecVecVec(int n, int m, int l
 /**
  * @brief Выводит в консоль разницу между двумя отметками времени с сообщением.
  *
- * @param startTime время начала.
+ * @param start время начала.
  * @param finishTime время окончания.
- * @param message поясняющее сообщение.
+ * @param finish поясняющее сообщение.
  */
-inline void ShowTime(double startTime, double finishTime, std::string message) {
-	std::cout << message << ":\t" << finishTime - startTime << " sec" << std::endl;
+template <typename Duration = std::chrono::seconds>
+inline void ShowElapsedTime(const std::chrono::high_resolution_clock::time_point& start,
+							const std::chrono::high_resolution_clock::time_point& finish, const std::string& message) {
+	Duration elapsed = std::chrono::duration_cast<Duration>(finish - start);
+	std::cout << message << ":\t" << elapsed.count() << " "
+			  << (std::is_same<Duration, std::chrono::seconds>::value		 ? "sec"
+				  : std::is_same<Duration, std::chrono::milliseconds>::value ? "ms"
+				  : std::is_same<Duration, std::chrono::microseconds>::value ? "us"
+																			 : "units")
+			  << std::endl;
 }
 
 // Утилита для сравнения массивов с выводом метрик

@@ -10,37 +10,56 @@
 
 #include <stdexcept>
 #include <algorithm>
+#include <iostream>
+#include <chrono>
 #include <cuda_runtime.h>
+
+#define CUDA_CHECK(err)                                                                                                \
+	{                                                                                                                  \
+		gpuAssert((err), __FILE__, __LINE__);                                                                          \
+	}
+inline void gpuAssert(cudaError_t code, const char* file, int line, bool abort = true) {
+	if (code != cudaSuccess) {
+		std::cerr << "CUDA Error: " << cudaGetErrorString(code) << " at " << file << ":" << line << std::endl;
+		if (abort) {
+			exit(code);
+		}
+	}
+}
+
+inline float ElapsedMsGPU(cudaEvent_t start, cudaEvent_t stop) {
+	float ms = 0.0f;
+	cudaEventElapsedTime(&ms, start, stop);
+	return ms;
+}
 
 template <class T>
 class dev_array {
-	// public functions
-public:
-	explicit dev_array()
-		: start_(0),
-		end_(0) {}
+  public:
+	explicit dev_array() : start_(nullptr), end_(nullptr), stream_(0) {
+		cudaStreamCreate(&stream_);
+	}
 
-	// constructor
-	explicit dev_array(size_t size) {
+	explicit dev_array(size_t size) : start_(nullptr), end_(nullptr), stream_(0) {
+		cudaStreamCreate(&stream_);
 		allocate(size);
 	}
-	// destructor
+
 	~dev_array() {
 		free();
+		cudaStreamDestroy(stream_);
 	}
 
-	// resize the vector
+	// resize с использованием cudaMallocAsync
 	void resize(size_t size) {
 		free();
 		allocate(size);
 	}
 
-	// get the size of the array
 	size_t getSize() const {
 		return end_ - start_;
 	}
 
-	// get data
 	const T* getData() const {
 		return start_;
 	}
@@ -49,56 +68,49 @@ public:
 		return start_;
 	}
 
-	// set
 	void set(const T* src, size_t size) {
 		size_t min = std::min(size, getSize());
-		cudaError_t result = cudaMemcpy(start_, src, min * sizeof(T), cudaMemcpyHostToDevice);
+		cudaError_t result = cudaMemcpyAsync(start_, src, min * sizeof(T), cudaMemcpyHostToDevice, stream_);
 		if (result != cudaSuccess) {
 			throw std::runtime_error("failed to copy to device memory");
 		}
+		// дождаться завершения копирования
+		cudaStreamSynchronize(stream_);
 	}
-	// get
+
 	void get(T* dest, size_t size) {
 		size_t min = std::min(size, getSize());
-		cudaError_t result = cudaMemcpy(dest, start_, min * sizeof(T), cudaMemcpyDeviceToHost);
+		cudaError_t result = cudaMemcpyAsync(dest, start_, min * sizeof(T), cudaMemcpyDeviceToHost, stream_);
 		if (result != cudaSuccess) {
 			throw std::runtime_error("failed to copy to host memory");
 		}
+		cudaStreamSynchronize(stream_);
 	}
 
-
-private:
-	// allocate memory on the device
+  private:
 	void allocate(size_t size) {
-		size_t free_bytes, total_bytes;
-		cudaError_t result = cudaMemGetInfo(&free_bytes, &total_bytes);
+		cudaError_t result = cudaMallocAsync((void**)&start_, size * sizeof(T), stream_);
 		if (result != cudaSuccess) {
-			start_ = end_ = 0;
-			throw std::runtime_error("failed to get GPU memory info");
-		}
-		if (size * sizeof(T) > free_bytes) {
-			start_ = end_ = 0;
-			throw std::runtime_error("not enough free GPU memory");
-		}
-		result = cudaMalloc((void**)&start_, size * sizeof(T));
-		if (result != cudaSuccess) {
-			start_ = end_ = 0;
-			throw std::runtime_error("failed to allocate device memory");
+			start_ = end_ = nullptr;
+			throw std::runtime_error("failed to allocate device memory (cudaMallocAsync)");
 		}
 		end_ = start_ + size;
 	}
 
-
-	// free memory on the device
 	void free() {
-		if (start_ != 0) {
-			cudaFree(start_);
-			start_ = end_ = 0;
+		if (start_ != nullptr) {
+			cudaError_t result = cudaFreeAsync(start_, stream_);
+			if (result != cudaSuccess) {
+				throw std::runtime_error("failed to free device memory (cudaFreeAsync)");
+			}
+			start_ = end_ = nullptr;
+			cudaStreamSynchronize(stream_);
 		}
 	}
 
 	T* start_;
 	T* end_;
+	cudaStream_t stream_;
 };
 
 #endif // DEV_ARRAY_H

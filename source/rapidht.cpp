@@ -1,4 +1,4 @@
-﻿/*
+/*
  * Project: RapiDHT
  * File: rapidht.cpp
  * Brief: Реализация ND-преобразований Хартли (CPU/OpenMP и GPU/CUDA), транспонирования и Bracewell.
@@ -16,7 +16,8 @@
 
 namespace RapiDHT {
 
-HartleyTransform::HartleyTransform(size_t width, size_t height, size_t depth, Modes mode) : _mode(mode) {
+template <typename T>
+HartleyTransform<T>::HartleyTransform(size_t width, size_t height, size_t depth, Modes mode) : _mode(mode) {
 	PROFILE_FUNCTION();
 
 	if (width == 0) {
@@ -36,23 +37,18 @@ HartleyTransform::HartleyTransform(size_t width, size_t height, size_t depth, Mo
 		}
 	}
 	if (_mode == Modes::GPU) {
-		// Initialize transform matrices on the host
-		InitializeKernelHost(_hTransformMatrices[static_cast<size_t>(Direction::X)], Width());
-		InitializeKernelHost(_hTransformMatrices[static_cast<size_t>(Direction::Y)], Height());
-		InitializeKernelHost(_hTransformMatrices[static_cast<size_t>(Direction::Z)], Depth());
-
-		// transfer CPU -> GPU
 		_dTransformMatrices[static_cast<size_t>(Direction::X)].resize(Width() * Width());
 		_dTransformMatrices[static_cast<size_t>(Direction::Y)].resize(Height() * Height());
 		_dTransformMatrices[static_cast<size_t>(Direction::Z)].resize(Depth() * Depth());
 
-		_dTransformMatrices[static_cast<size_t>(Direction::X)].set(_hTransformMatrices[static_cast<size_t>(Direction::X)].data(), Width() * Width());
-		_dTransformMatrices[static_cast<size_t>(Direction::Y)].set(_hTransformMatrices[static_cast<size_t>(Direction::Y)].data(), Height() * Height());
-		_dTransformMatrices[static_cast<size_t>(Direction::Z)].set(_hTransformMatrices[static_cast<size_t>(Direction::Z)].data(), Depth() * Depth());
+		InitializeHartleyMatrix(_dTransformMatrices[static_cast<size_t>(Direction::X)].getData(), Width());
+		InitializeHartleyMatrix(_dTransformMatrices[static_cast<size_t>(Direction::Y)].getData(), Height());
+		InitializeHartleyMatrix(_dTransformMatrices[static_cast<size_t>(Direction::Z)].getData(), Depth());
 	}
 }
 
-void HartleyTransform::ForwardTransform(double* data) {
+template <typename T>
+void HartleyTransform<T>::ForwardTransform(T* data) {
 	PROFILE_FUNCTION();
 
 	bool is1D = (Height() == 0 && Depth() == 0);
@@ -105,7 +101,7 @@ void HartleyTransform::ForwardTransform(double* data) {
 	size_t offset = rank * depthPerProc + std::min(static_cast<size_t>(rank), remainder);
 	depthPerProc += (rank < remainder) ? 1 : 0;
 
-	double* localData = data + offset * Width() * Height();
+	T* localData = data + offset * Width() * Height();
 
 	switch (_mode) {
 	case Modes::CPU:
@@ -135,7 +131,8 @@ void HartleyTransform::ForwardTransform(double* data) {
 	}
 }
 
-void HartleyTransform::InverseTransform(double* data) {
+template <typename T>
+void HartleyTransform<T>::InverseTransform(T* data) {
 	PROFILE_FUNCTION();
 
 	bool is1D = (Height() == 0 && Depth() == 0);
@@ -182,7 +179,7 @@ void HartleyTransform::InverseTransform(double* data) {
 	depthPerProc += (rank < remainder) ? 1 : 0;
 
 	size_t localSize = depthPerProc * Width() * Height();
-	double* localData = data + offset * Width() * Height();
+	T* localData = data + offset * Width() * Height();
 
 	// Масштабируем локальный блок
 	for (size_t i = 0; i < localSize; ++i) {
@@ -195,7 +192,8 @@ void HartleyTransform::InverseTransform(double* data) {
 	}
 }
 
-void HartleyTransform::BitReverse(std::vector<size_t>& indices) {
+template <typename T>
+void HartleyTransform<T>::BitReverse(std::vector<size_t>& indices) {
 	PROFILE_FUNCTION();
 
 	if (indices.empty()) {
@@ -219,7 +217,8 @@ void HartleyTransform::BitReverse(std::vector<size_t>& indices) {
 	}
 }
 
-void HartleyTransform::InitializeKernelHost(std::vector<double>& kernel, size_t height) {
+template <typename T>
+void HartleyTransform<T>::InitializeKernelHost(std::vector<T>& kernel, size_t height) {
 	PROFILE_FUNCTION();
 
 	kernel.resize(height * height);
@@ -234,37 +233,34 @@ void HartleyTransform::InitializeKernelHost(std::vector<double>& kernel, size_t 
 }
 
 // test function
-std::vector<double> HartleyTransform::DHT1D(const std::vector<double>& a, const std::vector<double>& kernel) {
+template <typename T>
+std::vector<T> HartleyTransform<T>::DHT1D(const std::vector<T>& a, const std::vector<T>& kernel) {
 	PROFILE_FUNCTION();
 
-	std::vector<double> result(a.size());
+	std::vector<T> result(a.size());
 	for (size_t i = 0; i < a.size(); i++) {
 		for (size_t j = 0; j < a.size(); j++) {
 			result[i] += (kernel[i * a.size() + j] * a[j]);
 		}
 	}
-
-	// RVO works
 	return result;
 }
 
 template <typename T>
-void HartleyTransform::Transpose(std::vector<std::vector<T>>& matrix) {
+void HartleyTransform<T>::Transpose(std::vector<std::vector<T>>& matrix) {
 	PROFILE_FUNCTION();
 
-	const size_t width = matrix.size();
-	const size_t height = matrix[0].size();
-
 #pragma omp parallel for
-	for (int i = 0; i < width; ++i) {
+	for (int i = 0; i < matrix.size(); ++i) {
 	#pragma omp parallel for
-		for (int j = i + 1; j < height; ++j) {
+		for (int j = i + 1; j < matrix[0].size(); ++j) {
 			std::swap(matrix[i][j], matrix[j][i]);
 		}
 	}
 }
 
-void HartleyTransform::TransposeSimple(double* matrix, size_t width, size_t height) {
+template <typename T>
+void HartleyTransform<T>::TransposeSimple(T* matrix, size_t width, size_t height) {
 	PROFILE_FUNCTION();
 
 	if (matrix == nullptr) {
@@ -282,7 +278,7 @@ void HartleyTransform::TransposeSimple(double* matrix, size_t width, size_t heig
 		}
 	} else {
 		// Non-square matrix
-		std::vector<double> transposed(width * height);
+		std::vector<T> transposed(width * height);
 	#pragma omp parallel for
 		for (int i = 0; i < width; ++i) {
 		#pragma omp parallel for
@@ -296,51 +292,79 @@ void HartleyTransform::TransposeSimple(double* matrix, size_t width, size_t heig
 	}
 }
 
-void HartleyTransform::Series1D(double* image_ptr, Direction direction) {
+template <typename T>
+void HartleyTransform<T>::Series1D(T* data, Direction direction) {
 	PROFILE_FUNCTION();
 
-	if (image_ptr == nullptr) {
+	if (data == nullptr) {
 		throw std::invalid_argument("The pointer to image is null.");
+	}
+
+	size_t M1 = 0, M2 = 0;
+	switch (direction) {
+	case Direction::X:
+		M1 = Height();
+		M2 = (Depth() == 0 ? 1 : Depth());
+		break;
+	case Direction::Y:
+		M1 = Width();
+		M2 = (Depth() == 0 ? 1 : Depth());
+		break;
+	case Direction::Z:
+		M1 = Width();
+		M2 = Height();
+		break;
+	default:
+		throw std::invalid_argument("Invalid direction");
 	}
 
 	if (_mode == Modes::CPU) {
 	#pragma omp parallel for
-		for (int i = 0; i < Width(); ++i) {
-			FDHT1D(image_ptr + i * Height(), direction);
+		for (int i = 0; i < M1; ++i) {
+			for (size_t j = 0; j < M2; ++j) {
+				auto index = AxisIndex(0, i, j, direction);
+				FDHT1D(data + index, direction);
+			}
 		}
 		return;
 	}
-	if (_mode == Modes::RFFT) {
-	#pragma omp parallel for
-		for (int i = 0; i < Width(); ++i) {
-			RealFFT1D(image_ptr + i * Height(), direction);
-		}
-		return;
-	}
+	//if (_mode == Modes::RFFT) {
+	//#pragma omp parallel for
+	//	for (int i = 0; i < Width(); ++i) {
+	//		RealFFT1D(image_ptr + i * Height(), direction);
+	//	}
+	//	return;
+	//}
 }
 
-void HartleyTransform::BracewellTransform2DCPU(double* image_ptr) {
+template <typename T>
+void HartleyTransform<T>::BracewellTransform2DCPU(T* image_ptr) {
 	PROFILE_FUNCTION();
 
-	std::vector<double> H(Width() * Height(), 0.0);
+	std::vector<T> H(Width() * Height(), 0.0);
 #pragma omp parallel for
 	for (int i = 0; i < Width(); ++i) {
 		for (int j = 0; j < Height(); ++j) {
-			const double A = image_ptr[i * Height() + j];
-			const double B = (i > 0 && j > 0) ? image_ptr[i * Height() + (Height() - j)] : A;
-			const double C = (i > 0 && j > 0) ? image_ptr[(Width() - i) * Height() + j] : A;
-			const double D = (i > 0 && j > 0) ? image_ptr[(Width() - i) * Height() + (Height() - j)] : A;
-			H[i * Height() + j] = (A + B + C - D) / 2.0;
+			const T A = image_ptr[i * Height() + j];
+			const T B = (i > 0 && j > 0) ? image_ptr[i * Height() + (Height() - j)] : A;
+			const T C = (i > 0 && j > 0) ? image_ptr[(Width() - i) * Height() + j] : A;
+			const T D = (i > 0 && j > 0) ? image_ptr[(Width() - i) * Height() + (Height() - j)] : A;
+			H[i * Height() + j] = (A + B + C - D) / static_cast<T>(2);
 		}
 	}
 
 	std::copy(H.begin(), H.end(), image_ptr);
 }
 
-void HartleyTransform::BracewellTransform3DCPU(double* volumePtr, int W, int H, int D) {
+template <typename T>
+void HartleyTransform<T>::BracewellTransform3DCPU(T* volumePtr) {
 	PROFILE_FUNCTION();
 
-	std::vector<double> result(W * H * D, 0.0);
+	size_t W = Width();
+	size_t H = Height();
+	size_t D = Depth();
+
+	std::vector<T> result(W * H * D, 0.0);
 
 #pragma omp parallel for collapse(3)
 	for (int x = 0; x < W; ++x) {
@@ -350,14 +374,14 @@ void HartleyTransform::BracewellTransform3DCPU(double* volumePtr, int W, int H, 
 				const int ym = (y > 0) ? H - y : y;
 				const int zm = (z > 0) ? D - z : z;
 
-				const double A = volumePtr[z * H * W + y * W + x];
-				const double B = volumePtr[z * H * W + y * W + xm];
-				const double C = volumePtr[z * H * W + ym * W + x];
-				const double D_ = volumePtr[z * H * W + ym * W + xm];
-				const double E = volumePtr[zm * H * W + y * W + x];
-				const double F = volumePtr[zm * H * W + y * W + xm];
-				const double G = volumePtr[zm * H * W + ym * W + x];
-				const double H_ = volumePtr[zm * H * W + ym * W + xm];
+				const T A = volumePtr[z * H * W + y * W + x];
+				const T B = volumePtr[z * H * W + y * W + xm];
+				const T C = volumePtr[z * H * W + ym * W + x];
+				const T D_ = volumePtr[z * H * W + ym * W + xm];
+				const T E = volumePtr[zm * H * W + y * W + x];
+				const T F = volumePtr[zm * H * W + y * W + xm];
+				const T G = volumePtr[zm * H * W + ym * W + x];
+				const T H_ = volumePtr[zm * H * W + ym * W + xm];
 
 				result[z * H * W + y * W + x] = 0.5 * (A + B + C - D_ + E + F + G - H_);
 			}
@@ -367,8 +391,9 @@ void HartleyTransform::BracewellTransform3DCPU(double* volumePtr, int W, int H, 
 	std::copy(result.begin(), result.end(), volumePtr);
 }
 
-void HartleyTransform::FDHT1D(double* vec, Direction direction) {
-	if (vec == nullptr) {
+template <typename T>
+void HartleyTransform<T>::FDHT1D(T* data, Direction direction) {
+	if (data == nullptr) {
 		throw std::invalid_argument("The pointer to vector is null.");
 	}
 
@@ -386,6 +411,14 @@ void HartleyTransform::FDHT1D(double* vec, Direction direction) {
 		throw std::invalid_argument("Error: length must be a power of two.");
 	}
 
+    // временный буфер
+	std::vector<T> vec(n);
+
+	// собрать данные в буфер
+	for (size_t idx = 0; idx < n; ++idx) {
+		vec[idx] = data[AxisIndex(idx, 0, 0, direction)];
+	}
+
 	for (size_t i = 1; i < n; ++i) {
 		auto j = BitReversedIndex(direction, i);
 		if (j > i) {
@@ -395,7 +428,7 @@ void HartleyTransform::FDHT1D(double* vec, Direction direction) {
 
 	// FHT for 1rd axis
 	const auto kLog2n = static_cast<size_t>(std::log2(n));
-	const auto kPi = std::acos(-1);
+	const T kPi = static_cast<T>(std::acos(-1));
 
 	// Main cicle
 	for (size_t s = 1; s <= kLog2n; ++s) {
@@ -408,10 +441,10 @@ void HartleyTransform::FDHT1D(double* vec, Direction direction) {
 				int k = m2 - j;
 				const auto u = vec[r + m2 + j];
 				const auto v = vec[r + m2 + k];
-				const auto c = std::cos(j * kPi / m2);
-				const auto s = std::sin(j * kPi / m2);
-				vec[r + m2 + j] = u * c + v * s;
-				vec[r + m2 + k] = u * s - v * c;
+				const auto cosVal = std::cos(j * kPi / m2);
+				const auto sinVal = std::sin(j * kPi / m2);
+				vec[r + m2 + j] = u * cosVal + v * sinVal;
+				vec[r + m2 + k] = u * sinVal - v * cosVal;
 			}
 			for (size_t j = 0; j < m2; ++j) {
 				const auto u = vec[r + j];
@@ -421,111 +454,54 @@ void HartleyTransform::FDHT1D(double* vec, Direction direction) {
 			}
 		}
 	}
+
+	// записать обратно
+	for (size_t idx = 0; idx < n; ++idx) {
+		data[AxisIndex(idx, 0, 0, direction)] = vec[idx];
+	}
 }
 
-void HartleyTransform::FDHT2D(double* image_ptr) {
+template <typename T>
+void HartleyTransform<T>::FDHT2D(T* image_ptr) {
 	PROFILE_FUNCTION();
 
 	if (image_ptr == nullptr) {
 		std::cout << "The pointer to image is null." << std::endl;
 		throw std::invalid_argument("The pointer to image is null.");
 	}
-	if (Width() < 0 || Height() < 0) {
-		std::cout << "Error: rows, and cols must be non-negative." << std::endl;
-		throw std::invalid_argument("Error: rows, and cols must be non-negative.");
-	}
 
 	Series1D(image_ptr, Direction::X);
-	TransposeSimple(image_ptr, Width(), Height());
-
 	Series1D(image_ptr, Direction::Y);
-	TransposeSimple(image_ptr, Height(), Width());
 
 	BracewellTransform2DCPU(image_ptr);
 }
 
-void HartleyTransform::FDHT3D(double* volume_ptr) {
+template <typename T>
+void HartleyTransform<T>::FDHT3D(T* volume_ptr) {
 	PROFILE_FUNCTION();
 
 	if (volume_ptr == nullptr) {
 		std::cout << "The pointer to volume is null." << std::endl;
 		throw std::invalid_argument("The pointer to volume is null.");
 	}
-	if (Width() <= 0 || Height() <= 0 || Depth() <= 0) {
-		std::cout << "Error: dimensions must be positive." << std::endl;
-		throw std::invalid_argument("Error: dimensions must be positive.");
-	}
 
-	const size_t W = Width();
-	const size_t H = Height();
-	const size_t D = Depth();
-
-	// 1D transforms along X dimension
-	for (size_t z = 0; z < D; ++z) {
-		for (size_t y = 0; y < H; ++y) {
-			Series1D(volume_ptr + z * H * W + y * W, Direction::X);
-		}
-	}
-
-	// Transpose XY slices
-	for (size_t z = 0; z < D; ++z) {
-		TransposeSimple(volume_ptr + z * H * W, W, H);
-	}
-
-	// 1D transforms along Y dimension
-	for (size_t z = 0; z < D; ++z) {
-		for (size_t x = 0; x < W; ++x) {
-			double* col = new double[H];
-			for (size_t y = 0; y < H; ++y) {
-				col[y] = volume_ptr[z * H * W + y * W + x];
-			}
-
-			Series1D(col, Direction::Y);
-
-			for (size_t y = 0; y < H; ++y) {
-				volume_ptr[z * H * W + y * W + x] = col[y];
-			}
-			delete[] col;
-		}
-	}
-
-	// Transpose XY slices back
-	for (size_t z = 0; z < D; ++z) {
-		TransposeSimple(volume_ptr + z * H * W, H, W);
-	}
-
-	// 1D transforms along Z dimension
-	for (size_t y = 0; y < H; ++y) {
-		for (size_t x = 0; x < W; ++x) {
-			double* line = new double[D];
-			for (size_t z = 0; z < D; ++z) {
-				line[z] = volume_ptr[z * H * W + y * W + x];
-			}
-
-			Series1D(line, Direction::Z);
-			for (size_t z = 0; z < D; ++z) {
-				volume_ptr[z * H * W + y * W + x] = line[z];
-			}
-
-			delete[] line;
-		}
-	}
+	// 1D transforms along X, Y, Z dimensions
+	Series1D(volume_ptr, Direction::X);
+	Series1D(volume_ptr, Direction::Y);
+	Series1D(volume_ptr, Direction::Z);
 
 	// Bracewell 3D
-	BracewellTransform3DCPU(volume_ptr, W, H, D);
+	BracewellTransform3DCPU(volume_ptr);
 }
 
-void HartleyTransform::RealFFT1D(double* vec, Direction direction) {
+template <typename T>
+void HartleyTransform<T>::RealFFT1D(T* vec, Direction direction) {
 	PROFILE_FUNCTION();
 
 	if (vec == nullptr) {
 		std::cout << "The pointer to vector is null." << std::endl;
 		throw std::invalid_argument("The pointer to vector is null.");
 	}
-
-	// Indices for bit reversal operation
-	// and length of vector depending of direction
-	//auto [bit_reversed_indices, length] = choose_reverced_indices(direction);
 
 	if (Length(direction) < 0) {
 		std::cout << "Error: length must be non-negative." << std::endl;
@@ -538,27 +514,27 @@ void HartleyTransform::RealFFT1D(double* vec, Direction direction) {
 	}
 
 	// RealFFT
-	std::vector<std::complex<double>> x(Length(direction));
-	for (int i = 0; i < Length(direction); i++) {
-		x[i] = std::complex<double>(vec[i], 0);
+	std::vector<std::complex<T>> x(Length(direction));
+	for (size_t i = 0; i < Length(direction); i++) {
+		x[i] = std::complex<T>(vec[i], 0);
 	}
 	size_t k = Length(direction);
 	size_t n;
-	const double thetaT = std::acos(-1) / Length(direction);
-	std::complex<double> phiT = std::complex<double>(std::cos(thetaT), -std::sin(thetaT)), T;
+	const T thetaT = static_cast<T>(std::acos(-1)) / Length(direction);
+	std::complex<T> phiT = std::complex<T>(std::cos(thetaT), -std::sin(thetaT)), TTT;
 	while (k > 1) {
 		n = k;
 		k >>= 1;
 		phiT = phiT * phiT;
-		T = 1.0L;
+		TTT = 1.0L;
 		for (size_t l = 0; l < k; l++) {
 			for (size_t a = l; a < Length(direction); a += n) {
 				size_t b = a + k;
-				std::complex<double> t = x[a] - x[b];
+				std::complex<T> t = x[a] - x[b];
 				x[a] += x[b];
-				x[b] = t * T;
+				x[b] = t * TTT;
 			}
-			T *= phiT;
+			TTT *= phiT;
 		}
 	}
 	// Decimate
@@ -572,7 +548,7 @@ void HartleyTransform::RealFFT1D(double* vec, Direction direction) {
 		b = (((b & 0xff00ff00) >> 8) | ((b & 0x00ff00ff) << 8));
 		b = ((b >> 16) | (b << 16)) >> (32 - m);
 		if (b > a) {
-			std::complex<double> t = x[a];
+			std::complex<T> t = x[a];
 			x[a] = x[b];
 			x[b] = t;
 		}
@@ -583,12 +559,13 @@ void HartleyTransform::RealFFT1D(double* vec, Direction direction) {
 	}
 }
 
-void HartleyTransform::DHT1DCuda(double* h_x) {
+template <typename T>
+void HartleyTransform<T>::DHT1DCuda(T* h_x) {
 	PROFILE_FUNCTION();
 
 	// Allocate memory on the device
-	dev_array<double> d_x(Width());			// input vector
-	dev_array<double> d_y(Width());			// output vector
+	dev_array<T> d_x(Width());			// input vector
+	dev_array<T> d_y(Width());			// output vector
 
 	//write_matrix_to_csv(h_A.data(), length, length, "matrix.csv");
 
@@ -600,7 +577,78 @@ void HartleyTransform::DHT1DCuda(double* h_x) {
 	d_y.get(h_x, Width());
 }
 
-void HartleyTransform::DHT2DCuda(double* h_X) {
+template <typename T>
+void HartleyTransform<T>::DHT2DCuda(T* h_X) {
+	PROFILE_FUNCTION();
+
+	// TODO: Перевести умножения матриц/векторов на cuBLAS для повышения производительности
+	// (cublasDgemm/cublasDgemv). Текущая реализация использует собственные CUDA-ядра.
+
+	// Allocate memory on the device
+	dev_array<T> d_X(Width() * Height()); // one slice
+	dev_array<T> d_Y(Width() * Height()); // one slice
+
+    // Events
+	cudaEvent_t start, stop;
+	CUDA_CHECK(cudaEventCreate(&start));
+	CUDA_CHECK(cudaEventCreate(&stop));
+
+	float ms = 0.0f;
+
+	// ---------------- CPU -> GPU ----------------
+	CUDA_CHECK(cudaEventRecord(start));
+	d_X.set(&h_X[0], Width() * Height());
+	CUDA_CHECK(cudaEventRecord(stop));
+	CUDA_CHECK(cudaEventSynchronize(stop));
+	std::cout << "Memcpy H2D:\t\t\t" << ElapsedMsGPU(start, stop) << " ms\n";
+
+	// ---------------- MatrixMultiplication X ----------------
+	CUDA_CHECK(cudaEventRecord(start));
+	MatrixMultiplication(d_X.getData(), _dTransformMatrices[static_cast<size_t>(Direction::X)].getData(), d_Y.getData(),
+						 Height(), Width(), Width());
+	CUDA_CHECK(cudaEventRecord(stop));
+	CUDA_CHECK(cudaEventSynchronize(stop));
+	std::cout << "MatrixMultiplication (X):\t" << ElapsedMsGPU(start, stop) << " ms\n";
+
+    // ---------------- Transpose ----------------
+	CUDA_CHECK(cudaEventRecord(start));
+	MatrixTranspose(d_Y.getData(), d_X.getData(), Height(), Width());
+	CUDA_CHECK(cudaEventRecord(stop));
+	CUDA_CHECK(cudaEventSynchronize(stop));
+	std::cout << "Transpose (after X):\t\t" << ElapsedMsGPU(start, stop) << " ms\n";
+
+	// ---------------- MatrixMultiplication Y ----------------
+	CUDA_CHECK(cudaEventRecord(start));
+	MatrixMultiplication(d_X.getData(), _dTransformMatrices[static_cast<size_t>(Direction::Y)].getData(), d_Y.getData(),
+						 Width(), Height(), Height());
+	CUDA_CHECK(cudaEventRecord(stop));
+	CUDA_CHECK(cudaEventSynchronize(stop));
+	std::cout << "MatrixMultiplication (Y):\t" << ElapsedMsGPU(start, stop) << " ms\n";
+
+    // ---------------- Transpose ----------------
+	CUDA_CHECK(cudaEventRecord(start));
+	MatrixTranspose(d_Y.getData(), d_X.getData(), Width(), Height());
+	CUDA_CHECK(cudaEventRecord(stop));
+	CUDA_CHECK(cudaEventSynchronize(stop));
+	std::cout << "Transpose (after Y):\t\t" << ElapsedMsGPU(start, stop) << " ms\n";
+
+	// Bracewell
+	//BracewellTransform2D(d_X.getData(), Width());
+
+    // ---------------- GPU -> CPU ----------------
+	CUDA_CHECK(cudaEventRecord(start));
+	d_X.get(&h_X[0], Width() * Height());
+	CUDA_CHECK(cudaEventRecord(stop));
+	CUDA_CHECK(cudaEventSynchronize(stop));
+	std::cout << "Memcpy D2H:\t\t\t" << ElapsedMsGPU(start, stop) << " ms\n";
+
+	// Cleanup
+	cudaEventDestroy(start);
+	cudaEventDestroy(stop);
+	std::cout << std::endl << std::endl << std::endl;
+}
+
+/* void HartleyTransform::DHT2DCuda(double* h_X) {
 	PROFILE_FUNCTION();
 
 	// TODO: Перевести умножения матриц/векторов на cuBLAS для повышения производительности
@@ -610,41 +658,94 @@ void HartleyTransform::DHT2DCuda(double* h_X) {
 	dev_array<double> d_X(Width() * Height()); // one slice
 	dev_array<double> d_Y(Width() * Height()); // one slice
 
-	// transfer CPU -> GPU
+	// Events
+	cudaEvent_t start, stop;
+	CUDA_CHECK(cudaEventCreate(&start));
+	CUDA_CHECK(cudaEventCreate(&stop));
+
+	float ms = 0.0f;
+
+	// ---------------- CPU -> GPU ----------------
+	CUDA_CHECK(cudaEventRecord(start));
 	d_X.set(&h_X[0], Width() * Height());
-	MatrixMultiplication(d_X.getData(), _dTransformMatrices[static_cast<size_t>(Direction::X)].getData(),
-		d_Y.getData(), Height(), Width(), Width());
+	CUDA_CHECK(cudaEventRecord(stop));
+	CUDA_CHECK(cudaEventSynchronize(stop));
+	std::cout << "Memcpy H2D:\t\t\t" << ElapsedMsGPU(start, stop) << " ms\n";
 
+	// ---------------- MatrixMultiplication X ----------------
+	// Создать handle cuBLAS
+	cublasHandle_t handle;
+	cublasCreate(&handle);
+	CUDA_CHECK(cudaEventRecord(start));
+	const double alpha = 1.0;
+	const double beta = 0.0;
+
+	cublasDgemm(handle, CUBLAS_OP_N, CUBLAS_OP_N,
+							 Width(),  // n
+							 Height(), // m
+							 Width(),  // k
+							 &alpha, _dTransformMatrices[static_cast<size_t>(Direction::X)].getData(),
+							 Width(),						  // B, ldb
+							 d_X.getData(), Width(),		  // A, lda
+							 &beta, d_Y.getData(), Width()); // C, ldc
+	CUDA_CHECK(cudaEventRecord(stop));
+	CUDA_CHECK(cudaEventSynchronize(stop));
+	std::cout << "MatrixMultiplication (X):\t" << ElapsedMsGPU(start, stop) << " ms\n";
+
+	// ---------------- Transpose ----------------
+	CUDA_CHECK(cudaEventRecord(start));
 	MatrixTranspose(d_Y.getData(), d_X.getData(), Height(), Width());
+	CUDA_CHECK(cudaEventRecord(stop));
+	CUDA_CHECK(cudaEventSynchronize(stop));
+	std::cout << "Transpose (after X):\t\t" << ElapsedMsGPU(start, stop) << " ms\n";
 
-	MatrixMultiplication(d_X.getData(),
-		_dTransformMatrices[static_cast<size_t>(Direction::Y)].getData(),
-		d_Y.getData(), Width(), Height(), Height());
+	// ---------------- MatrixMultiplication Y ----------------
+	CUDA_CHECK(cudaEventRecord(start));
+	MatrixMultiplication(d_X.getData(), _dTransformMatrices[static_cast<size_t>(Direction::Y)].getData(), d_Y.getData(),
+						 Width(), Height(), Height());
+	CUDA_CHECK(cudaEventRecord(stop));
+	CUDA_CHECK(cudaEventSynchronize(stop));
+	std::cout << "MatrixMultiplication (Y):\t" << ElapsedMsGPU(start, stop) << " ms\n";
 
+	// ---------------- Transpose ----------------
+	CUDA_CHECK(cudaEventRecord(start));
 	MatrixTranspose(d_Y.getData(), d_X.getData(), Width(), Height());
+	CUDA_CHECK(cudaEventRecord(stop));
+	CUDA_CHECK(cudaEventSynchronize(stop));
+	std::cout << "Transpose (after Y):\t\t" << ElapsedMsGPU(start, stop) << " ms\n";
 
 	// Bracewell
-	BracewellTransform2D(d_X.getData(), Width());
+	// BracewellTransform2D(d_X.getData(), Width());
 
-	// transfer GPU -> CPU
+	// ---------------- GPU -> CPU ----------------
+	CUDA_CHECK(cudaEventRecord(start));
 	d_X.get(&h_X[0], Width() * Height());
-	cudaDeviceSynchronize();
-}
+	CUDA_CHECK(cudaEventRecord(stop));
+	CUDA_CHECK(cudaEventSynchronize(stop));
+	std::cout << "Memcpy D2H:\t\t\t" << ElapsedMsGPU(start, stop) << " ms\n";
 
-void HartleyTransform::DHT3DCuda(double* h_X) {
+	// Cleanup
+	cublasDestroy(handle);
+	cudaEventDestroy(start);
+	cudaEventDestroy(stop);
+	std::cout << std::endl << std::endl << std::endl;
+}*/
+
+template <typename T>
+void HartleyTransform<T>::DHT3DCuda(T* h_X) {
 	PROFILE_FUNCTION();
 
 	// TODO: Перенести вычисления (все умножения матриц, в т.ч. по Z) на cuBLAS
 	// для повышения производительности и лучшего использования GPU-памяти
 	// (например, cublasDgemmStridedBatched для батчей, cublasDgemm/cublasDgemv для одиночных вызовов).
 
-	const auto W = Width();
-	const auto H = Height();
-	const auto D = Depth();
+	auto W = Width();
+	auto H = Height();
+	auto D = Depth();
 
 	// Allocate memory on the device
-	dev_array<double> d_X(W * H * D);
-	dev_array<double> d_Y(W * H * D);
+	dev_array<T> d_X(W * H * D);
+	dev_array<T> d_Y(W * H * D);
 
 	// transfer CPU -> GPU
 	d_X.set(h_X, W * H * D);
@@ -700,5 +801,71 @@ void HartleyTransform::DHT3DCuda(double* h_X) {
 
 	cudaDeviceSynchronize();
 }
+
+/* void HartleyTransform::Process3DDataWithHartley(std::vector<float>& h_data, int N) {
+	if ((int)h_data.size() != N * N * N) {
+		throw std::runtime_error("Input size mismatch");
+	}
+
+	// --- Вычисляем maxBatchSlices исходя из VRAM ---
+	size_t availableVRAM = 7ULL * 1024 * 1024 * 1024; // 7 GB безопасно
+	size_t bytesPerSlice = static_cast<size_t>(N) * N * sizeof(float);
+	size_t maxBatchSlices = availableVRAM / bytesPerSlice - 1; // -1 для матрицы Хартли
+	std::cout << maxBatchSlices << std::endl;
+	if (maxBatchSlices == 0)
+		maxBatchSlices = 1;											   // на всякий случай
+	maxBatchSlices = std::min(maxBatchSlices, static_cast<size_t>(N)); // не больше числа срезов
+
+	// --- Создаём матрицу Хартли на GPU ---
+	dev_array<float> A;
+	A.resize(N * N);
+	InitializeHartleyMatrix(A.getData(), N, 0); // stream=0
+
+	// cuBLAS handle
+	cublasHandle_t handle;
+	cublasCreate(&handle);
+
+	const float alpha = 1.0f;
+	const float beta = 0.0f;
+
+	long long sliceSize = static_cast<long long>(N) * N;
+
+	// --- Батчевая обработка ---
+	for (size_t offset = 0; offset < static_cast<size_t>(N); offset += maxBatchSlices) {
+		size_t currentBatch = std::min(maxBatchSlices, static_cast<size_t>(N) - offset);
+
+		// Копируем батч на GPU
+		dev_array<float> d_data;
+		d_data.resize(currentBatch * sliceSize);
+		d_data.set(&h_data[offset * sliceSize], currentBatch * sliceSize);
+
+		long long strideA = 0;		   // одна и та же матрица A
+		long long strideB = sliceSize; // смещение между срезами в B
+		long long strideC = sliceSize; // смещение между срезами в C
+
+		for (size_t i = 0; i < 3; ++i) {
+			cublasStatus_t stat = cublasSgemmStridedBatched(handle, CUBLAS_OP_N, CUBLAS_OP_N, N, N, N, &alpha,
+															A.getData(), N, strideA, d_data.getData(), N, strideB,
+															&beta, d_data.getData(), N, strideC, currentBatch);
+
+			if (stat != CUBLAS_STATUS_SUCCESS) {
+				std::cerr << "cublasSgemmStridedBatched failed for batch starting at slice " << offset << "\n";
+				cublasDestroy(handle);
+				throw std::runtime_error("cuBLAS GEMM batched error");
+			}
+		}
+
+
+
+		// Копируем результат обратно на хост
+		d_data.get(&h_data[offset * sliceSize], currentBatch * sliceSize);
+	}
+
+	cublasDestroy(handle);
+}*/
+
+
+template class HartleyTransform<float>;
+template class HartleyTransform<double>;
 
 } // namespace RapiDHT

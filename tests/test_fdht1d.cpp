@@ -22,15 +22,14 @@ int main(int argc, char** argv) {
 	auto start_time = std::chrono::high_resolution_clock::now();
 
 	// ---- Преобразование ----
-	HartleyTransform ht(width, 0, 0, mode);
+	HartleyTransform<double> ht(width, 0, 0, mode);
 	ht.ForwardTransform(transformed_data.data());
 	ht.InverseTransform(transformed_data.data());
 
 	PrintData1d(transformed_data.data(), width);
 
 	auto end_time = std::chrono::high_resolution_clock::now();
-	std::chrono::duration<double> elapsed = end_time - start_time;
-	ShowTime(0, elapsed.count(), "Common time");
+	ShowElapsedTime<std::chrono::milliseconds>(start_time, end_time, "Common time");
 
 	// ---- Подсчёт ошибки ----
 	double sum_sqr = std::transform_reduce(

@@ -24,7 +24,7 @@ TEST(FDHT, Test1D_Small_CPU) {
     auto original = MakeData<double>({ width });
     auto transformed = original;
 
-    HartleyTransform ht(width, 0, 0, mode);
+    HartleyTransform<double> ht(width, 0, 0, mode);
     ht.ForwardTransform(transformed.data());
     ht.InverseTransform(transformed.data());
 
@@ -38,7 +38,7 @@ TEST(FDHT, Test1D_Large_CPU) {
     auto original = MakeData<double>({ width });
     auto transformed = original;
 
-    HartleyTransform ht(width, 0, 0, mode);
+    HartleyTransform<double> ht(width, 0, 0, mode);
     ht.ForwardTransform(transformed.data());
     ht.InverseTransform(transformed.data());
 
@@ -52,7 +52,7 @@ TEST(FDHT, Test1D_Small_GPU) {
     auto original = MakeData<double>({ width });
     auto transformed = original;
 
-    HartleyTransform ht(width, 0, 0, mode);
+    HartleyTransform<double> ht(width, 0, 0, mode);
     ht.ForwardTransform(transformed.data());
     ht.InverseTransform(transformed.data());
 
@@ -66,7 +66,7 @@ TEST(FDHT, Test1D_Large_GPU) {
     auto original = MakeData<double>({ width });
     auto transformed = original;
 
-    HartleyTransform ht(width, 0, 0, mode);
+    HartleyTransform<double> ht(width, 0, 0, mode);
     ht.ForwardTransform(transformed.data());
     ht.InverseTransform(transformed.data());
 
@@ -82,7 +82,7 @@ TEST(FDHT, Test2D_Small_CPU) {
     auto original = MakeData<double>({ height, width });
     auto transformed = original;
 
-    HartleyTransform ht(width, height, 0, mode);
+    HartleyTransform<double> ht(width, height, 0, mode);
     ht.ForwardTransform(transformed.data());
     ht.InverseTransform(transformed.data());
 
@@ -97,7 +97,7 @@ TEST(FDHT, Test2D_Large_CPU) {
     auto original = MakeData<double>({ height, width });
     auto transformed = original;
 
-    HartleyTransform ht(width, height, 0, mode);
+    HartleyTransform<double> ht(width, height, 0, mode);
     ht.ForwardTransform(transformed.data());
     ht.InverseTransform(transformed.data());
 
@@ -112,7 +112,7 @@ TEST(FDHT, Test2D_Small_GPU) {
     auto original = MakeData<double>({ height, width });
     auto transformed = original;
 
-    HartleyTransform ht(width, height, 0, mode);
+    HartleyTransform<double> ht(width, height, 0, mode);
     ht.ForwardTransform(transformed.data());
     ht.InverseTransform(transformed.data());
 
@@ -127,7 +127,7 @@ TEST(FDHT, Test2D_Large_GPU) {
     auto original = MakeData<double>({ height, width });
     auto transformed = original;
 
-    HartleyTransform ht(width, height, 0, mode);
+    HartleyTransform<double> ht(width, height, 0, mode);
     ht.ForwardTransform(transformed.data());
     ht.InverseTransform(transformed.data());
 

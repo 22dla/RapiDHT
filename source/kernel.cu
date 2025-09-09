@@ -1,4 +1,4 @@
-﻿/*
+/*
  * Project: RapiDHT
  * File: kernel.cu
  * Brief: CUDA-ядра и хост-обёртки для матричных операций и преобразования Хартли.
@@ -26,10 +26,51 @@ __global__ void MatrixMultiplicationKernel(const double* A, const double* B, dou
 	}
 }
 
-__global__ void MatrixVectorMultKernel(const double* A, const double* x, double* y, int N) {
+template <typename T>
+__global__ void MatrixMultiplicationKernelShared(const T* __restrict__ A, const T* __restrict__ B,
+												 T* __restrict__ C, int M, int K, int N) {
+	const int BLOCK_SIZE = 16;
+	__shared__ T As[BLOCK_SIZE][BLOCK_SIZE];
+	__shared__ T Bs[BLOCK_SIZE][BLOCK_SIZE];
+
+	int row = blockIdx.y * BLOCK_SIZE + threadIdx.y;
+	int col = blockIdx.x * BLOCK_SIZE + threadIdx.x;
+
+	T sum = 0.0;
+
+	// Цикл по "плиткам" (tiles) матриц A и B
+	for (int t = 0; t < (K + BLOCK_SIZE - 1) / BLOCK_SIZE; ++t) {
+		// Загружаем кусок A и B в shared memory
+		if (row < M && t * BLOCK_SIZE + threadIdx.x < K)
+			As[threadIdx.y][threadIdx.x] = A[row * K + t * BLOCK_SIZE + threadIdx.x];
+		else
+			As[threadIdx.y][threadIdx.x] = 0.0;
+
+		if (col < N && t * BLOCK_SIZE + threadIdx.y < K)
+			Bs[threadIdx.y][threadIdx.x] = B[(t * BLOCK_SIZE + threadIdx.y) * N + col];
+		else
+			Bs[threadIdx.y][threadIdx.x] = 0.0;
+
+		__syncthreads();
+
+		// Умножаем плитки
+		for (int i = 0; i < BLOCK_SIZE; ++i) {
+			sum += As[threadIdx.y][i] * Bs[i][threadIdx.x];
+		}
+		__syncthreads();
+	}
+
+	// Записываем результат
+	if (row < M && col < N) {
+		C[row * N + col] = sum;
+	}
+}
+
+template <typename T>
+__global__ void MatrixVectorMultKernel(const T* A, const T* x, T* y, int N) {
 	int i = blockIdx.x * blockDim.x + threadIdx.x;
 	if (i < N) {
-		double sum = 0.0;
+		T sum = 0.0;
 		for (int j = 0; j < N; j++) {
 			sum += A[i * N + j] * x[j];
 		}
@@ -37,18 +78,20 @@ __global__ void MatrixVectorMultKernel(const double* A, const double* x, double*
 	}
 }
 
-__global__ void MatrixTransposeKernel(double* A, int N) {
+template <typename T>
+__global__ void MatrixTransposeKernel(T* A, int N) {
 	int i = blockIdx.x * blockDim.x + threadIdx.x;
 	int j = blockIdx.y * blockDim.y + threadIdx.y;
 
 	if (i < N && j < N && i < j) {
-		double tmp = A[i * N + j];
+		T tmp = A[i * N + j];
 		A[i * N + j] = A[j * N + i];
 		A[j * N + i] = tmp;
 	}
 }
 
-__global__ void MatrixTransposeKernel(const double* A, double* B, int rows, int cols) {
+template <typename T>
+__global__ void MatrixTransposeKernel(const T* A, T* B, int rows, int cols) {
 	int col = blockIdx.x * blockDim.x + threadIdx.x;
 	int row = blockIdx.y * blockDim.y + threadIdx.y;
 
@@ -57,7 +100,8 @@ __global__ void MatrixTransposeKernel(const double* A, double* B, int rows, int 
 	}
 }
 
-__global__ void BracewellKernel(double* A, int N) {
+template <typename T>
+__global__ void BracewellKernel(T* A, int N) {
 	int u = blockIdx.x * blockDim.x + threadIdx.x;
 	int v = blockIdx.y * blockDim.y + threadIdx.y;
 
@@ -66,18 +110,19 @@ __global__ void BracewellKernel(double* A, int N) {
 	int iu = u == 0 ? 0 : N - u;
 	int iv = v == 0 ? 0 : N - v;
 
-	double Auv = A[u * N + v];
-	double Buv = A[u * N + iv];
-	double Cuv = A[iu * N + v];
-	double Duv = A[iu * N + iv];
+	T Auv = A[u * N + v];
+	T Buv = A[u * N + iv];
+	T Cuv = A[iu * N + v];
+	T Duv = A[iu * N + iv];
 
-	A[u * N + v] = 0.5 * (Auv + Buv + Cuv - Duv);
+	A[u * N + v] = (T)0.5 * (Auv + Buv + Cuv - Duv);
 }
 
+template <typename T>
 __global__ void MatrixMultiplication3D_Z_Kernel(
-	const double* d_input,
-	const double* d_transformZ,
-	double* d_output,
+	const T* d_input,
+	const T* d_transformZ,
+	T* d_output,
 	int W, int H, int D) {
 	int x = blockIdx.x * blockDim.x + threadIdx.x;
 	int y = blockIdx.y * blockDim.y + threadIdx.y;
@@ -85,7 +130,7 @@ __global__ void MatrixMultiplication3D_Z_Kernel(
 	if (x >= W || y >= H) return;
 
 	for (int z_out = 0; z_out < D; ++z_out) {
-		double sum = 0.0;
+		T sum = 0.0;
 		for (int z_in = 0; z_in < D; ++z_in) {
 			sum += d_input[z_in * H * W + y * W + x] * d_transformZ[z_out * D + z_in];
 		}
@@ -93,48 +138,74 @@ __global__ void MatrixMultiplication3D_Z_Kernel(
 	}
 }
 
-__global__ void BracewellTransform3D_Kernel(double* A, int W, int H, int D) {
+template <typename T>
+__global__ void BracewellTransform3D_Kernel(T* A, int W, int H, int D) {
 	int x = blockIdx.x * blockDim.x + threadIdx.x;
 	int y = blockIdx.y * blockDim.y + threadIdx.y;
 	int z = blockIdx.z * blockDim.z + threadIdx.z;
 
-	if (x >= W || y >= H || z >= D) return;
+	if (x >= W || y >= H || z >= D) {
+		return;
+	}
 
 	int xm = x == 0 ? 0 : W - x;
 	int ym = y == 0 ? 0 : H - y;
 	int zm = z == 0 ? 0 : D - z;
 
-	double Axyz = A[z * H * W + y * W + x];
-	double Bxyz = A[z * H * W + y * W + xm];
-	double Cxyz = A[z * H * W + ym * W + x];
-	double Dxyz = A[z * H * W + ym * W + xm];
-	double Exyz = A[zm * H * W + y * W + x];
-	double Fxyz = A[zm * H * W + y * W + xm];
-	double Gxyz = A[zm * H * W + ym * W + x];
-	double Hxyz = A[zm * H * W + ym * W + xm];
+	T Axyz = A[z * H * W + y * W + x];
+	T Bxyz = A[z * H * W + y * W + xm];
+	T Cxyz = A[z * H * W + ym * W + x];
+	T Dxyz = A[z * H * W + ym * W + xm];
+	T Exyz = A[zm * H * W + y * W + x];
+	T Fxyz = A[zm * H * W + y * W + xm];
+	T Gxyz = A[zm * H * W + ym * W + x];
+	T Hxyz = A[zm * H * W + ym * W + xm];
 
 	A[z * H * W + y * W + x] = 0.5 * (Axyz + Bxyz + Cxyz - Dxyz + Exyz + Fxyz + Gxyz - Hxyz);
 }
 
-// ------------------------------ Host Wrappers ------------------------------
+__global__ void InitializeHartleyMatrixKernel(double* kernel, size_t height) {
+	size_t k = blockIdx.y * blockDim.y + threadIdx.y;
+	size_t j = blockIdx.x * blockDim.x + threadIdx.x;
 
-void MatrixMultiplication(const double* A, const double* B, double* C, int M, int K, int N) {
+	if (k < height && j < height) {
+		const double m_pi = 3.14159265358979323846;
+		kernel[k * height + j] = cos(2.0 * m_pi * k * j / height) + sin(2.0 * m_pi * k * j / height);
+	}
+}
+
+__global__ void InitializeHartleyMatrixKernel(float* kernel, size_t height) {
+	size_t k = blockIdx.y * blockDim.y + threadIdx.y;
+	size_t j = blockIdx.x * blockDim.x + threadIdx.x;
+
+	if (k < height && j < height) {
+		const float m_pi = 3.14159265358979323846f;
+		kernel[k * height + j] = cosf(2.0f * m_pi * k * j / height) + sinf(2.0f * m_pi * k * j / height);
+	}
+}
+
+// ------------------------------ Host Wrappers ------------------------------
+template <typename T>
+void MatrixMultiplication(const T* A, const T* B, T* C, int M, int K, int N) {
 	const int BLOCK_SIZE = 16;
 	dim3 threadsPerBlock(BLOCK_SIZE, BLOCK_SIZE);
 	dim3 blocksPerGrid(
 		(N + BLOCK_SIZE - 1) / BLOCK_SIZE,
 		(M + BLOCK_SIZE - 1) / BLOCK_SIZE);
 
-	MatrixMultiplicationKernel << <blocksPerGrid, threadsPerBlock >> > (A, B, C, M, K, N);
+	//MatrixMultiplicationKernel << <blocksPerGrid, threadsPerBlock >> > (A, B, C, M, K, N);
+	MatrixMultiplicationKernelShared<<<blocksPerGrid, threadsPerBlock>>>(A, B, C, M, K, N);
 
 	cudaDeviceSynchronize();
 }
 
-void MatrixMultiplication(const double* A, const double* B, double* C, int N) {
+template <typename T>
+void MatrixMultiplication(const T* A, const T* B, T* C, int N) {
 	MatrixMultiplication(A, B, C, N, N, N);
 }
 
-void VectorMatrixMultiplication(const double* A, const double* x, double* y, int N) {
+template <typename T>
+void VectorMatrixMultiplication(const T* A, const T* x, T* y, int N) {
 	int threadsPerBlock = (N > 512) ? 512 : N;
 	int blocksPerGrid = (N + threadsPerBlock - 1) / threadsPerBlock;
 
@@ -143,7 +214,8 @@ void VectorMatrixMultiplication(const double* A, const double* x, double* y, int
 }
 
 // rows, cols - целевые (размеры матрицы B)
-void MatrixTranspose(const double* A, double* B, int rows, int cols) {
+template <typename T>
+void MatrixTranspose(const T* A, T* B, int rows, int cols) {
 	int BLOCK_SIZE = 16;
 	dim3 threadsPerBlock(BLOCK_SIZE, BLOCK_SIZE);
 	dim3 blocksPerGrid((cols + BLOCK_SIZE - 1) / BLOCK_SIZE,
@@ -153,7 +225,8 @@ void MatrixTranspose(const double* A, double* B, int rows, int cols) {
 	cudaDeviceSynchronize();
 }
 
-void MatrixTranspose(double* A, int N) {
+template <typename T>
+void MatrixTranspose(T* A, int N) {
 	int BLOCK_SIZE = 16;  // оптимальный размер блока
 	dim3 threadsPerBlock(BLOCK_SIZE, BLOCK_SIZE);
 	dim3 blocksPerGrid((N + BLOCK_SIZE - 1) / BLOCK_SIZE,
@@ -163,7 +236,8 @@ void MatrixTranspose(double* A, int N) {
 	cudaDeviceSynchronize();
 }
 
-void BracewellTransform2D(double* A, int N) {
+template <typename T>
+void BracewellTransform2D(T* A, int N) {
 	dim3 blockDim(16, 16);
 	dim3 gridDim((N + blockDim.x - 1) / blockDim.x,
 		(N + blockDim.y - 1) / blockDim.y);
@@ -172,7 +246,8 @@ void BracewellTransform2D(double* A, int N) {
 	cudaDeviceSynchronize();
 }
 
-void MatrixMultiplication3D_Z(const double* d_input, const double* d_transformZ, double* d_output, int W, int H, int D) {
+template <typename T>
+void MatrixMultiplication3D_Z(const T* d_input, const T* d_transformZ, T* d_output, int W, int H, int D) {
 	dim3 blockDim(16, 16);
 	dim3 gridDim((W + blockDim.x - 1) / blockDim.x,
 		(H + blockDim.y - 1) / blockDim.y);
@@ -181,7 +256,8 @@ void MatrixMultiplication3D_Z(const double* d_input, const double* d_transformZ,
 	cudaDeviceSynchronize();
 }
 
-void BracewellTransform3D(double* d_A, int W, int H, int D) {
+template <typename T>
+void BracewellTransform3D(T* d_A, int W, int H, int D) {
 	dim3 blockDim(8, 8, 8);  // можно подбирать под вашу карту
 	dim3 gridDim((W + blockDim.x - 1) / blockDim.x,
 		(H + blockDim.y - 1) / blockDim.y,
@@ -190,5 +266,45 @@ void BracewellTransform3D(double* d_A, int W, int H, int D) {
 	BracewellTransform3D_Kernel << <gridDim, blockDim >> > (d_A, W, H, D);
 	cudaDeviceSynchronize();
 }
+
+void InitializeHartleyMatrix(double* dKernel, size_t height, cudaStream_t stream) {
+	dim3 block(16, 16);
+	dim3 grid((height + block.x - 1) / block.x, (height + block.y - 1) / block.y);
+
+	InitializeHartleyMatrixKernel<<<grid, block, 0, stream>>>(dKernel, height);
+	cudaDeviceSynchronize();
+}
+
+void InitializeHartleyMatrix(float* dKernel, size_t height, cudaStream_t stream) {
+	dim3 block(16, 16);
+	dim3 grid((height + block.x - 1) / block.x, (height + block.y - 1) / block.y);
+
+	InitializeHartleyMatrixKernel<<<grid, block, 0, stream>>>(dKernel, height);
+	cudaStreamSynchronize(stream);
+}
+
+
+
+// 3D матричные умножения
+template void MatrixMultiplication3D_Z<float>(const float* d_input, const float* d_transformZ, float* d_output, int W,
+											  int H, int D);
+template void MatrixMultiplication3D_Z<double>(const double* d_input, const double* d_transformZ, double* d_output,
+											   int W, int H, int D);
+
+// Общая матричная операция
+template void MatrixMultiplication<float>(const float* A, const float* B, float* C, int M, int K, int N);
+template void MatrixMultiplication<double>(const double* A, const double* B, double* C, int M, int K, int N);
+
+// Транспонирование
+template void MatrixTranspose<float>(const float* A, float* B, int rows, int cols);
+template void MatrixTranspose<double>(const double* A, double* B, int rows, int cols);
+
+// Умножение вектор-матрица
+template void VectorMatrixMultiplication<float>(const float* A, const float* x, float* y, int N);
+template void VectorMatrixMultiplication<double>(const double* A, const double* x, double* y, int N);
+
+// 3D преобразование Брэсвелла
+template void BracewellTransform3D<float>(float* d_A, int W, int H, int D);
+template void BracewellTransform3D<double>(double* d_A, int W, int H, int D);
 
 } // namespace RapiDHT

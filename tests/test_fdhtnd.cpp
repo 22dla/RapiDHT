@@ -49,7 +49,7 @@ int main(int argc, char** argv) {
 
 	std::cout << "HT calculation...";
 	auto calculation_start = std::chrono::high_resolution_clock::now();
-	RapiDHT::HartleyTransform ht(-1, height, 0, mode);
+	HartleyTransform<double> ht(-1, height, 0, mode);
 	for (int i = 0; i < images_num; ++i) {
 		//PrintData2d(ptr + i * height * width, width, height);
 		//ht.ForwardTransform(ptr + i * height * width);
