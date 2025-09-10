@@ -359,31 +359,26 @@ void HartleyTransform<T>::BracewellTransform2DCPU(T* image_ptr) {
 template <typename T>
 void HartleyTransform<T>::BracewellTransform3DCPU(T* volumePtr) {
 	PROFILE_FUNCTION();
+	int W = Width();
+	int H = Height();
+	int D = Depth();
 
-	size_t W = Width();
-	size_t H = Height();
-	size_t D = Depth();
+	std::vector<T> result(W * H * D, T(0));
 
-	std::vector<T> result(W * H * D, 0.0);
-
-#pragma omp parallel for collapse(3)
+	#pragma omp parallel for collapse(3)
 	for (int x = 0; x < W; ++x) {
+		const int xm = (x > 0) ? (W - x) : 0;
 		for (int y = 0; y < H; ++y) {
+			const int ym = (y > 0) ? (H - y) : 0;
 			for (int z = 0; z < D; ++z) {
-				const int xm = (x > 0) ? W - x : x;
-				const int ym = (y > 0) ? H - y : y;
-				const int zm = (z > 0) ? D - z : z;
+				const int zm = (z > 0) ? (D - z) : 0;
 
-				const T A = volumePtr[z * H * W + y * W + x];
-				const T B = volumePtr[z * H * W + y * W + xm];
-				const T C = volumePtr[z * H * W + ym * W + x];
-				const T D_ = volumePtr[z * H * W + ym * W + xm];
-				const T E = volumePtr[zm * H * W + y * W + x];
-				const T F = volumePtr[zm * H * W + y * W + xm];
-				const T G = volumePtr[zm * H * W + ym * W + x];
-				const T H_ = volumePtr[zm * H * W + ym * W + xm];
+				const T A = volumePtr[LinearIndex(xm, y, z)];	// flip X
+				const T B = volumePtr[LinearIndex(x, ym, z)];	// flip Y
+				const T C = volumePtr[LinearIndex(x, y, zm)];	// flip Z
+				const T D_ = volumePtr[LinearIndex(xm, ym, zm)];// flip all
 
-				result[z * H * W + y * W + x] = 0.5 * (A + B + C - D_ + E + F + G - H_);
+				result[LinearIndex(x, y, z)] = (A + B + C - D_) / static_cast<T>(2);
 			}
 		}
 	}

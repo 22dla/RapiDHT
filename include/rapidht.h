@@ -13,7 +13,7 @@
 #include "dev_array.h"
 
 namespace RapiDHT {
-enum class Direction : size_t { X = 0, Y = 1, Z = 2, Count };
+enum class Direction : size_t { Y = 0, X = 1, Z = 2, Count };
 enum class Modes { CPU, GPU, RFFT };
 
 template <typename T>
@@ -44,8 +44,8 @@ public:
 	static void GpuMatrixMultiply111(T* A, T* B, T* C, int n);
 	static void GpuMatrixMultiplyInt(const uint8_t* A, const uint8_t* B, uint32_t* C, int n);
 
-    constexpr size_t Width() const noexcept { return _dims[static_cast<size_t>(Direction::X)]; }
-    constexpr size_t Height() const noexcept { return _dims[static_cast<size_t>(Direction::Y)]; }
+    constexpr size_t Width() const noexcept { return _dims[static_cast<size_t>(Direction::Y)]; }
+    constexpr size_t Height() const noexcept { return _dims[static_cast<size_t>(Direction::X)]; }
     constexpr size_t Depth() const noexcept { return _dims[static_cast<size_t>(Direction::Z)]; }
 
 	// Функция для получения линейного индекса в зависимости от направления
@@ -56,9 +56,9 @@ public:
 	// Функция для получения индекса вдоль конкретной оси
 	size_t AxisIndex(size_t idx_along_axis, size_t fixed1, size_t fixed2, Direction direction) const {
 		switch (direction) {
-		case Direction::X:
-			return LinearIndex(idx_along_axis, fixed1, fixed2);
 		case Direction::Y:
+			return LinearIndex(idx_along_axis, fixed1, fixed2);
+		case Direction::X:
 			return LinearIndex(fixed1, idx_along_axis, fixed2);
 		case Direction::Z:
 			return LinearIndex(fixed1, fixed2, idx_along_axis);
@@ -94,7 +94,7 @@ public:
      * @param vector Pointer to the input/output data array.
      * @param direction Direction along which to perform the transform.
      */
-    void FDHT1D(T* vector, Direction direction = Direction::X);
+    void FDHT1D(T* vector, Direction direction = Direction::Y);
 
     /**
      * @brief Performs a 2D Fast Hartley Transform on the given image.
@@ -132,7 +132,7 @@ public:
      * @param vector Pointer to the input/output data array.
      * @param direction Direction along which to perform the transform.
      */
-    void RealFFT1D(T* vector, Direction direction = Direction::X);
+    void RealFFT1D(T* vector, Direction direction = Direction::Y);
 
     /**
      * @brief Performs a series of 1D transforms along the given direction.
