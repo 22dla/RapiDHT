@@ -9,9 +9,59 @@
 #include "device_launch_parameters.h"
 #include "dev_array.h"
 
+
+//#ifndef TILE_DIM
+//#define TILE_DIM 32
+//#endif
+//#ifndef BLOCK_ROWS
+//#define BLOCK_ROWS 8
+//#endif
+
 // ------------------------------ Kernels ------------------------------
 
 namespace RapiDHT {
+
+template <typename T>
+__global__ void transpose_YZ_kernel(const T* __restrict__ in, T* __restrict__ out, int W, int H, int D) {
+	int bx = blockIdx.x * blockDim.x;
+	int by = blockIdx.y * blockDim.y;
+	int bz = blockIdx.z * blockDim.z;
+
+	int tx = threadIdx.x;
+	int ty = threadIdx.y;
+	int tz = threadIdx.z;
+
+	int x = bx + tx;
+	int y = by + ty;
+	int z = bz + tz;
+
+	if (x >= W || y >= H || z >= D)
+		return;
+
+	// исходный индекс (row-major, x fastest)
+	size_t in_idx = (size_t)z * (W * (size_t)H) + (size_t)y * W + x;
+	// целевой индекс после swap Y<->Z: out dims = W x D x H
+	// координаты в out: (x_out, y_out, z_out) = (x, z, y)
+	size_t out_idx = (size_t)y * (W * (size_t)D) + (size_t)z * W + x;
+
+	out[out_idx] = in[in_idx];
+}
+
+template <typename T>
+__global__ void permute_ZXY_simple_kernel(const T* __restrict__ in, T* __restrict__ out, int W, int H, int D) {
+	int x = blockIdx.x * blockDim.x + threadIdx.x;
+	int y = blockIdx.y * blockDim.y + threadIdx.y;
+	int z = blockIdx.z * blockDim.z + threadIdx.z;
+
+	if (x >= W || y >= H || z >= D)
+		return;
+
+	// исходный индекс (row-major, x fastest)
+	size_t in_idx = (size_t)z * (W * (size_t)H) + (size_t)y * W + x;
+	size_t out_idx = (size_t)y * ((size_t)D * W) + (size_t)x * D + z;
+
+	out[out_idx] = in[in_idx];
+}
 
 __global__ void MatrixMultiplicationKernel(const double* A, const double* B, double* C, int M, int K, int N) {
 	int row = blockIdx.y * blockDim.y + threadIdx.y; // индекс строки C
@@ -185,6 +235,23 @@ __global__ void InitializeHartleyMatrixKernel(float* kernel, size_t height) {
 }
 
 // ------------------------------ Host Wrappers ------------------------------
+
+template <typename T> void transpose_YZ_cuda(const T* d_in, T* d_out, int W, int H, int D) {
+	dim3 block(8, 8, 8);
+	dim3 grid((W + block.x - 1) / block.x, (H + block.y - 1) / block.y, (D + block.z - 1) / block.z);
+
+	transpose_YZ_kernel<T><<<grid, block>>>(d_in, d_out, W, H, D);
+	cudaDeviceSynchronize();
+}
+
+template <typename T> void permute_ZXY_simple(const T* d_in, T* d_out, int W, int H, int D) {
+	dim3 block(8, 8, 8);
+	dim3 grid((W + block.x - 1) / block.x, (H + block.y - 1) / block.y, (D + block.z - 1) / block.z);
+
+	permute_ZXY_simple_kernel<T><<<grid, block>>>(d_in, d_out, W, H, D);
+	cudaDeviceSynchronize();
+}
+
 template <typename T>
 void MatrixMultiplication(const T* A, const T* B, T* C, int M, int K, int N) {
 	const int BLOCK_SIZE = 16;
@@ -267,23 +334,27 @@ void BracewellTransform3D(T* d_A, int W, int H, int D) {
 	cudaDeviceSynchronize();
 }
 
-void InitializeHartleyMatrix(double* dKernel, size_t height, cudaStream_t stream) {
+void InitializeHartleyMatrix(double* dKernel, size_t height) {
 	dim3 block(16, 16);
 	dim3 grid((height + block.x - 1) / block.x, (height + block.y - 1) / block.y);
 
-	InitializeHartleyMatrixKernel<<<grid, block, 0, stream>>>(dKernel, height);
+	InitializeHartleyMatrixKernel<<<grid, block>>>(dKernel, height);
 	cudaDeviceSynchronize();
 }
 
-void InitializeHartleyMatrix(float* dKernel, size_t height, cudaStream_t stream) {
+void InitializeHartleyMatrix(float* dKernel, size_t height) {
 	dim3 block(16, 16);
 	dim3 grid((height + block.x - 1) / block.x, (height + block.y - 1) / block.y);
 
-	InitializeHartleyMatrixKernel<<<grid, block, 0, stream>>>(dKernel, height);
-	cudaStreamSynchronize(stream);
+	InitializeHartleyMatrixKernel<<<grid, block>>>(dKernel, height);
+	cudaDeviceSynchronize();
 }
 
+template void transpose_YZ_cuda<float>(const float* d_in, float* d_out, int W, int H, int D);
+template void transpose_YZ_cuda<double>(const double* d_in, double* d_out, int W, int H, int D);
 
+template void permute_ZXY_simple<float>(const float* d_in, float* d_out, int W, int H, int D);
+template void permute_ZXY_simple<double>(const double* d_in, double* d_out, int W, int H, int D);
 
 // 3D матричные умножения
 template void MatrixMultiplication3D_Z<float>(const float* d_input, const float* d_transformZ, float* d_output, int W,

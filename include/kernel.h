@@ -24,6 +24,12 @@ void BracewellTransform2D(double* A, int N);
 
 // Расширенные операции (с параметрами размеров)
 template <typename T>
+void transpose_YZ_cuda(const T* d_in, T* d_out, int W, int H, int D);
+
+template <typename T>
+void permute_ZXY_simple(const T* d_in, T* d_out, int W, int H, int D);
+
+template <typename T>
 void MatrixMultiplication3D_Z(const T* d_input, const T* d_transformZ, T* d_output, int W, int H, int D);
 
 template <typename T>
@@ -38,8 +44,8 @@ void VectorMatrixMultiplication(const T* A, const T* x, T* y, int N);
 template <typename T>
 void BracewellTransform3D(T* d_A, int W, int H, int D);
 
-void InitializeHartleyMatrix(double* dKernel, size_t height, cudaStream_t stream = 0);
-void InitializeHartleyMatrix(float* dKernel, size_t height, cudaStream_t stream = 0);
+void InitializeHartleyMatrix(double* dKernel, size_t height);
+void InitializeHartleyMatrix(float* dKernel, size_t height);
 
 } // namespace RapiDHT
 

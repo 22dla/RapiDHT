@@ -37,12 +37,12 @@ HartleyTransform<T>::HartleyTransform(size_t width, size_t height, size_t depth,
 		}
 	}
 	if (_mode == Modes::GPU) {
-		_dTransformMatrices[static_cast<size_t>(Direction::X)].resize(Width() * Width());
-		_dTransformMatrices[static_cast<size_t>(Direction::Y)].resize(Height() * Height());
+		_dTransformMatrices[static_cast<size_t>(Direction::Y)].resize(Width() * Width());
+		_dTransformMatrices[static_cast<size_t>(Direction::X)].resize(Height() * Height());
 		_dTransformMatrices[static_cast<size_t>(Direction::Z)].resize(Depth() * Depth());
 
-		InitializeHartleyMatrix(_dTransformMatrices[static_cast<size_t>(Direction::X)].getData(), Width());
-		InitializeHartleyMatrix(_dTransformMatrices[static_cast<size_t>(Direction::Y)].getData(), Height());
+		InitializeHartleyMatrix(_dTransformMatrices[static_cast<size_t>(Direction::X)].getData(), Height());
+		InitializeHartleyMatrix(_dTransformMatrices[static_cast<size_t>(Direction::Y)].getData(), Width());
 		InitializeHartleyMatrix(_dTransformMatrices[static_cast<size_t>(Direction::Z)].getData(), Depth());
 	}
 }
@@ -566,8 +566,9 @@ void HartleyTransform<T>::DHT1DCuda(T* h_x) {
 
 	// transfer CPU -> GPU
 	d_x.set(h_x, Width());
-	VectorMatrixMultiplication(_dTransformMatrices[static_cast<size_t>(Direction::X)].getData(),
-		d_x.getData(), d_y.getData(), Width());
+
+	VectorMatrixMultiplication(_dTransformMatrices[static_cast<size_t>(Direction::Y)].getData(), d_x.getData(),
+							   d_y.getData(), Width());
 	// transfer GPU -> CPU
 	d_y.get(h_x, Width());
 }
@@ -726,8 +727,177 @@ void HartleyTransform<T>::DHT2DCuda(T* h_X) {
 	std::cout << std::endl << std::endl << std::endl;
 }*/
 
-template <typename T>
-void HartleyTransform<T>::DHT3DCuda(T* h_X) {
+template <typename T> struct CublasGemmStridedBatched;
+
+template <> struct CublasGemmStridedBatched<float> {
+	static cublasStatus_t call(cublasHandle_t handle, cublasOperation_t transa, cublasOperation_t transb, int m, int n,
+							   int k, const float* alpha, const float* A, int lda, long long int strideA,
+							   const float* B, int ldb, long long int strideB, const float* beta, float* C, int ldc,
+							   long long int strideC, int batchCount) {
+		return cublasSgemmStridedBatched(handle, transa, transb, m, n, k, alpha, A, lda, strideA, B, ldb, strideB, beta,
+										 C, ldc, strideC, batchCount);
+	}
+};
+
+template <> struct CublasGemmStridedBatched<double> {
+	static cublasStatus_t call(cublasHandle_t handle, cublasOperation_t transa, cublasOperation_t transb, int m, int n,
+							   int k, const double* alpha, const double* A, int lda, long long int strideA,
+							   const double* B, int ldb, long long int strideB, const double* beta, double* C, int ldc,
+							   long long int strideC, int batchCount) {
+		return cublasDgemmStridedBatched(handle, transa, transb, m, n, k, alpha, A, lda, strideA, B, ldb, strideB, beta,
+										 C, ldc, strideC, batchCount);
+	}
+};
+
+template <typename T> struct CublasGeam;
+
+template <> struct CublasGeam<float> {
+	static cublasStatus_t call(cublasHandle_t handle, cublasOperation_t transa, cublasOperation_t transb, int m, int n,
+							   const float* alpha, const float* A, int lda, const float* beta, const float* B, int ldb,
+							   float* C, int ldc) {
+		return cublasSgeam(handle, transa, transb, m, n, alpha, A, lda, beta, B, ldb, C, ldc);
+	}
+};
+
+template <> struct CublasGeam<double> {
+	static cublasStatus_t call(cublasHandle_t handle, cublasOperation_t transa, cublasOperation_t transb, int m, int n,
+							   const double* alpha, const double* A, int lda, const double* beta, const double* B,
+							   int ldb, double* C, int ldc) {
+		return cublasDgeam(handle, transa, transb, m, n, alpha, A, lda, beta, B, ldb, C, ldc);
+	}
+};
+
+template <typename T> void HartleyTransform<T>::DHT3DCuda(T* h_X) {
+	PROFILE_FUNCTION();
+
+	auto W = Width();
+	auto H = Height();
+	auto D = Depth();
+
+	size_t totalSize = W * H * D;
+
+	// Allocate device memory
+	dev_array<T> d_X(totalSize);
+	dev_array<T> d_Y(totalSize);
+
+	// copy CPU -> GPU
+	d_X.set(h_X, totalSize);
+
+	cublasHandle_t handle;
+	cublasCreate(&handle);
+	const T alpha = 1.0;
+	const T beta = 0.0;
+
+	std::vector<T> original_data(W * H * D);
+	d_X.get(original_data.data(), W * H * D);
+
+	// -------------------------------
+	// Приводим к column major
+	// -------------------------------
+	for (size_t z = 0; z < D; ++z) {
+		CublasGeam<T>::call(handle, CUBLAS_OP_T, CUBLAS_OP_N, H, W, &alpha, d_X.getData() + z*W*H, W, &beta,
+							nullptr, H, d_Y.getData() + z * W * H, H);
+	}
+
+	// -------------------------------
+	// 1D Hartley along Y (batched GEMM)
+	// -------------------------------
+	{
+		int m = H;
+		int n = W;
+		int k = W;
+		int lda = H;
+		int ldb = W;
+		int ldc = H;
+
+		long long int strideA = H * W;
+		long long int strideB = 0;
+		long long int strideC = H * W;
+
+		int batchCount = D;
+
+		CublasGemmStridedBatched<T>::call(handle, CUBLAS_OP_N, CUBLAS_OP_N, m, n, k, &alpha, d_Y.getData(), lda,
+										  strideA, _dTransformMatrices[(size_t)Direction::Y].getData(), ldb, strideB,
+										  &beta, d_X.getData(), ldc, strideC, batchCount);
+	}
+
+	// Транспонируем
+	for (size_t z = 0; z < D; ++z) {
+		CublasGeam<T>::call(handle, CUBLAS_OP_T, CUBLAS_OP_N, W, H, &alpha, d_X.getData() + z * W * H, H, &beta,
+							nullptr, W, d_Y.getData() + z * W * H, W);
+	}
+
+	// -------------------------------
+	// 1D Hartley along X (batched GEMM)
+	// -------------------------------
+	{
+		int m = W;
+		int n = H;
+		int k = H;
+		int lda = W;
+		int ldb = H;
+		int ldc = W;
+
+		long long int strideA = H * W;
+		long long int strideB = 0;
+		long long int strideC = H * W;
+
+		int batchCount = H * D;
+
+		CublasGemmStridedBatched<T>::call(handle, CUBLAS_OP_N, CUBLAS_OP_N, m, n, k, &alpha, d_Y.getData(), lda,
+										  strideA, _dTransformMatrices[(size_t)Direction::X].getData(), ldb, strideB,
+										  &beta, d_X.getData(), ldc, strideC, batchCount);
+	}
+
+	// Транспонируем
+	/* for (size_t z = 0; z < D; ++z) {
+		CublasGeam<T>::call(handle, CUBLAS_OP_T, CUBLAS_OP_N, W, H, &alpha, d_X.getData() + z * W * H, H, &beta,
+							nullptr, W, d_Y.getData() + z * W * H, W);
+	}
+
+	// Транспонируем
+	{
+		//transpose_YZ_cuda(d_X.getData(), d_Y.getData(), W, H, D);
+	}
+	
+
+	{
+		int m = W;
+		int n = D;
+		int k = D;
+		int lda = W;
+		int ldb = D;
+		int ldc = W;
+
+		long long int strideA = D * W;
+		long long int strideB = 0;
+		long long int strideC = D * W;
+
+		int batchCount = D * W;
+
+		CublasGemmStridedBatched<T>::call(handle, CUBLAS_OP_N, CUBLAS_OP_N, m, n, k, &alpha, d_Y.getData(), lda,
+										  strideA, _dTransformMatrices[(size_t)Direction::Z].getData(), ldb, strideB,
+										  &beta, d_X.getData(), ldc, strideC, batchCount);
+	}
+
+	// Транспонируем
+	{
+		permute_ZXY_simple(d_X.getData(), d_Y.getData(), W, H, D);
+	}*/
+
+	// -------------------------------
+	// Bracewell 3D (осталось так, как у тебя)
+	// -------------------------------
+	//BracewellTransform3D(d_Y.getData(), W, H, D);
+
+	// copy GPU -> CPU
+	d_X.get(h_X, totalSize);
+
+	cublasDestroy(handle);
+	cudaDeviceSynchronize();
+}
+
+/* template <typename T> void HartleyTransform<T>::DHT3DCuda(T* h_X) {
 	PROFILE_FUNCTION();
 
 	// TODO: Перенести вычисления (все умножения матриц, в т.ч. по Z) на cuBLAS
@@ -795,7 +965,7 @@ void HartleyTransform<T>::DHT3DCuda(T* h_X) {
 	d_Y.get(h_X, W * H * D);
 
 	cudaDeviceSynchronize();
-}
+}*/
 
 /* void HartleyTransform::Process3DDataWithHartley(std::vector<float>& h_data, int N) {
 	if ((int)h_data.size() != N * N * N) {

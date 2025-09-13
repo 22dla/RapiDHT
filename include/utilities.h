@@ -176,6 +176,21 @@ template <typename T> void PrintData3d(const T* data, int width, int height, int
 	}
 }
 
+template <typename T> void PrintData3dColumnMajor(const T* data, int width, int height, int depth) {
+	for (int l = 0; l < depth; ++l) {
+		std::cout << "Layer " << l << ":\n";
+		for (int i = 0; i < height; ++i) {
+			for (int j = 0; j < width; ++j) {
+				// Правильный индекс для column-major хранения
+				int idx = i + j * height + l * width * height;
+				std::cout << std::setw(8) << std::fixed << std::setprecision(2) << data[idx] << " ";
+			}
+			std::cout << "\n";
+		}
+		std::cout << "\n";
+	}
+}
+
 /**
  * @brief Записывает матрицу в CSV-файл.
  *

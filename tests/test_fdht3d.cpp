@@ -7,12 +7,12 @@ int main(int argc, char** argv) {
 	// ---- Обработка аргументов ----
 	//auto cfg = ParseArgs(argc, argv);
 	LoadingConfig cfg;
-	cfg.width = 1 << 9;
+	cfg.width = 1 << 5;
 	cfg.height = cfg.width;
 	cfg.depth = cfg.width;
 	//cfg.height = 4;
 	//cfg.depth = 8;
-	cfg.mode = Modes::CPU;
+	cfg.mode = Modes::GPU;
 
 	cfg.print();
 
