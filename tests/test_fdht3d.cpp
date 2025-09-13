@@ -7,7 +7,7 @@ int main(int argc, char** argv) {
 	// ---- Обработка аргументов ----
 	//auto cfg = ParseArgs(argc, argv);
 	LoadingConfig cfg;
-	cfg.width = 1 << 5;
+	cfg.width = 1 << 9;
 	cfg.height = cfg.width;
 	cfg.depth = cfg.width;
 	//cfg.height = 4;
@@ -40,7 +40,7 @@ int main(int argc, char** argv) {
 	//PrintData3d(original_data.data(), width, height, depth);
 
 	auto common_finish = std::chrono::high_resolution_clock::now();
-	ShowElapsedTime<std::chrono::seconds>(common_start, common_finish, "Common time");
+	ShowElapsedTime<std::chrono::milliseconds>(common_start, common_finish, "Common time");
 
 	// ---- Подсчёт ошибки ----
 	CompareData(original_data, transformed_data);

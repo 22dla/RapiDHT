@@ -644,128 +644,47 @@ void HartleyTransform<T>::DHT2DCuda(T* h_X) {
 	std::cout << std::endl << std::endl << std::endl;
 }
 
-/* void HartleyTransform::DHT2DCuda(double* h_X) {
-	PROFILE_FUNCTION();
+namespace {
+	template <typename T> struct CublasGemmStridedBatched;
 
-	// TODO: Перевести умножения матриц/векторов на cuBLAS для повышения производительности
-	// (cublasDgemm/cublasDgemv). Текущая реализация использует собственные CUDA-ядра.
+	template <> struct CublasGemmStridedBatched<float> {
+		static cublasStatus_t call(cublasHandle_t handle, cublasOperation_t transa, cublasOperation_t transb, int m,
+								   int n, int k, const float* alpha, const float* A, int lda, long long int strideA,
+								   const float* B, int ldb, long long int strideB, const float* beta, float* C, int ldc,
+								   long long int strideC, int batchCount) {
+			return cublasSgemmStridedBatched(handle, transa, transb, m, n, k, alpha, A, lda, strideA, B, ldb, strideB,
+											 beta, C, ldc, strideC, batchCount);
+		}
+	};
 
-	// Allocate memory on the device
-	dev_array<double> d_X(Width() * Height()); // one slice
-	dev_array<double> d_Y(Width() * Height()); // one slice
+	template <> struct CublasGemmStridedBatched<double> {
+		static cublasStatus_t call(cublasHandle_t handle, cublasOperation_t transa, cublasOperation_t transb, int m,
+								   int n, int k, const double* alpha, const double* A, int lda, long long int strideA,
+								   const double* B, int ldb, long long int strideB, const double* beta, double* C,
+								   int ldc, long long int strideC, int batchCount) {
+			return cublasDgemmStridedBatched(handle, transa, transb, m, n, k, alpha, A, lda, strideA, B, ldb, strideB,
+											 beta, C, ldc, strideC, batchCount);
+		}
+	};
 
-	// Events
-	cudaEvent_t start, stop;
-	CUDA_CHECK(cudaEventCreate(&start));
-	CUDA_CHECK(cudaEventCreate(&stop));
+	template <typename T> struct CublasGeam;
 
-	float ms = 0.0f;
+	template <> struct CublasGeam<float> {
+		static cublasStatus_t call(cublasHandle_t handle, cublasOperation_t transa, cublasOperation_t transb, int m,
+								   int n, const float* alpha, const float* A, int lda, const float* beta,
+								   const float* B, int ldb, float* C, int ldc) {
+			return cublasSgeam(handle, transa, transb, m, n, alpha, A, lda, beta, B, ldb, C, ldc);
+		}
+	};
 
-	// ---------------- CPU -> GPU ----------------
-	CUDA_CHECK(cudaEventRecord(start));
-	d_X.set(&h_X[0], Width() * Height());
-	CUDA_CHECK(cudaEventRecord(stop));
-	CUDA_CHECK(cudaEventSynchronize(stop));
-	std::cout << "Memcpy H2D:\t\t\t" << ElapsedMsGPU(start, stop) << " ms\n";
-
-	// ---------------- MatrixMultiplication X ----------------
-	// Создать handle cuBLAS
-	cublasHandle_t handle;
-	cublasCreate(&handle);
-	CUDA_CHECK(cudaEventRecord(start));
-	const double alpha = 1.0;
-	const double beta = 0.0;
-
-	cublasDgemm(handle, CUBLAS_OP_N, CUBLAS_OP_N,
-							 Width(),  // n
-							 Height(), // m
-							 Width(),  // k
-							 &alpha, _dTransformMatrices[static_cast<size_t>(Direction::X)].getData(),
-							 Width(),						  // B, ldb
-							 d_X.getData(), Width(),		  // A, lda
-							 &beta, d_Y.getData(), Width()); // C, ldc
-	CUDA_CHECK(cudaEventRecord(stop));
-	CUDA_CHECK(cudaEventSynchronize(stop));
-	std::cout << "MatrixMultiplication (X):\t" << ElapsedMsGPU(start, stop) << " ms\n";
-
-	// ---------------- Transpose ----------------
-	CUDA_CHECK(cudaEventRecord(start));
-	MatrixTranspose(d_Y.getData(), d_X.getData(), Height(), Width());
-	CUDA_CHECK(cudaEventRecord(stop));
-	CUDA_CHECK(cudaEventSynchronize(stop));
-	std::cout << "Transpose (after X):\t\t" << ElapsedMsGPU(start, stop) << " ms\n";
-
-	// ---------------- MatrixMultiplication Y ----------------
-	CUDA_CHECK(cudaEventRecord(start));
-	MatrixMultiplication(d_X.getData(), _dTransformMatrices[static_cast<size_t>(Direction::Y)].getData(), d_Y.getData(),
-						 Width(), Height(), Height());
-	CUDA_CHECK(cudaEventRecord(stop));
-	CUDA_CHECK(cudaEventSynchronize(stop));
-	std::cout << "MatrixMultiplication (Y):\t" << ElapsedMsGPU(start, stop) << " ms\n";
-
-	// ---------------- Transpose ----------------
-	CUDA_CHECK(cudaEventRecord(start));
-	MatrixTranspose(d_Y.getData(), d_X.getData(), Width(), Height());
-	CUDA_CHECK(cudaEventRecord(stop));
-	CUDA_CHECK(cudaEventSynchronize(stop));
-	std::cout << "Transpose (after Y):\t\t" << ElapsedMsGPU(start, stop) << " ms\n";
-
-	// Bracewell
-	// BracewellTransform2D(d_X.getData(), Width());
-
-	// ---------------- GPU -> CPU ----------------
-	CUDA_CHECK(cudaEventRecord(start));
-	d_X.get(&h_X[0], Width() * Height());
-	CUDA_CHECK(cudaEventRecord(stop));
-	CUDA_CHECK(cudaEventSynchronize(stop));
-	std::cout << "Memcpy D2H:\t\t\t" << ElapsedMsGPU(start, stop) << " ms\n";
-
-	// Cleanup
-	cublasDestroy(handle);
-	cudaEventDestroy(start);
-	cudaEventDestroy(stop);
-	std::cout << std::endl << std::endl << std::endl;
-}*/
-
-template <typename T> struct CublasGemmStridedBatched;
-
-template <> struct CublasGemmStridedBatched<float> {
-	static cublasStatus_t call(cublasHandle_t handle, cublasOperation_t transa, cublasOperation_t transb, int m, int n,
-							   int k, const float* alpha, const float* A, int lda, long long int strideA,
-							   const float* B, int ldb, long long int strideB, const float* beta, float* C, int ldc,
-							   long long int strideC, int batchCount) {
-		return cublasSgemmStridedBatched(handle, transa, transb, m, n, k, alpha, A, lda, strideA, B, ldb, strideB, beta,
-										 C, ldc, strideC, batchCount);
-	}
-};
-
-template <> struct CublasGemmStridedBatched<double> {
-	static cublasStatus_t call(cublasHandle_t handle, cublasOperation_t transa, cublasOperation_t transb, int m, int n,
-							   int k, const double* alpha, const double* A, int lda, long long int strideA,
-							   const double* B, int ldb, long long int strideB, const double* beta, double* C, int ldc,
-							   long long int strideC, int batchCount) {
-		return cublasDgemmStridedBatched(handle, transa, transb, m, n, k, alpha, A, lda, strideA, B, ldb, strideB, beta,
-										 C, ldc, strideC, batchCount);
-	}
-};
-
-template <typename T> struct CublasGeam;
-
-template <> struct CublasGeam<float> {
-	static cublasStatus_t call(cublasHandle_t handle, cublasOperation_t transa, cublasOperation_t transb, int m, int n,
-							   const float* alpha, const float* A, int lda, const float* beta, const float* B, int ldb,
-							   float* C, int ldc) {
-		return cublasSgeam(handle, transa, transb, m, n, alpha, A, lda, beta, B, ldb, C, ldc);
-	}
-};
-
-template <> struct CublasGeam<double> {
-	static cublasStatus_t call(cublasHandle_t handle, cublasOperation_t transa, cublasOperation_t transb, int m, int n,
-							   const double* alpha, const double* A, int lda, const double* beta, const double* B,
-							   int ldb, double* C, int ldc) {
-		return cublasDgeam(handle, transa, transb, m, n, alpha, A, lda, beta, B, ldb, C, ldc);
-	}
-};
+	template <> struct CublasGeam<double> {
+		static cublasStatus_t call(cublasHandle_t handle, cublasOperation_t transa, cublasOperation_t transb, int m,
+								   int n, const double* alpha, const double* A, int lda, const double* beta,
+								   const double* B, int ldb, double* C, int ldc) {
+			return cublasDgeam(handle, transa, transb, m, n, alpha, A, lda, beta, B, ldb, C, ldc);
+		}
+	};
+}
 
 template <typename T> void HartleyTransform<T>::DHT3DCuda(T* h_X) {
 	PROFILE_FUNCTION();
@@ -842,7 +761,7 @@ template <typename T> void HartleyTransform<T>::DHT3DCuda(T* h_X) {
 		long long int strideB = 0;
 		long long int strideC = H * W;
 
-		int batchCount = H * D;
+		int batchCount = D;
 
 		CublasGemmStridedBatched<T>::call(handle, CUBLAS_OP_N, CUBLAS_OP_N, m, n, k, &alpha, d_Y.getData(), lda,
 										  strideA, _dTransformMatrices[(size_t)Direction::X].getData(), ldb, strideB,
@@ -850,16 +769,10 @@ template <typename T> void HartleyTransform<T>::DHT3DCuda(T* h_X) {
 	}
 
 	// Транспонируем
-	/* for (size_t z = 0; z < D; ++z) {
+	for (size_t z = 0; z < D; ++z) {
 		CublasGeam<T>::call(handle, CUBLAS_OP_T, CUBLAS_OP_N, W, H, &alpha, d_X.getData() + z * W * H, H, &beta,
 							nullptr, W, d_Y.getData() + z * W * H, W);
 	}
-
-	// Транспонируем
-	{
-		//transpose_YZ_cuda(d_X.getData(), d_Y.getData(), W, H, D);
-	}
-	
 
 	{
 		int m = W;
@@ -873,7 +786,7 @@ template <typename T> void HartleyTransform<T>::DHT3DCuda(T* h_X) {
 		long long int strideB = 0;
 		long long int strideC = D * W;
 
-		int batchCount = D * W;
+		int batchCount = H;
 
 		CublasGemmStridedBatched<T>::call(handle, CUBLAS_OP_N, CUBLAS_OP_N, m, n, k, &alpha, d_Y.getData(), lda,
 										  strideA, _dTransformMatrices[(size_t)Direction::Z].getData(), ldb, strideB,
@@ -883,7 +796,7 @@ template <typename T> void HartleyTransform<T>::DHT3DCuda(T* h_X) {
 	// Транспонируем
 	{
 		permute_ZXY_simple(d_X.getData(), d_Y.getData(), W, H, D);
-	}*/
+	}
 
 	// -------------------------------
 	// Bracewell 3D (осталось так, как у тебя)
@@ -891,144 +804,11 @@ template <typename T> void HartleyTransform<T>::DHT3DCuda(T* h_X) {
 	//BracewellTransform3D(d_Y.getData(), W, H, D);
 
 	// copy GPU -> CPU
-	d_X.get(h_X, totalSize);
+	d_Y.get(h_X, totalSize);
 
 	cublasDestroy(handle);
 	cudaDeviceSynchronize();
 }
-
-/* template <typename T> void HartleyTransform<T>::DHT3DCuda(T* h_X) {
-	PROFILE_FUNCTION();
-
-	// TODO: Перенести вычисления (все умножения матриц, в т.ч. по Z) на cuBLAS
-	// для повышения производительности и лучшего использования GPU-памяти
-	// (например, cublasDgemmStridedBatched для батчей, cublasDgemm/cublasDgemv для одиночных вызовов).
-
-	auto W = Width();
-	auto H = Height();
-	auto D = Depth();
-
-	// Allocate memory on the device
-	dev_array<T> d_X(W * H * D);
-	dev_array<T> d_Y(W * H * D);
-
-	// transfer CPU -> GPU
-	d_X.set(h_X, W * H * D);
-
-	// 1D Hartley along X
-	for (size_t z = 0; z < D; ++z) {
-		for (size_t y = 0; y < H; ++y) {
-			MatrixMultiplication(
-				d_X.getData() + (z * H + y) * W,
-				_dTransformMatrices[static_cast<size_t>(Direction::X)].getData(),
-				d_Y.getData() + (z * H + y) * W,
-				W, W, W
-			);
-		}
-	}
-
-	// transpose XY slices
-	for (size_t z = 0; z < D; ++z) {
-		MatrixTranspose(
-			d_Y.getData() + z * H * W,
-			d_X.getData() + z * H * W,
-			W, H
-		);
-	}
-
-	// 1D Hartley along Y
-	for (size_t z = 0; z < D; ++z) {
-		MatrixMultiplication(
-			d_X.getData() + z * H * W,
-			_dTransformMatrices[static_cast<size_t>(Direction::Y)].getData(),
-			d_Y.getData() + z * H * W,
-			H, H, W
-		);
-	}
-
-	// transpose XY slices back
-	for (int z = 0; z < D; ++z) {
-		MatrixTranspose(
-			d_Y.getData() + z * H * W,
-			d_X.getData() + z * H * W,
-			H, W
-		);
-	}
-
-	// 1D Hartley along Z
-	MatrixMultiplication3D_Z(d_X.getData(), _dTransformMatrices[static_cast<size_t>(Direction::Z)].getData(), d_Y.getData(), W, H, D);
-
-	// Bracewell 3D
-	BracewellTransform3D(d_Y.getData(), W, H, D);
-
-	// transfer GPU -> CPU
-	d_Y.get(h_X, W * H * D);
-
-	cudaDeviceSynchronize();
-}*/
-
-/* void HartleyTransform::Process3DDataWithHartley(std::vector<float>& h_data, int N) {
-	if ((int)h_data.size() != N * N * N) {
-		throw std::runtime_error("Input size mismatch");
-	}
-
-	// --- Вычисляем maxBatchSlices исходя из VRAM ---
-	size_t availableVRAM = 7ULL * 1024 * 1024 * 1024; // 7 GB безопасно
-	size_t bytesPerSlice = static_cast<size_t>(N) * N * sizeof(float);
-	size_t maxBatchSlices = availableVRAM / bytesPerSlice - 1; // -1 для матрицы Хартли
-	std::cout << maxBatchSlices << std::endl;
-	if (maxBatchSlices == 0)
-		maxBatchSlices = 1;											   // на всякий случай
-	maxBatchSlices = std::min(maxBatchSlices, static_cast<size_t>(N)); // не больше числа срезов
-
-	// --- Создаём матрицу Хартли на GPU ---
-	dev_array<float> A;
-	A.resize(N * N);
-	InitializeHartleyMatrix(A.getData(), N, 0); // stream=0
-
-	// cuBLAS handle
-	cublasHandle_t handle;
-	cublasCreate(&handle);
-
-	const float alpha = 1.0f;
-	const float beta = 0.0f;
-
-	long long sliceSize = static_cast<long long>(N) * N;
-
-	// --- Батчевая обработка ---
-	for (size_t offset = 0; offset < static_cast<size_t>(N); offset += maxBatchSlices) {
-		size_t currentBatch = std::min(maxBatchSlices, static_cast<size_t>(N) - offset);
-
-		// Копируем батч на GPU
-		dev_array<float> d_data;
-		d_data.resize(currentBatch * sliceSize);
-		d_data.set(&h_data[offset * sliceSize], currentBatch * sliceSize);
-
-		long long strideA = 0;		   // одна и та же матрица A
-		long long strideB = sliceSize; // смещение между срезами в B
-		long long strideC = sliceSize; // смещение между срезами в C
-
-		for (size_t i = 0; i < 3; ++i) {
-			cublasStatus_t stat = cublasSgemmStridedBatched(handle, CUBLAS_OP_N, CUBLAS_OP_N, N, N, N, &alpha,
-															A.getData(), N, strideA, d_data.getData(), N, strideB,
-															&beta, d_data.getData(), N, strideC, currentBatch);
-
-			if (stat != CUBLAS_STATUS_SUCCESS) {
-				std::cerr << "cublasSgemmStridedBatched failed for batch starting at slice " << offset << "\n";
-				cublasDestroy(handle);
-				throw std::runtime_error("cuBLAS GEMM batched error");
-			}
-		}
-
-
-
-		// Копируем результат обратно на хост
-		d_data.get(&h_data[offset * sliceSize], currentBatch * sliceSize);
-	}
-
-	cublasDestroy(handle);
-}*/
-
 
 template class HartleyTransform<float>;
 template class HartleyTransform<double>;
