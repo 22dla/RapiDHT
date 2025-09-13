@@ -18,3 +18,5 @@ foreach(TEST ${TESTS})
   target_link_libraries(${TEST} PRIVATE coreht gtest_main)
   install(TARGETS ${TEST} DESTINATION bin)
 endforeach()
+
+add_test(NAME test_smoke COMMAND test_smoke)
