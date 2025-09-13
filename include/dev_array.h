@@ -80,11 +80,20 @@ class dev_array {
 
 	void get(T* dest, size_t size) {
 		size_t min = std::min(size, getSize());
+
 		cudaError_t result = cudaMemcpyAsync(dest, start_, min * sizeof(T), cudaMemcpyDeviceToHost, stream_);
 		if (result != cudaSuccess) {
-			throw std::runtime_error("failed to copy to host memory");
+			std::cerr << "cudaMemcpyAsync failed: " << cudaGetErrorName(result) << " - " << cudaGetErrorString(result)
+					  << std::endl;
+			std::abort();
 		}
-		cudaStreamSynchronize(stream_);
+
+		result = cudaStreamSynchronize(stream_);
+		if (result != cudaSuccess) {
+			std::cerr << "cudaStreamSynchronize failed: " << cudaGetErrorName(result) << " - "
+					  << cudaGetErrorString(result) << std::endl;
+			std::abort();
+		}
 	}
 
   private:
@@ -92,6 +101,8 @@ class dev_array {
 		cudaError_t result = cudaMallocAsync((void**)&start_, size * sizeof(T), stream_);
 		if (result != cudaSuccess) {
 			start_ = end_ = nullptr;
+			std::cerr << "cudaStreamSynchronize failed: " << cudaGetErrorName(result) << " - "
+					  << cudaGetErrorString(result) << std::endl;
 			throw std::runtime_error("failed to allocate device memory (cudaMallocAsync)");
 		}
 		end_ = start_ + size;
