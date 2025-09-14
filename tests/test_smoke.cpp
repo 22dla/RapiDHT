@@ -1,7 +1,7 @@
-#include <gtest/gtest.h>
 #include "rapidht.h"
 #include "utilities.h"
 #include <cmath>
+#include <gtest/gtest.h>
 #include <numeric>
 #include <vector>
 
@@ -9,15 +9,18 @@ using namespace RapiDHT;
 
 // Вспомогательная проверка на близость векторов (покомпонентно)
 template <typename T>
-void ExpectVectorsNear(const std::vector<T>& a, const std::vector<T>& b, double tol = 1e-6) {
+void ExpectVectorsNear(const std::vector<T>& a, const std::vector<T>& b, double tol = 1e-6)
+{
     ASSERT_EQ(a.size(), b.size());
     for (size_t i = 0; i < a.size(); ++i) {
-		ASSERT_NEAR(a[i], b[i], tol) << "Mismatch at index " << i;
+        ASSERT_NEAR(a[i], b[i], tol) << "Mismatch at index " << i;
     }
 }
 
 // ---- 1D тесты ----
-TEST(FDHT, Test1D_Small_CPU) {
+// ------- CPU ------
+TEST(FDHT, Test1D_Small_CPU)
+{
     size_t width = 8;
     auto mode = Modes::CPU;
 
@@ -31,7 +34,8 @@ TEST(FDHT, Test1D_Small_CPU) {
     ExpectVectorsNear(original, transformed);
 }
 
-TEST(FDHT, Test1D_Large_CPU) {
+TEST(FDHT, Test1D_Large_CPU)
+{
     size_t width = 1 << 16; // 65536
     auto mode = Modes::CPU;
 
@@ -45,7 +49,9 @@ TEST(FDHT, Test1D_Large_CPU) {
     ExpectVectorsNear(original, transformed);
 }
 
-TEST(FDHT, Test1D_Small_GPU) {
+// ------- GPU ------
+TEST(FDHT, Test1D_Small_GPU)
+{
     size_t width = 8;
     auto mode = Modes::GPU;
 
@@ -59,7 +65,8 @@ TEST(FDHT, Test1D_Small_GPU) {
     ExpectVectorsNear(original, transformed);
 }
 
-TEST(FDHT, Test1D_Large_GPU) {
+TEST(FDHT, Test1D_Large_GPU)
+{
     size_t width = 1 << 12; // 4096
     auto mode = Modes::GPU;
 
@@ -74,7 +81,9 @@ TEST(FDHT, Test1D_Large_GPU) {
 }
 
 // ---- 2D тесты ----
-TEST(FDHT, Test2D_Small_CPU) {
+// ------- CPU ------
+TEST(FDHT, Test2D_Small_CPU)
+{
     size_t width = 4;
     size_t height = 4;
     auto mode = Modes::CPU;
@@ -89,7 +98,8 @@ TEST(FDHT, Test2D_Small_CPU) {
     ExpectVectorsNear(original, transformed);
 }
 
-TEST(FDHT, Test2D_Large_CPU) {
+TEST(FDHT, Test2D_Large_CPU)
+{
     size_t width = 256;
     size_t height = 256;
     auto mode = Modes::CPU;
@@ -104,22 +114,25 @@ TEST(FDHT, Test2D_Large_CPU) {
     ExpectVectorsNear(original, transformed);
 }
 
-TEST(FDHT, Test2D_Large_Different_Sizes_CPU) {
-	size_t width = 128;
-	size_t height = 4096;
-	auto mode = Modes::CPU;
+TEST(FDHT, Test2D_Large_Different_Sizes_CPU)
+{
+    size_t width = 128;
+    size_t height = 4096;
+    auto mode = Modes::CPU;
 
-	auto original = MakeData<double>({height, width});
-	auto transformed = original;
+    auto original = MakeData<double>({ height, width });
+    auto transformed = original;
 
-	HartleyTransform<double> ht(width, height, 0, mode);
-	ht.ForwardTransform(transformed.data());
-	ht.InverseTransform(transformed.data());
+    HartleyTransform<double> ht(width, height, 0, mode);
+    ht.ForwardTransform(transformed.data());
+    ht.InverseTransform(transformed.data());
 
-	ExpectVectorsNear(original, transformed);
+    ExpectVectorsNear(original, transformed);
 }
 
-TEST(FDHT, Test2D_Small_GPU) {
+// ------- GPU ------
+TEST(FDHT, Test2D_Small_GPU)
+{
     size_t width = 4;
     size_t height = 4;
     auto mode = Modes::GPU;
@@ -134,9 +147,26 @@ TEST(FDHT, Test2D_Small_GPU) {
     ExpectVectorsNear(original, transformed);
 }
 
-TEST(FDHT, Test2D_Large_GPU) {
+TEST(FDHT, Test2D_Large_GPU)
+{
     size_t width = 256;
     size_t height = 256;
+    auto mode = Modes::GPU;
+
+    auto original = MakeData<double>({ height, width });
+    auto transformed = original;
+
+    HartleyTransform<double> ht(width, height, 0, mode);
+    ht.ForwardTransform(transformed.data());
+    ht.InverseTransform(transformed.data());
+
+    ExpectVectorsNear(original, transformed);
+}
+
+TEST(FDHT, Test2D_Large_Different_Sizes_GPU)
+{
+    size_t width = 128;
+    size_t height = 4096;
     auto mode = Modes::GPU;
 
     auto original = MakeData<double>({ height, width });
@@ -150,98 +180,106 @@ TEST(FDHT, Test2D_Large_GPU) {
 }
 
 // ---- 3D тесты ----
-TEST(FDHT, Test3D_Small_CPU) {
-	size_t width = 4;
-	size_t height = 4;
-	size_t depth = 4;
-	auto mode = Modes::CPU;
+// ------- CPU ------
+TEST(FDHT, Test3D_Small_CPU)
+{
+    size_t width = 4;
+    size_t height = 4;
+    size_t depth = 4;
+    auto mode = Modes::CPU;
 
-	auto original = MakeData<float>({height, width, depth});
-	auto transformed = original;
+    auto original = MakeData<float>({ height, width, depth });
+    auto transformed = original;
 
-	HartleyTransform<float> ht(width, height, depth, mode);
-	ht.ForwardTransform(transformed.data());
-	ht.InverseTransform(transformed.data());
+    HartleyTransform<float> ht(width, height, depth, mode);
+    ht.ForwardTransform(transformed.data());
+    ht.InverseTransform(transformed.data());
 
-	ExpectVectorsNear(original, transformed);
+    ExpectVectorsNear(original, transformed);
 }
 
-TEST(FDHT, Test3D_Large_CPU) {
-	size_t width = 256;
-	size_t height = 256;
-	size_t depth = 256;
-	auto mode = Modes::CPU;
+TEST(FDHT, Test3D_Large_CPU)
+{
+    size_t width = 256;
+    size_t height = 256;
+    size_t depth = 256;
+    auto mode = Modes::CPU;
 
-	auto original = MakeData<double>({height, width, depth});
-	auto transformed = original;
+    auto original = MakeData<double>({ height, width, depth });
+    auto transformed = original;
 
-	HartleyTransform<double> ht(width, height, depth, mode);
-	ht.ForwardTransform(transformed.data());
-	ht.InverseTransform(transformed.data());
+    HartleyTransform<double> ht(width, height, depth, mode);
+    ht.ForwardTransform(transformed.data());
+    ht.InverseTransform(transformed.data());
 
-	ExpectVectorsNear(original, transformed);
+    ExpectVectorsNear(original, transformed);
 }
 
-TEST(FDHT, Test3D_Large_Different_Sizes_CPU) {
-	size_t width = 128;
-	size_t height = 256;
-	size_t depth = 512;
-	auto mode = Modes::CPU;
+TEST(FDHT, Test3D_Large_Different_Sizes_CPU)
+{
+    size_t width = 128;
+    size_t height = 256;
+    size_t depth = 512;
+    auto mode = Modes::CPU;
 
-	auto original = MakeData<double>({height, width, depth});
-	auto transformed = original;
+    auto original = MakeData<double>({ height, width, depth });
+    auto transformed = original;
 
-	HartleyTransform<double> ht(width, height, depth, mode);
-	ht.ForwardTransform(transformed.data());
-	ht.InverseTransform(transformed.data());
+    HartleyTransform<double> ht(width, height, depth, mode);
+    ht.ForwardTransform(transformed.data());
+    ht.InverseTransform(transformed.data());
 
-	ExpectVectorsNear(original, transformed);
+    ExpectVectorsNear(original, transformed);
 }
 
-TEST(FDHT, Test3D_Small_GPU) {
-	size_t width = 4;
-	size_t height = 4;
-	size_t depth = 4;
-	auto mode = Modes::GPU;
+// ------- GPU ------
+TEST(FDHT, Test3D_Small_GPU)
+{
+    size_t width = 4;
+    size_t height = 4;
+    size_t depth = 4;
+    auto mode = Modes::GPU;
 
-	auto original = MakeData<double>({height, width, depth});
-	auto transformed = original;
+    auto original = MakeData<double>({ height, width, depth });
+    auto transformed = original;
 
-	HartleyTransform<double> ht(width, height, depth, mode);
-	ht.ForwardTransform(transformed.data());
-	ht.InverseTransform(transformed.data());
+    HartleyTransform<double> ht(width, height, depth, mode);
+    ht.ForwardTransform(transformed.data());
+    ht.InverseTransform(transformed.data());
 
-	ExpectVectorsNear(original, transformed);
+    ExpectVectorsNear(original, transformed);
 }
 
-TEST(FDHT, Test3D_Large_GPU) {
-	size_t width = 256;
-	size_t height = 256;
-	size_t depth = 256;
-	auto mode = Modes::GPU;
+TEST(FDHT, Test3D_Large_GPU)
+{
+    size_t width = 256;
+    size_t height = 256;
+    size_t depth = 256;
+    auto mode = Modes::GPU;
 
-	auto original = MakeData<double>({height, width, depth});
-	auto transformed = original;
+    auto original = MakeData<double>({ height, width, depth });
+    auto transformed = original;
 
-	HartleyTransform<double> ht(width, height, depth, mode);
-	ht.ForwardTransform(transformed.data());
-	ht.InverseTransform(transformed.data());
+    HartleyTransform<double> ht(width, height, depth, mode);
+    ht.ForwardTransform(transformed.data());
+    ht.InverseTransform(transformed.data());
 
-	ExpectVectorsNear(original, transformed);
+    ExpectVectorsNear(original, transformed);
 }
 
-TEST(FDHT, Test3D_Large_Different_Sizes_GPU) {
-	size_t width = 128;
-	size_t height = 256;
-	size_t depth = 512;
-	auto mode = Modes::GPU;
+TEST(FDHT, Test3D_Large_Different_Sizes_GPU)
+{
+    size_t width = 128;
+    size_t height = 256;
+    size_t depth = 512;
+    auto mode = Modes::GPU;
 
-	auto original = MakeData<double>({height, width, depth});
-	auto transformed = original;
+    auto original = MakeData<double>({ height, width, depth });
+    auto transformed = original;
 
-	HartleyTransform<double> ht(width, height, depth, mode);
-	ht.ForwardTransform(transformed.data());
-	ht.InverseTransform(transformed.data());
+    HartleyTransform<double> ht(width, height, depth, mode);
+    ht.ForwardTransform(transformed.data());
+    ht.InverseTransform(transformed.data());
 
-	ExpectVectorsNear(original, transformed);
+    ExpectVectorsNear(original, transformed);
 }

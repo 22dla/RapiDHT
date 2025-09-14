@@ -7,9 +7,9 @@ int main(int argc, char** argv) {
 	// ---- Обработка аргументов ----
 	//auto cfg = ParseArgs(argc, argv);
 	LoadingConfig cfg;
-	cfg.width = 1 << 9;
-	cfg.height = cfg.width;
-	cfg.depth = cfg.width;
+	cfg.width = 1 << 2;
+	cfg.height = 1 << 3;
+	cfg.depth = 1 << 4;
 	//cfg.height = 4;
 	//cfg.depth = 8;
 	cfg.mode = Modes::GPU;
@@ -23,7 +23,7 @@ int main(int argc, char** argv) {
 
 	// ---- Создание данных ----
 	auto making_start = std::chrono::high_resolution_clock::now();
-	auto original_data = MakeData<float>({width, height, depth}, FillMode::Random);
+	auto original_data = MakeData<float>({width, height, depth}, FillMode::Sequential);
 	auto transformed_data = original_data;
 	auto making_finish = std::chrono::high_resolution_clock::now();
 	ShowElapsedTime<std::chrono::milliseconds>(making_start, making_finish, "Making time");
