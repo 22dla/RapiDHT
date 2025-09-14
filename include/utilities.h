@@ -162,11 +162,18 @@ void PrintData2d(const T* data, int width, int height) {
 	std::cout << std::endl;
 }
 
-template <typename T> void PrintData3d(const T* data, int width, int height, int depth) {
-	for (int l = 0; l < depth; ++l) {
+template <typename T>
+void PrintData3d(const T* data, int width, int height, int depth, int width_max = std::numeric_limits<int>::max(),
+				 int height_max = std::numeric_limits<int>::max(), int depth_max = std::numeric_limits<int>::max()) {
+
+	auto N = (width_max < width) ? width_max : width;
+	auto M = (height_max < height) ? height_max : height;
+	auto L = (depth_max < depth) ? depth_max : depth;
+
+	for (int l = 0; l < L; ++l) {
 		std::cout << "Layer " << l << ":\n";
-		for (int i = 0; i < height; ++i) {
-			for (int j = 0; j < width; ++j) {
+		for (int i = 0; i < M; ++i) {
+			for (int j = 0; j < N; ++j) {
 				int idx = l * width * height + i * width + j;
 				std::cout << std::setw(8) << std::fixed << std::setprecision(2) << data[idx] << " ";
 			}
