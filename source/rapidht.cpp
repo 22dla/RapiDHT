@@ -341,19 +341,27 @@ template <typename T>
 void HartleyTransform<T>::BracewellTransform2DCPU(T* image_ptr) {
 	PROFILE_FUNCTION();
 
-	std::vector<T> H(Width() * Height(), 0.0);
-#pragma omp parallel for
-	for (int i = 0; i < Width(); ++i) {
-		for (int j = 0; j < Height(); ++j) {
-			const T A = image_ptr[i * Height() + j];
-			const T B = (i > 0 && j > 0) ? image_ptr[i * Height() + (Height() - j)] : A;
-			const T C = (i > 0 && j > 0) ? image_ptr[(Width() - i) * Height() + j] : A;
-			const T D = (i > 0 && j > 0) ? image_ptr[(Width() - i) * Height() + (Height() - j)] : A;
-			H[i * Height() + j] = (A + B + C - D) / static_cast<T>(2);
+	int W = Width();
+	int H = Height();
+
+	std::vector<T> result(W * H, T(0));
+
+#pragma omp parallel for collapse(2)
+	for (int y = 0; y < W; ++y) {
+		const int ym = (y > 0) ? (W - y) : 0;
+		for (int x = 0; x < H; ++x) {
+			const int xm = (x > 0) ? (H - x) : 0;
+
+			const T A = image_ptr[LinearIndex(y, x, 0)];
+			const T B = image_ptr[LinearIndex(y, xm, 0)];	// flip X
+			const T C = image_ptr[LinearIndex(ym, x, 0)];	// flip Y
+			const T D = image_ptr[LinearIndex(ym, xm, 0)]; // flip both
+
+			result[LinearIndex(y, x, 0)] = (A + B + C - D) / static_cast<T>(2);
 		}
 	}
 
-	std::copy(H.begin(), H.end(), image_ptr);
+	std::copy(result.begin(), result.end(), image_ptr);
 }
 
 template <typename T>
@@ -365,20 +373,20 @@ void HartleyTransform<T>::BracewellTransform3DCPU(T* volumePtr) {
 
 	std::vector<T> result(W * H * D, T(0));
 
-	#pragma omp parallel for collapse(3)
-	for (int x = 0; x < W; ++x) {
-		const int xm = (x > 0) ? (W - x) : 0;
-		for (int y = 0; y < H; ++y) {
-			const int ym = (y > 0) ? (H - y) : 0;
+#pragma omp parallel for collapse(3)
+	for (int y = 0; y < W; ++y) {
+		const int ym = (y > 0) ? (W - y) : 0;
+		for (int x = 0; x < H; ++x) {
+			const int xm = (x > 0) ? (H - x) : 0;
 			for (int z = 0; z < D; ++z) {
 				const int zm = (z > 0) ? (D - z) : 0;
 
-				const T A = volumePtr[LinearIndex(xm, y, z)];	// flip X
-				const T B = volumePtr[LinearIndex(x, ym, z)];	// flip Y
-				const T C = volumePtr[LinearIndex(x, y, zm)];	// flip Z
-				const T D_ = volumePtr[LinearIndex(xm, ym, zm)];// flip all
+				const T A = volumePtr[LinearIndex(ym, x, z)];	 // flip X
+				const T B = volumePtr[LinearIndex(y, xm, z)];	 // flip Y
+				const T C = volumePtr[LinearIndex(y, x, zm)];	 // flip Z
+				const T D_ = volumePtr[LinearIndex(ym, xm, zm)]; // flip all
 
-				result[LinearIndex(x, y, z)] = (A + B + C - D_) / static_cast<T>(2);
+				result[LinearIndex(y, x, z)] = (A + B + C - D_) / static_cast<T>(2);
 			}
 		}
 	}

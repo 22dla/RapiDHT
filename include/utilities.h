@@ -155,7 +155,7 @@ template<typename T>
 void PrintData2d(const T* data, int width, int height) {
 	for (int i = 0; i < height; ++i) {
 		for (int j = 0; j < width; ++j) {
-			std::cout << std::fixed << std::setprecision(2) << data[i * width + j] << " ";
+			std::cout << std::setw(8) << std::fixed << std::setprecision(2) << data[i * width + j] << " ";
 		}
 		std::cout << "\n";
 	}
