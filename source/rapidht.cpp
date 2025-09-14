@@ -302,11 +302,11 @@ void HartleyTransform<T>::Series1D(T* data, Direction direction) {
 
 	size_t M1 = 0, M2 = 0;
 	switch (direction) {
-	case Direction::X:
+	case Direction::Y:
 		M1 = Height();
 		M2 = (Depth() == 0 ? 1 : Depth());
 		break;
-	case Direction::Y:
+	case Direction::X:
 		M1 = Width();
 		M2 = (Depth() == 0 ? 1 : Depth());
 		break;
@@ -481,10 +481,9 @@ void HartleyTransform<T>::FDHT3D(T* volume_ptr) {
 	}
 
 	// 1D transforms along X, Y, Z dimensions
-	Series1D(volume_ptr, Direction::X);
 	Series1D(volume_ptr, Direction::Y);
+	Series1D(volume_ptr, Direction::X);
 	Series1D(volume_ptr, Direction::Z);
-
 	// Bracewell 3D
 	BracewellTransform3DCPU(volume_ptr);
 }
