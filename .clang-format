@@ -1,18 +1,34 @@
-BasedOnStyle: LLVM
-Language: Cpp
-UseTab: Always
-IndentWidth: 4
-TabWidth: 4
-ColumnLimit: 120
-BreakBeforeBraces: Attach
-AllowShortIfStatementsOnASingleLine: false
-AllowShortFunctionsOnASingleLine: Empty
-PointerAlignment: Left
-SortIncludes: true
-IncludeBlocks: Regroup
-NamespaceIndentation: All
-SpaceBeforeParens: ControlStatements
-SpacesInAngles: false
-AlignConsecutiveAssignments: false
-AlignConsecutiveDeclarations: false
-AlignOperands: true
+# Format Style Options - Created with Clang Power Tools
+---
+AlignEscapedNewlines: Left
+AlignOperands: AlignAfterOperator
+AlwaysBreakTemplateDeclarations: Yes
+BasedOnStyle: WebKit
+BreakBeforeBraces: Custom
+BraceWrapping:
+  AfterCaseLabel: false
+  AfterClass: false
+  AfterControlStatement: MultiLine # true
+  AfterEnum: false
+  AfterFunction: true
+  AfterNamespace: false
+  AfterObjCDeclaration: false
+  AfterStruct: false
+  AfterUnion: false
+  AfterExternBlock: false
+  BeforeCatch: false
+  BeforeElse: false
+  IndentBraces: false
+  SplitEmptyFunction: false
+  SplitEmptyRecord: false
+  SplitEmptyNamespace: false
+  BeforeLambdaBody: false
+  BeforeWhile: false
+
+BreakInheritanceList: AfterColon
+BreakConstructorInitializers: AfterColon
+FixNamespaceComments: true
+IndentCaseLabels: true
+NamespaceIndentation: None
+SpaceBeforeCtorInitializerColon: false
+...
