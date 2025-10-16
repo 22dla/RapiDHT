@@ -8,13 +8,18 @@
 #ifndef RAPIDHT_H
 #define RAPIDHT_H
 
-#include <vector>
-#include <array>
 #include "dev_array.h"
+#include <array>
+#include <vector>
 
 namespace RapiDHT {
-enum class Direction : size_t { Y = 0, X = 1, Z = 2, Count };
-enum class Modes { CPU, GPU, RFFT };
+enum class Direction : size_t { Y = 0,
+    X = 1,
+    Z = 2,
+    Count };
+enum class Modes { CPU,
+    GPU,
+    RFFT };
 
 template <typename T>
 class HartleyTransform {
@@ -41,31 +46,33 @@ public:
      * @param data Pointer to the input/output data array.
      */
     void InverseTransform(T* data);
-	static void GpuMatrixMultiply111(T* A, T* B, T* C, int n);
-	static void GpuMatrixMultiplyInt(const uint8_t* A, const uint8_t* B, uint32_t* C, int n);
+    static void GpuMatrixMultiply111(T* A, T* B, T* C, int n);
+    static void GpuMatrixMultiplyInt(const uint8_t* A, const uint8_t* B, uint32_t* C, int n);
 
     constexpr size_t Width() const noexcept { return _dims[static_cast<size_t>(Direction::Y)]; }
     constexpr size_t Height() const noexcept { return _dims[static_cast<size_t>(Direction::X)]; }
     constexpr size_t Depth() const noexcept { return _dims[static_cast<size_t>(Direction::Z)]; }
 
-	// Функция для получения линейного индекса в зависимости от направления
-	size_t LinearIndex(size_t i, size_t j, size_t k) const {
-		return i + Width() * (j + Height() * k); // row-major
-	}
+    // Функция для получения линейного индекса в зависимости от направления
+    size_t LinearIndex(size_t i, size_t j, size_t k) const
+    {
+        return i + Width() * (j + Height() * k); // row-major
+    }
 
-	// Функция для получения индекса вдоль конкретной оси
-	size_t AxisIndex(size_t idx_along_axis, size_t fixed1, size_t fixed2, Direction direction) const {
-		switch (direction) {
-		case Direction::Y:
-			return LinearIndex(idx_along_axis, fixed1, fixed2);
-		case Direction::X:
-			return LinearIndex(fixed1, idx_along_axis, fixed2);
-		case Direction::Z:
-			return LinearIndex(fixed1, fixed2, idx_along_axis);
-		default:
-			throw std::invalid_argument("Invalid direction");
-		}
-	}
+    // Функция для получения индекса вдоль конкретной оси
+    size_t AxisIndex(size_t idx_along_axis, size_t fixed1, size_t fixed2, Direction direction) const
+    {
+        switch (direction) {
+            case Direction::Y:
+                return LinearIndex(idx_along_axis, fixed1, fixed2);
+            case Direction::X:
+                return LinearIndex(fixed1, idx_along_axis, fixed2);
+            case Direction::Z:
+                return LinearIndex(fixed1, fixed2, idx_along_axis);
+            default:
+                throw std::invalid_argument("Invalid direction");
+        }
+    }
 
     /**
      * @brief Returns the length of the specified direction.
@@ -80,13 +87,14 @@ public:
      * @param index Original index.
      * @return Bit-reversed index.
      */
-    inline size_t BitReversedIndex(Direction direction, size_t index) const noexcept {
+    inline size_t BitReversedIndex(Direction direction, size_t index) const noexcept
+    {
         return _bitReversedIndices[static_cast<size_t>(direction)][index];
     }
 
-	//static void Process3DDataWithHartley(std::vector<float>& h_data, int N);
+    // static void Process3DDataWithHartley(std::vector<float>& h_data, int N);
 
-  private:
+private:
     /* ------------------------- ND Transforms ------------------------- */
 
     /**
@@ -102,11 +110,11 @@ public:
      */
     void FDHT2D(T* image);
 
-	/**
+    /**
      * @brief Performs a 3D Fast Hartley Transform on the given data.
      * @param data Pointer to the input/output 3D data array.
      */
-	void FDHT3D(T* data);
+    void FDHT3D(T* data);
 
     /**
      * @brief Performs a 1D Hartley Transform using CUDA matrix-vector multiplication.
@@ -189,7 +197,7 @@ public:
      */
     void BracewellTransform3DCPU(T* volumePtr);
 
-    std::array<size_t, static_cast<size_t>(Direction::Count)> _dims{};
+    std::array<size_t, static_cast<size_t>(Direction::Count)> _dims {};
     std::array<std::vector<size_t>, static_cast<size_t>(Direction::Count)> _bitReversedIndices;
 
     Modes _mode = Modes::CPU;
@@ -197,6 +205,6 @@ public:
     std::array<std::vector<T>, static_cast<size_t>(Direction::Count)> _hTransformMatrices;
     std::array<dev_array<T>, static_cast<size_t>(Direction::Count)> _dTransformMatrices;
 };
-}
+} // namespace RapiDHT
 
 #endif // RAPIDHT_H

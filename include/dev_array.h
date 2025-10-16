@@ -78,7 +78,7 @@ class dev_array {
 		cudaStreamSynchronize(stream_);
 	}
 
-	void get(T* dest, size_t size) {
+	void get(T* dest, size_t size) const {
 		size_t min = std::min(size, getSize());
 
 		cudaError_t result = cudaMemcpyAsync(dest, start_, min * sizeof(T), cudaMemcpyDeviceToHost, stream_);

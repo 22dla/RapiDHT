@@ -172,7 +172,7 @@ void PrintData2d(const T* data, int width, int height)
 template <typename T>
 void PrintData2d(const dev_array<T>& data, int width, int height)
 {
-    std::vector<T> temp;
+    std::vector<T> temp(width * height);
     data.get(temp.data(), width * height);
     for (int i = 0; i < height; ++i) {
         for (int j = 0; j < width; ++j) {
