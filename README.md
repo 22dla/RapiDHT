@@ -1,21 +1,21 @@
 ## RapiDHT — Discrete Hartley Transform (CPU/GPU)
 
-RapiDHT — библиотека и набор тестов для дискретного преобразования Хартли в 1D/2D/3D режимах:
-- **CPU (OpenMP)**: быстрая реализация FDHT через разложение на 1D и транспонирования
-- **GPU (CUDA)**: матричные умножения и транспонирования ядрами CUDA; частично используется **cuBLAS**, частично - кастомные **cuda**-ядра
-- **RFFT**: вычисление через реализацию на основе вещественного FFT
+RapiDHT is a library and a set of tests for performing the Discrete Hartley Transform in 1D/2D/3D modes:
+- **CPU (OpenMP)**: FDHT implementation through 1D decomposition and transpositions
+- **GPU (CUDA)**: matrix multiplications and transpositions using CUDA kernels; partially uses **cuBLAS**, partially custom **cuda** kernels
+- **RFFT**: computation via real-valued FFT implementation
 
-### Требования
+### Requirements
 - CMake 3.18+
-- C++17-компилятор
-- CUDA Toolkit (для GPU-режима) и драйвер NVIDIA
-- MPI (для распределённой 3D обработки)
-- GoogleTest (включён как сабмодуль/вендор в `3dparty`)
+- C++17 compiler
+- CUDA Toolkit (for GPU mode) and NVIDIA driver
+- MPI (for distributed 3D processing)
+- GoogleTest (included as a submodule/vendor in `3dparty`)
 
-### Сборка
+### Build
 #### Debug:
 ```bash
-cmake -S . -B build 
+cmake -S . -B build
 cmake --build build
 ```
 #### Release:
@@ -24,28 +24,28 @@ cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
 cmake --build build --config Release
 ```
 
-По умолчанию устанавливаемая библиотека: `coreht`.
+The default installed library is: `coreht`.
 
-### Опции
-- `ENABLE_PROFILING` — включает простой профайлер функций (макрос `PROFILE_FUNCTION()`)
+### Options
+- `ENABLE_PROFILING` — enables a simple function profiler (macro `PROFILE_FUNCTION()`)
 
-### Запуск тестов
+### Running Tests
 ```bash
 cd build
 ctest -C Release --output-on-failure
 ```
-Тестовые бинарники также собираются в `build/tests` и могут запускаться напрямую.
+Test binaries are also built in `build/tests` and can be run directly.
 
-### Использование API
+### API Usage Example
 ```cpp
 #include "rapidht.h"
 #include "utilities.h"
 
 using namespace RapiDHT;
 
-// 2D пример
+// 2D example
 size_t W = 256, H = 256;
-auto mode = Modes::GPU; // или CPU/RFFT
+auto mode = Modes::GPU; // or CPU/RFFT
 
 std::vector<double> data = MakeData<double>({ W, H });
 
@@ -54,11 +54,11 @@ ht.ForwardTransform(data.data());
 ht.InverseTransform(data.data());
 ```
 
-### Структура проекта
-- `include/` — публичные заголовки (`rapidht.h`, `utilities.h`, `kernel.h`, `dev_array.h`)
-- `source/` — реализации CPU/GPU (`rapidht.cpp`, `kernel.cu`)
-- `tests/` — тесты (GoogleTest) и утилитарные примеры
-- `3dparty/` — сторонние зависимости (GoogleTest, FFTW для экспериментов)
+### Project Structure
+- `include/` — public headers (`rapidht.h`, `utilities.h`, `kernel.h`, `dev_array.h`)
+- `source/` — CPU/GPU implementations (`rapidht.cpp`, `kernel.cu`)
+- `tests/` — tests (GoogleTest) and utility examples
+- `3dparty/` — third-party dependencies (GoogleTest, FFTW for experiments)
 
-### Лицензирование и авторство
-См. лицензии в директориях `3dparty/*` и корневые файлы проекта.
+### License & Authors
+See licenses in `3dparty/*` directories and the project root files.
