@@ -1,4 +1,5 @@
 #include "rapidht.h"
+#include "test_support.h" // SKIP_IF_NO_CUDA
 #include "utilities.h"
 #include <cmath>
 #include <gtest/gtest.h>
@@ -6,14 +7,6 @@
 #include <vector>
 
 using namespace RapiDHT;
-
-// GPU-тесты пропускаются, если библиотека собрана без CUDA (RAPIDHT_WITH_CUDA=OFF)
-#define SKIP_IF_NO_CUDA()                                                       \
-    do {                                                                        \
-        if (!RapiDHT::kCudaEnabled) {                                           \
-            GTEST_SKIP() << "Built without CUDA support (RAPIDHT_WITH_CUDA=OFF)"; \
-        }                                                                       \
-    } while (0)
 
 // Вспомогательная проверка на близость векторов (покомпонентно)
 template <typename T>
