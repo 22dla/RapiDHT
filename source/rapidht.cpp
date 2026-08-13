@@ -628,8 +628,10 @@ void HartleyTransform<T>::RealFFT1D(T* vec, Direction direction)
         }
     }
 
-    for (int i = 0; i < Length(direction); i++) {
-        vec[i] = x[i].real();
+    // The Hartley transform is Re(X) - Im(X), not Re(X): cas(t) = cos(t) + sin(t)
+    // while the Fourier kernel is cos(t) - i*sin(t).
+    for (size_t i = 0; i < Length(direction); i++) {
+        vec[i] = x[i].real() - x[i].imag();
     }
 }
 
