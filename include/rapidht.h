@@ -8,11 +8,33 @@
 #ifndef RAPIDHT_H
 #define RAPIDHT_H
 
+#include "rapidht_config.h"
+
+#ifdef RAPIDHT_WITH_CUDA
 #include "dev_array.h"
+#endif
+
 #include <array>
+#include <cstdint>
+#include <stdexcept>
 #include <vector>
 
 namespace RapiDHT {
+
+/// True when the library was built with the CUDA backend (Modes::GPU usable).
+#ifdef RAPIDHT_WITH_CUDA
+inline constexpr bool kCudaEnabled = true;
+#else
+inline constexpr bool kCudaEnabled = false;
+#endif
+
+/// True when the library was built with the MPI-distributed 3D backend.
+#ifdef RAPIDHT_WITH_MPI
+inline constexpr bool kMpiEnabled = true;
+#else
+inline constexpr bool kMpiEnabled = false;
+#endif
+
 enum class Direction : size_t { Y = 0,
     X = 1,
     Z = 2,
@@ -46,8 +68,11 @@ public:
      * @param data Pointer to the input/output data array.
      */
     void InverseTransform(T* data);
+
+#ifdef RAPIDHT_WITH_CUDA
     static void GpuMatrixMultiply111(T* A, T* B, T* C, int n);
     static void GpuMatrixMultiplyInt(const uint8_t* A, const uint8_t* B, uint32_t* C, int n);
+#endif
 
     constexpr size_t Width() const noexcept { return _dims[static_cast<size_t>(Direction::Y)]; }
     constexpr size_t Height() const noexcept { return _dims[static_cast<size_t>(Direction::X)]; }
@@ -116,6 +141,7 @@ private:
      */
     void FDHT3D(T* data);
 
+#ifdef RAPIDHT_WITH_CUDA
     /**
      * @brief Performs a 1D Hartley Transform using CUDA matrix-vector multiplication.
      * @param hX Pointer to the input data vector.
@@ -134,6 +160,7 @@ private:
      * @param image Pointer to the input/output 3D data array.
      */
     void DHT3DCuda(T* data);
+#endif
 
     /**
      * @brief Performs a 1D Real Fourier Transform along the specified direction.
@@ -203,7 +230,10 @@ private:
     Modes _mode = Modes::CPU;
 
     std::array<std::vector<T>, static_cast<size_t>(Direction::Count)> _hTransformMatrices;
+
+#ifdef RAPIDHT_WITH_CUDA
     std::array<dev_array<T>, static_cast<size_t>(Direction::Count)> _dTransformMatrices;
+#endif
 };
 } // namespace RapiDHT
 

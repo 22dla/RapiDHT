@@ -7,6 +7,14 @@
 
 using namespace RapiDHT;
 
+// GPU-тесты пропускаются, если библиотека собрана без CUDA (RAPIDHT_WITH_CUDA=OFF)
+#define SKIP_IF_NO_CUDA()                                                       \
+    do {                                                                        \
+        if (!RapiDHT::kCudaEnabled) {                                           \
+            GTEST_SKIP() << "Built without CUDA support (RAPIDHT_WITH_CUDA=OFF)"; \
+        }                                                                       \
+    } while (0)
+
 // Вспомогательная проверка на близость векторов (покомпонентно)
 template <typename T>
 void ExpectVectorsNear(const std::vector<T>& a, const std::vector<T>& b, double tol = 1e-6)
@@ -52,6 +60,7 @@ TEST(FDHT, Test1D_Large_CPU)
 // ------- GPU ------
 TEST(FDHT, Test1D_Small_GPU)
 {
+    SKIP_IF_NO_CUDA();
     size_t width = 8;
     auto mode = Modes::GPU;
 
@@ -67,6 +76,7 @@ TEST(FDHT, Test1D_Small_GPU)
 
 TEST(FDHT, Test1D_Large_GPU)
 {
+    SKIP_IF_NO_CUDA();
     size_t width = 1 << 12; // 4096
     auto mode = Modes::GPU;
 
@@ -133,6 +143,7 @@ TEST(FDHT, Test2D_Large_Different_Sizes_CPU)
 // ------- GPU ------
 TEST(FDHT, Test2D_Small_GPU)
 {
+    SKIP_IF_NO_CUDA();
     size_t width = 4;
     size_t height = 4;
     auto mode = Modes::GPU;
@@ -149,6 +160,7 @@ TEST(FDHT, Test2D_Small_GPU)
 
 TEST(FDHT, Test2D_Large_GPU)
 {
+    SKIP_IF_NO_CUDA();
     size_t width = 256;
     size_t height = 256;
     auto mode = Modes::GPU;
@@ -166,6 +178,7 @@ TEST(FDHT, Test2D_Large_GPU)
 /* developing
 TEST(FDHT, Test2D_Large_Different_Sizes_GPU)
 {
+    SKIP_IF_NO_CUDA();
     size_t width = 128;
     size_t height = 4096;
     auto mode = Modes::GPU;
@@ -236,6 +249,7 @@ TEST(FDHT, Test3D_Large_Different_Sizes_CPU)
 // ------- GPU ------
 TEST(FDHT, Test3D_Small_GPU)
 {
+    SKIP_IF_NO_CUDA();
     size_t width = 4;
     size_t height = 4;
     size_t depth = 4;
@@ -253,6 +267,7 @@ TEST(FDHT, Test3D_Small_GPU)
 
 TEST(FDHT, Test3D_Large_GPU)
 {
+    SKIP_IF_NO_CUDA();
     size_t width = 256;
     size_t height = 256;
     size_t depth = 256;
@@ -271,6 +286,7 @@ TEST(FDHT, Test3D_Large_GPU)
 /* developing
 TEST(FDHT, Test3D_Large_Different_Sizes_GPU)
 {
+    SKIP_IF_NO_CUDA();
     size_t width = 128;
     size_t height = 256;
     size_t depth = 512;

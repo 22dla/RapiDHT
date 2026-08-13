@@ -12,7 +12,8 @@ int main(int argc, char** argv) {
 	cfg.depth = 1 << 4;
 	//cfg.height = 4;
 	//cfg.depth = 8;
-	cfg.mode = Modes::GPU;
+	// GPU-путь доступен только в сборке с RAPIDHT_WITH_CUDA=ON
+	cfg.mode = kCudaEnabled ? Modes::GPU : Modes::CPU;
 
 	cfg.print();
 

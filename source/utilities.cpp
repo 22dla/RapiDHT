@@ -1,5 +1,7 @@
 #include "utilities.h"
 
+#include <cstring> // strcmp -- previously pulled in transitively via <mpi.h>
+
 namespace RapiDHT {
 
 // Разбор строки размеров вида "NxM[xK]"

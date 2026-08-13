@@ -5,16 +5,69 @@
  * Author: Волков Евгений Александрович, volkov22dla@yandex.ru
  */
 
-#include <complex>
-#include <cublas_v2.h>
-#include <mpi.h>
-#include <omp.h>
-
-#include "kernel.h"
+// rapidht.h must come first: it pulls in the generated rapidht_config.h that
+// defines RAPIDHT_WITH_CUDA / RAPIDHT_WITH_MPI used by the guards below.
 #include "rapidht.h"
 #include "utilities.h"
 
+#include <complex>
+#include <omp.h>
+
+#ifdef RAPIDHT_WITH_CUDA
+#include "kernel.h"
+#include <cublas_v2.h>
+#endif
+
+#ifdef RAPIDHT_WITH_MPI
+#include <mpi.h>
+#endif
+
 namespace RapiDHT {
+
+namespace {
+
+/// Rank/size of MPI_COMM_WORLD, or the trivial single-process values when MPI
+/// is either disabled at build time or not initialised by the host program.
+struct MpiContext {
+    int rank = 0;
+    int size = 1;
+    bool active = false;
+};
+
+MpiContext QueryMpi()
+{
+    MpiContext ctx;
+#ifdef RAPIDHT_WITH_MPI
+    int initialized = 0;
+    MPI_Initialized(&initialized);
+    if (initialized) {
+        ctx.active = true;
+        MPI_Comm_rank(MPI_COMM_WORLD, &ctx.rank);
+        MPI_Comm_size(MPI_COMM_WORLD, &ctx.size);
+    }
+#endif
+    return ctx;
+}
+
+void MpiBarrier(const MpiContext& ctx)
+{
+#ifdef RAPIDHT_WITH_MPI
+    if (ctx.active) {
+        MPI_Barrier(MPI_COMM_WORLD);
+    }
+#else
+    (void)ctx;
+#endif
+}
+
+[[noreturn]] void ThrowGpuUnavailable()
+{
+    throw std::runtime_error(
+        "RapiDHT was built without CUDA support (RAPIDHT_WITH_CUDA=OFF): "
+        "Modes::GPU is unavailable. Reconfigure with -DRAPIDHT_WITH_CUDA=ON.");
+}
+
+} // namespace
 
 template <typename T>
 HartleyTransform<T>::HartleyTransform(size_t width, size_t height, size_t depth, Modes mode):
@@ -39,6 +92,7 @@ HartleyTransform<T>::HartleyTransform(size_t width, size_t height, size_t depth,
         }
     }
     if (_mode == Modes::GPU) {
+#ifdef RAPIDHT_WITH_CUDA
         _dTransformMatrices[static_cast<size_t>(Direction::Y)].resize(Width() * Width());
         _dTransformMatrices[static_cast<size_t>(Direction::X)].resize(Height() * Height());
         _dTransformMatrices[static_cast<size_t>(Direction::Z)].resize(Depth() * Depth());
@@ -46,6 +100,9 @@ HartleyTransform<T>::HartleyTransform(size_t width, size_t height, size_t depth,
         InitializeHartleyMatrix(_dTransformMatrices[static_cast<size_t>(Direction::X)].getData(), Height());
         InitializeHartleyMatrix(_dTransformMatrices[static_cast<size_t>(Direction::Y)].getData(), Width());
         InitializeHartleyMatrix(_dTransformMatrices[static_cast<size_t>(Direction::Z)].getData(), Depth());
+#else
+        ThrowGpuUnavailable();
+#endif
     }
 }
 
@@ -58,15 +115,10 @@ void HartleyTransform<T>::ForwardTransform(T* data)
     bool is2D = (Height() > 0 && Depth() == 0);
     bool is3D = (Depth() > 0);
 
-    // Проверяем, инициализирован ли MPI
-    int mpiInitialized = 0;
-    MPI_Initialized(&mpiInitialized);
-
-    int rank = 0, size = 1;
-    if (mpiInitialized) {
-        MPI_Comm_rank(MPI_COMM_WORLD, &rank);
-        MPI_Comm_size(MPI_COMM_WORLD, &size);
-    }
+    // Rank/size, если MPI собран и инициализирован хост-программой
+    const MpiContext mpi = QueryMpi();
+    const int rank = mpi.rank;
+    const int size = mpi.size;
 
     if (is1D || is2D) {
         // Для 1D и 2D нет смысла в MPI
@@ -79,11 +131,15 @@ void HartleyTransform<T>::ForwardTransform(T* data)
                 }
                 break;
             case Modes::GPU:
+#ifdef RAPIDHT_WITH_CUDA
                 if (is1D) {
                     DHT1DCuda(data);
                 } else {
                     DHT2DCuda(data);
                 }
+#else
+                ThrowGpuUnavailable();
+#endif
                 break;
             case Modes::RFFT:
                 if (is1D) {
@@ -94,8 +150,7 @@ void HartleyTransform<T>::ForwardTransform(T* data)
 
                 break;
         }
-        if (mpiInitialized)
-            MPI_Barrier(MPI_COMM_WORLD);
+        MpiBarrier(mpi);
         return;
     }
 
@@ -112,15 +167,20 @@ void HartleyTransform<T>::ForwardTransform(T* data)
             FDHT3D(localData);
             break;
         case Modes::GPU:
+#ifdef RAPIDHT_WITH_CUDA
             DHT3DCuda(localData);
+#else
+            ThrowGpuUnavailable();
+#endif
             break;
         case Modes::RFFT:
             FDHT3D(localData);
             break;
     }
 
+#ifdef RAPIDHT_WITH_MPI
     // Сбор данных только если MPI активен
-    if (mpiInitialized) {
+    if (mpi.active) {
         std::vector<int> sendcounts(size);
         std::vector<int> displs(size);
         int offs = 0;
@@ -133,6 +193,7 @@ void HartleyTransform<T>::ForwardTransform(T* data)
             data, sendcounts.data(), displs.data(), MPI_DOUBLE,
             MPI_COMM_WORLD);
     }
+#endif
 }
 
 template <typename T>
@@ -144,15 +205,9 @@ void HartleyTransform<T>::InverseTransform(T* data)
     bool is2D = (Height() > 0 && Depth() == 0);
     bool is3D = (Depth() > 0);
 
-    // Проверяем, инициализирован ли MPI
-    int mpiInitialized = 0;
-    MPI_Initialized(&mpiInitialized);
-
-    int rank = 0, size = 1;
-    if (mpiInitialized) {
-        MPI_Comm_rank(MPI_COMM_WORLD, &rank);
-        MPI_Comm_size(MPI_COMM_WORLD, &size);
-    }
+    const MpiContext mpi = QueryMpi();
+    const int rank = mpi.rank;
+    const int size = mpi.size;
 
     // Сначала выполняем прямое преобразование
     ForwardTransform(data);
@@ -173,8 +228,7 @@ void HartleyTransform<T>::InverseTransform(T* data)
         for (size_t i = 0; i < totalSize; ++i) {
             data[i] *= denominator;
         }
-        if (mpiInitialized)
-            MPI_Barrier(MPI_COMM_WORLD);
+        MpiBarrier(mpi);
         return;
     }
 
@@ -193,9 +247,7 @@ void HartleyTransform<T>::InverseTransform(T* data)
     }
 
     // Синхронизация процессов
-    if (mpiInitialized) {
-        MPI_Barrier(MPI_COMM_WORLD);
-    }
+    MpiBarrier(mpi);
 }
 
 template <typename T>
@@ -359,10 +411,11 @@ void HartleyTransform<T>::BracewellTransform2DCPU(T* image_ptr)
 
     std::vector<T> result(W * H, T(0));
 
+    // collapse(N) требует идеально вложенных циклов: объявления переносим внутрь
 #pragma omp parallel for collapse(2)
     for (int y = 0; y < W; ++y) {
-        const int ym = (y > 0) ? (W - y) : 0;
         for (int x = 0; x < H; ++x) {
+            const int ym = (y > 0) ? (W - y) : 0;
             const int xm = (x > 0) ? (H - x) : 0;
 
             const T A = image_ptr[LinearIndex(y, x, 0)];
@@ -387,12 +440,13 @@ void HartleyTransform<T>::BracewellTransform3DCPU(T* volumePtr)
 
     std::vector<T> result(W * H * D, T(0));
 
+    // collapse(N) требует идеально вложенных циклов: объявления переносим внутрь
 #pragma omp parallel for collapse(3)
     for (int y = 0; y < W; ++y) {
-        const int ym = (y > 0) ? (W - y) : 0;
         for (int x = 0; x < H; ++x) {
-            const int xm = (x > 0) ? (H - x) : 0;
             for (int z = 0; z < D; ++z) {
+                const int ym = (y > 0) ? (W - y) : 0;
+                const int xm = (x > 0) ? (H - x) : 0;
                 const int zm = (z > 0) ? (D - z) : 0;
 
                 const T A = volumePtr[LinearIndex(ym, x, z)]; // flip X
@@ -578,6 +632,8 @@ void HartleyTransform<T>::RealFFT1D(T* vec, Direction direction)
         vec[i] = x[i].real();
     }
 }
+
+#ifdef RAPIDHT_WITH_CUDA
 
 template <typename T>
 void HartleyTransform<T>::DHT1DCuda(T* h_x)
@@ -851,6 +907,8 @@ void HartleyTransform<T>::DHT3DCuda(T* h_X)
     cublasDestroy(handle);
     cudaDeviceSynchronize();
 }
+
+#endif // RAPIDHT_WITH_CUDA
 
 template class HartleyTransform<float>;
 template class HartleyTransform<double>;

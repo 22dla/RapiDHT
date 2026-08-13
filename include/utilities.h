@@ -169,6 +169,7 @@ void PrintData2d(const T* data, int width, int height)
     std::cout << std::endl;
 }
 
+#ifdef RAPIDHT_WITH_CUDA
 template <typename T>
 void PrintData2d(const dev_array<T>& data, int width, int height)
 {
@@ -182,6 +183,7 @@ void PrintData2d(const dev_array<T>& data, int width, int height)
     }
     std::cout << std::endl;
 }
+#endif // RAPIDHT_WITH_CUDA
 
 template <typename T>
 void PrintData3d(const T* data, int width, int height, int depth, int width_max = std::numeric_limits<int>::max(),

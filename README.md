@@ -6,13 +6,18 @@ RapiDHT is a library and a set of tests for performing the Discrete Hartley Tran
 - **RFFT**: computation via real-valued FFT implementation
 
 ### Requirements
+Always required:
 - CMake 3.18+
-- C++17 compiler
-- CUDA Toolkit (for GPU mode) and NVIDIA driver
-- MPI (for distributed 3D processing)
-- GoogleTest (included as a submodule/vendor in `3dparty`)
+- C++17 compiler with OpenMP
+- GoogleTest (vendored in `3dparty`)
+
+Optional, only when the corresponding backend is enabled:
+- CUDA Toolkit 11+ and an NVIDIA driver — for `RAPIDHT_WITH_CUDA=ON`
+- An MPI implementation — for `RAPIDHT_WITH_MPI=ON`
 
 ### Build
+The default configuration is **CPU-only** and needs neither CUDA nor MPI.
+
 #### Debug:
 ```bash
 cmake -S . -B build
@@ -23,11 +28,27 @@ cmake --build build
 cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
 cmake --build build --config Release
 ```
+#### With the GPU and/or MPI backends:
+```bash
+cmake -S . -B build -DCMAKE_BUILD_TYPE=Release \
+      -DRAPIDHT_WITH_CUDA=ON -DRAPIDHT_WITH_MPI=ON
+cmake --build build --config Release
+```
 
 The default installed library is: `coreht`.
 
 ### Options
-- `ENABLE_PROFILING` — enables a simple function profiler (macro `PROFILE_FUNCTION()`)
+| Option | Default | Description |
+| --- | --- | --- |
+| `RAPIDHT_WITH_CUDA` | `OFF` | Build the CUDA/cuBLAS GPU backend. When `OFF`, constructing a transform with `Modes::GPU` throws `std::runtime_error`. |
+| `RAPIDHT_WITH_MPI` | `OFF` | Build the MPI-distributed 3D backend. When `OFF`, 3D transforms run single-process. |
+| `RAPIDHT_BUILD_TESTS` | `ON` | Build the test executables. |
+| `ENABLE_PROFILING` | `OFF` | Enable a simple function profiler (macro `PROFILE_FUNCTION()`). |
+
+Enabled backends are recorded in the generated header `rapidht_config.h`
+(`RAPIDHT_WITH_CUDA` / `RAPIDHT_WITH_MPI`) and exposed to user code as the
+`constexpr bool` flags `RapiDHT::kCudaEnabled` and `RapiDHT::kMpiEnabled`.
+GPU tests skip themselves automatically in a CPU-only build.
 
 ### Running Tests
 ```bash
