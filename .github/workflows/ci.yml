@@ -52,14 +52,29 @@ jobs:
         uses: actions/checkout@v4
 
       # The runner has no GPU, so this job only proves that the device code
-      # and the CUDA-enabled headers still compile. Ubuntu's packaged toolkit
-      # is enough: the GPU backend uses nothing newer than cudaMallocAsync
-      # (CUDA 11.2) and the standard cuBLAS entry points.
+      # and the CUDA-enabled headers still compile.
+      #
+      # The toolkit comes from NVIDIA's own apt repository rather than from
+      # Ubuntu's nvidia-cuda-toolkit package. The latter pins CUDA 11.5 on
+      # 22.04, and nvcc 11.5 cannot parse the libstdc++ 11 headers -- it fails
+      # inside <functional> with "parameter packs not expanded". Installing an
+      # explicit version also keeps CI close to the toolkit actually used for
+      # development instead of whatever the distribution happens to ship.
       - name: Install the CUDA toolkit
+        env:
+          CUDA_PKG_VERSION: "12-6"
         run: |
+          wget -q https://developer.download.nvidia.com/compute/cuda/repos/ubuntu2204/x86_64/cuda-keyring_1.1-1_all.deb
+          sudo dpkg -i cuda-keyring_1.1-1_all.deb
           sudo apt-get update
-          sudo apt-get install -y --no-install-recommends nvidia-cuda-toolkit
-          nvcc --version
+          sudo apt-get install -y --no-install-recommends \
+            cuda-nvcc-${CUDA_PKG_VERSION} \
+            cuda-cudart-dev-${CUDA_PKG_VERSION} \
+            libcublas-dev-${CUDA_PKG_VERSION}
+          echo "/usr/local/cuda-${CUDA_PKG_VERSION/-/.}/bin" >> "$GITHUB_PATH"
+
+      - name: Report the toolkit version
+        run: nvcc --version
 
       - name: Configure
         run: cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DRAPIDHT_WITH_CUDA=ON
