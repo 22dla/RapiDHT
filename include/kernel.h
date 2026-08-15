@@ -38,7 +38,7 @@ void MatrixMultiplication(const T* A, const T* B, T* C, int M, int K, int N);
 template <typename T>
 void MatrixTranspose(const T* A, T* B, int rows, int cols);
 
-template<typename T>
+template <typename T>
 void VectorMatrixMultiplication(const T* A, const T* x, T* y, int N);
 
 template <typename T>

@@ -712,10 +712,10 @@ void HartleyTransform<T>::DHT2DCuda(T* h_X)
     CUDA_CHECK(cudaEventSynchronize(stop));
     std::cout << "Transpose (after Y):\t\t" << ElapsedMsGPU(start, stop) << " ms\n";
 
-    //PrintData2d(d_Y, Width(), Height());
+    // PrintData2d(d_Y, Width(), Height());
 
     // Bracewell
-    //BracewellTransform2D(d_X.getData(), Width());
+    // BracewellTransform2D(d_X.getData(), Width());
 
     // ---------------- GPU -> CPU ----------------
     CUDA_CHECK(cudaEventRecord(start));

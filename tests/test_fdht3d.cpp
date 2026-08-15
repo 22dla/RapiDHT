@@ -3,47 +3,49 @@
 
 using namespace RapiDHT;
 
-int main(int argc, char** argv) {
-	// ---- Обработка аргументов ----
-	//auto cfg = ParseArgs(argc, argv);
-	LoadingConfig cfg;
-	cfg.width = 1 << 2;
-	cfg.height = 1 << 3;
-	cfg.depth = 1 << 4;
-	//cfg.height = 4;
-	//cfg.depth = 8;
-	// GPU-путь доступен только в сборке с RAPIDHT_WITH_CUDA=ON
-	cfg.mode = kCudaEnabled ? Modes::GPU : Modes::CPU;
+int main(int argc, char** argv)
+{
+    // ---- Обработка аргументов ----
+    // auto cfg = ParseArgs(argc, argv);
+    LoadingConfig cfg;
+    cfg.width = 1 << 2;
+    cfg.height = 1 << 3;
+    cfg.depth = 1 << 4;
+    // cfg.height = 4;
+    // cfg.depth = 8;
 
-	cfg.print();
+    // GPU-путь доступен только в сборке с RAPIDHT_WITH_CUDA=ON
+    cfg.mode = kCudaEnabled ? Modes::GPU : Modes::CPU;
 
-	auto width = cfg.width;
-	auto height = cfg.height;
-	auto depth = cfg.depth;
-	auto mode = cfg.mode;
+    cfg.print();
 
-	// ---- Создание данных ----
-	auto making_start = std::chrono::high_resolution_clock::now();
-	auto original_data = MakeData<float>({width, height, depth}, FillMode::Sequential);
-	auto transformed_data = original_data;
-	auto making_finish = std::chrono::high_resolution_clock::now();
-	ShowElapsedTime<std::chrono::milliseconds>(making_start, making_finish, "Making time");
+    auto width = cfg.width;
+    auto height = cfg.height;
+    auto depth = cfg.depth;
+    auto mode = cfg.mode;
 
-	// ---- Засекаем время ----
-	auto common_start = std::chrono::high_resolution_clock::now();
+    // ---- Создание данных ----
+    auto making_start = std::chrono::high_resolution_clock::now();
+    auto original_data = MakeData<float>({ width, height, depth }, FillMode::Sequential);
+    auto transformed_data = original_data;
+    auto making_finish = std::chrono::high_resolution_clock::now();
+    ShowElapsedTime<std::chrono::milliseconds>(making_start, making_finish, "Making time");
 
-	// ---- Преобразование Хартли ----
-	//PrintData3d(original_data.data(), width, height, depth);
-	HartleyTransform<float> ht(width, height, depth, mode);
-	ht.ForwardTransform(original_data.data());
-	//PrintData3d(original_data.data(), width, height, depth);
-	ht.InverseTransform(original_data.data());
-	//PrintData3d(original_data.data(), width, height, depth);
+    // ---- Засекаем время ----
+    auto common_start = std::chrono::high_resolution_clock::now();
 
-	auto common_finish = std::chrono::high_resolution_clock::now();
-	ShowElapsedTime<std::chrono::milliseconds>(common_start, common_finish, "Common time");
+    // ---- Преобразование Хартли ----
+    // PrintData3d(original_data.data(), width, height, depth);
+    HartleyTransform<float> ht(width, height, depth, mode);
+    ht.ForwardTransform(original_data.data());
+    // PrintData3d(original_data.data(), width, height, depth);
+    ht.InverseTransform(original_data.data());
+    // PrintData3d(original_data.data(), width, height, depth);
 
-	// ---- Подсчёт ошибки ----
-	CompareData(original_data, transformed_data);
-	return 0;
+    auto common_finish = std::chrono::high_resolution_clock::now();
+    ShowElapsedTime<std::chrono::milliseconds>(common_start, common_finish, "Common time");
+
+    // ---- Подсчёт ошибки ----
+    CompareData(original_data, transformed_data);
+    return 0;
 }

@@ -10,6 +10,7 @@
 
 #include "rapidht.h"
 
+#include <algorithm>
 #include <cmath>
 #include <cstddef>
 #include <gtest/gtest.h>
@@ -68,9 +69,9 @@ inline std::vector<double> ReferenceDht(const std::vector<double>& in, const Dim
                     for (size_t j = 0; j < dims.height; ++j) {
                         for (size_t k = 0; k < dims.depth; ++k) {
                             const double phase = kTwoPi
-                                * (static_cast<double>(i * a) / static_cast<double>(dims.width)
-                                    + static_cast<double>(j * b) / static_cast<double>(dims.height)
-                                    + static_cast<double>(k * c) / static_cast<double>(dims.depth));
+                                               * (static_cast<double>(i * a) / static_cast<double>(dims.width)
+                                                   + static_cast<double>(j * b) / static_cast<double>(dims.height)
+                                                   + static_cast<double>(k * c) / static_cast<double>(dims.depth));
                             sum += in[dims.Index(i, j, k)] * Cas(phase);
                         }
                     }

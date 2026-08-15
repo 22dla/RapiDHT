@@ -12,9 +12,11 @@
 #include <algorithm>
 #include <chrono>
 #include <cmath>
+#include <cstdint> // SIZE_MAX
 #include <fstream>
 #include <iomanip>
 #include <iostream>
+#include <limits> // std::numeric_limits
 #include <numeric>
 #include <random>
 #include <sstream>

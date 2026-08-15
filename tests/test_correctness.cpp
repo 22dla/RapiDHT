@@ -15,6 +15,7 @@
 
 #include <gtest/gtest.h>
 #include <numeric>
+#include <string>
 #include <vector>
 
 using namespace RapiDHT;
