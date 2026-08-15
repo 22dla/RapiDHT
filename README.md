@@ -47,6 +47,11 @@ The default installed library is: `coreht`.
 | `RAPIDHT_BUILD_TESTS` | `ON` | Build the test executables. |
 | `ENABLE_PROFILING` | `OFF` | Enable a simple function profiler (macro `PROFILE_FUNCTION()`). |
 
+With `RAPIDHT_WITH_CUDA=ON`, `CMAKE_CUDA_ARCHITECTURES` is left to CMake, which
+derives a default from `nvcc`. Pass `-DCMAKE_CUDA_ARCHITECTURES=native` to target
+the card in the build machine, or an explicit list such as `"80;86"`. Note that
+`native` needs a GPU present at configure time, so it cannot be the default.
+
 Enabled backends are recorded in the generated header `rapidht_config.h`
 (`RAPIDHT_WITH_CUDA` / `RAPIDHT_WITH_MPI`) and exposed to user code as the
 `constexpr bool` flags `RapiDHT::kCudaEnabled` and `RapiDHT::kMpiEnabled`.

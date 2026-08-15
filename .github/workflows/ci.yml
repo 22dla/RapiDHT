@@ -42,3 +42,32 @@ jobs:
 
       - name: Test
         run: ctest --test-dir build -C Release --output-on-failure
+
+  cuda-compile:
+    name: Linux / CUDA compile
+    runs-on: ubuntu-22.04
+
+    steps:
+      - name: Check out the repository
+        uses: actions/checkout@v4
+
+      # The runner has no GPU, so this job only proves that the device code
+      # and the CUDA-enabled headers still compile. Ubuntu's packaged toolkit
+      # is enough: the GPU backend uses nothing newer than cudaMallocAsync
+      # (CUDA 11.2) and the standard cuBLAS entry points.
+      - name: Install the CUDA toolkit
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends nvidia-cuda-toolkit
+          nvcc --version
+
+      - name: Configure
+        run: cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DRAPIDHT_WITH_CUDA=ON
+
+      - name: Build
+        run: cmake --build build --parallel
+
+      # Everything except the GPU cases, which need an actual device. This
+      # still checks that a CUDA-enabled build produces correct CPU results.
+      - name: Test (CPU cases only)
+        run: ctest --test-dir build --output-on-failure -E GPU

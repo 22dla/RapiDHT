@@ -28,13 +28,12 @@ if(RAPIDHT_WITH_CUDA)
     find_package(CUDAToolkit REQUIRED)
     message(STATUS "RapiDHT: CUDA backend ON (toolkit ${CUDAToolkit_VERSION})")
 
-    if(NOT DEFINED CMAKE_CUDA_ARCHITECTURES)
-        if(CMAKE_VERSION VERSION_GREATER_EQUAL 3.24)
-            set(CMAKE_CUDA_ARCHITECTURES native)
-        else()
-            set(CMAKE_CUDA_ARCHITECTURES 70 75 80 86)
-        endif()
-    endif()
+    # Deliberately left to CMake, which derives a default from nvcc itself.
+    # Do not default this to "native": that resolves the architecture by
+    # querying an installed GPU, so it breaks on any machine that has the
+    # toolkit but no card -- build servers and CI runners included. Callers
+    # who do have a GPU can still pass -DCMAKE_CUDA_ARCHITECTURES=native, or
+    # an explicit list such as "80;86".
     message(STATUS "RapiDHT: CUDA architectures = ${CMAKE_CUDA_ARCHITECTURES}")
 else()
     message(STATUS "RapiDHT: CUDA backend OFF (Modes::GPU will throw at runtime)")
