@@ -1,5 +1,7 @@
 ## RapiDHT — Discrete Hartley Transform (CPU/GPU)
 
+[![CI](https://github.com/22dla/RapiDHT/actions/workflows/ci.yml/badge.svg)](https://github.com/22dla/RapiDHT/actions/workflows/ci.yml)
+
 RapiDHT is a library and a set of tests for performing the Discrete Hartley Transform in 1D/2D/3D modes:
 - **CPU (OpenMP)**: FDHT implementation through 1D decomposition and transpositions
 - **GPU (CUDA)**: matrix multiplications and transpositions using CUDA kernels; partially uses **cuBLAS**, partially custom **cuda** kernels
