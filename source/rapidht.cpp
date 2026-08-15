@@ -14,6 +14,7 @@
 #include <omp.h>
 
 #ifdef RAPIDHT_WITH_CUDA
+#include "dev_array.h"
 #include "kernel.h"
 #include <cublas_v2.h>
 #endif
@@ -69,6 +70,27 @@ void MpiBarrier(const MpiContext& ctx)
 
 } // namespace
 
+/*
+ * Opaque device-side state. Declared in the public header, defined only here,
+ * so that no CUDA type ever appears in an installed header. In a CPU-only
+ * build the struct is empty and the owning pointer is never allocated.
+ */
+template <typename T>
+struct HartleyTransform<T>::Impl {
+#ifdef RAPIDHT_WITH_CUDA
+    std::array<dev_array<T>, static_cast<size_t>(Direction::Count)> transformMatrices;
+#endif
+};
+
+template <typename T>
+HartleyTransform<T>::~HartleyTransform() = default;
+
+template <typename T>
+HartleyTransform<T>::HartleyTransform(HartleyTransform&&) noexcept = default;
+
+template <typename T>
+HartleyTransform<T>& HartleyTransform<T>::operator=(HartleyTransform&&) noexcept = default;
+
 template <typename T>
 HartleyTransform<T>::HartleyTransform(size_t width, size_t height, size_t depth, Modes mode):
     _mode(mode)
@@ -93,13 +115,18 @@ HartleyTransform<T>::HartleyTransform(size_t width, size_t height, size_t depth,
     }
     if (_mode == Modes::GPU) {
 #ifdef RAPIDHT_WITH_CUDA
-        _dTransformMatrices[static_cast<size_t>(Direction::Y)].resize(Width() * Width());
-        _dTransformMatrices[static_cast<size_t>(Direction::X)].resize(Height() * Height());
-        _dTransformMatrices[static_cast<size_t>(Direction::Z)].resize(Depth() * Depth());
+        // Allocated only for the GPU backend: a CPU-only transform must not
+        // touch the CUDA runtime at all, not even to create a stream.
+        _impl = std::make_unique<Impl>();
+        auto& matrices = _impl->transformMatrices;
 
-        InitializeHartleyMatrix(_dTransformMatrices[static_cast<size_t>(Direction::X)].getData(), Height());
-        InitializeHartleyMatrix(_dTransformMatrices[static_cast<size_t>(Direction::Y)].getData(), Width());
-        InitializeHartleyMatrix(_dTransformMatrices[static_cast<size_t>(Direction::Z)].getData(), Depth());
+        matrices[static_cast<size_t>(Direction::Y)].resize(Width() * Width());
+        matrices[static_cast<size_t>(Direction::X)].resize(Height() * Height());
+        matrices[static_cast<size_t>(Direction::Z)].resize(Depth() * Depth());
+
+        InitializeHartleyMatrix(matrices[static_cast<size_t>(Direction::X)].getData(), Height());
+        InitializeHartleyMatrix(matrices[static_cast<size_t>(Direction::Y)].getData(), Width());
+        InitializeHartleyMatrix(matrices[static_cast<size_t>(Direction::Z)].getData(), Depth());
 #else
         ThrowGpuUnavailable();
 #endif
@@ -131,15 +158,11 @@ void HartleyTransform<T>::ForwardTransform(T* data)
                 }
                 break;
             case Modes::GPU:
-#ifdef RAPIDHT_WITH_CUDA
                 if (is1D) {
                     DHT1DCuda(data);
                 } else {
                     DHT2DCuda(data);
                 }
-#else
-                ThrowGpuUnavailable();
-#endif
                 break;
             case Modes::RFFT:
                 if (is1D) {
@@ -167,11 +190,7 @@ void HartleyTransform<T>::ForwardTransform(T* data)
             FDHT3D(localData);
             break;
         case Modes::GPU:
-#ifdef RAPIDHT_WITH_CUDA
             DHT3DCuda(localData);
-#else
-            ThrowGpuUnavailable();
-#endif
             break;
         case Modes::RFFT:
             FDHT3D(localData);
@@ -651,7 +670,7 @@ void HartleyTransform<T>::DHT1DCuda(T* h_x)
     // transfer CPU -> GPU
     d_x.set(h_x, Width());
 
-    VectorMatrixMultiplication(_dTransformMatrices[static_cast<size_t>(Direction::Y)].getData(), d_x.getData(),
+    VectorMatrixMultiplication(_impl->transformMatrices[static_cast<size_t>(Direction::Y)].getData(), d_x.getData(),
         d_y.getData(), Width());
     // transfer GPU -> CPU
     d_y.get(h_x, Width());
@@ -684,7 +703,7 @@ void HartleyTransform<T>::DHT2DCuda(T* h_X)
 
     // ---------------- MatrixMultiplication X ----------------
     CUDA_CHECK(cudaEventRecord(start));
-    MatrixMultiplication(d_X.getData(), _dTransformMatrices[static_cast<size_t>(Direction::X)].getData(), d_Y.getData(),
+    MatrixMultiplication(d_X.getData(), _impl->transformMatrices[static_cast<size_t>(Direction::X)].getData(), d_Y.getData(),
         Height(), Width(), Width());
     CUDA_CHECK(cudaEventRecord(stop));
     CUDA_CHECK(cudaEventSynchronize(stop));
@@ -699,7 +718,7 @@ void HartleyTransform<T>::DHT2DCuda(T* h_X)
 
     // ---------------- MatrixMultiplication Y ----------------
     CUDA_CHECK(cudaEventRecord(start));
-    MatrixMultiplication(d_X.getData(), _dTransformMatrices[static_cast<size_t>(Direction::Y)].getData(), d_Y.getData(),
+    MatrixMultiplication(d_X.getData(), _impl->transformMatrices[static_cast<size_t>(Direction::Y)].getData(), d_Y.getData(),
         Width(), Height(), Height());
     CUDA_CHECK(cudaEventRecord(stop));
     CUDA_CHECK(cudaEventSynchronize(stop));
@@ -836,7 +855,7 @@ void HartleyTransform<T>::DHT3DCuda(T* h_X)
         int batchCount = D;
 
         CublasGemmStridedBatched<T>::call(handle, CUBLAS_OP_N, CUBLAS_OP_N, m, n, k, &alpha, d_Y.getData(), lda,
-            strideA, _dTransformMatrices[(size_t)Direction::Y].getData(), ldb, strideB,
+            strideA, _impl->transformMatrices[(size_t)Direction::Y].getData(), ldb, strideB,
             &beta, d_X.getData(), ldc, strideC, batchCount);
     }
 
@@ -864,7 +883,7 @@ void HartleyTransform<T>::DHT3DCuda(T* h_X)
         int batchCount = D;
 
         CublasGemmStridedBatched<T>::call(handle, CUBLAS_OP_N, CUBLAS_OP_N, m, n, k, &alpha, d_Y.getData(), lda,
-            strideA, _dTransformMatrices[(size_t)Direction::X].getData(), ldb, strideB,
+            strideA, _impl->transformMatrices[(size_t)Direction::X].getData(), ldb, strideB,
             &beta, d_X.getData(), ldc, strideC, batchCount);
     }
 
@@ -889,7 +908,7 @@ void HartleyTransform<T>::DHT3DCuda(T* h_X)
         int batchCount = H;
 
         CublasGemmStridedBatched<T>::call(handle, CUBLAS_OP_N, CUBLAS_OP_N, m, n, k, &alpha, d_Y.getData(), lda,
-            strideA, _dTransformMatrices[(size_t)Direction::Z].getData(), ldb, strideB,
+            strideA, _impl->transformMatrices[(size_t)Direction::Z].getData(), ldb, strideB,
             &beta, d_X.getData(), ldc, strideC, batchCount);
     }
 
@@ -908,6 +927,32 @@ void HartleyTransform<T>::DHT3DCuda(T* h_X)
 
     cublasDestroy(handle);
     cudaDeviceSynchronize();
+}
+
+#else // !RAPIDHT_WITH_CUDA
+
+/*
+ * Defined even without CUDA so that the class has no member that is declared
+ * but never defined, which keeps explicit instantiation well behaved across
+ * compilers. Unreachable in practice: the constructor already rejects
+ * Modes::GPU in this configuration.
+ */
+template <typename T>
+void HartleyTransform<T>::DHT1DCuda(T*)
+{
+    ThrowGpuUnavailable();
+}
+
+template <typename T>
+void HartleyTransform<T>::DHT2DCuda(T*)
+{
+    ThrowGpuUnavailable();
+}
+
+template <typename T>
+void HartleyTransform<T>::DHT3DCuda(T*)
+{
+    ThrowGpuUnavailable();
 }
 
 #endif // RAPIDHT_WITH_CUDA

@@ -83,8 +83,12 @@ ht.InverseTransform(data.data());
 ```
 
 ### Project Structure
-- `include/` — public headers (`rapidht.h`, `utilities.h`, `kernel.h`, `dev_array.h`)
-- `source/` — CPU/GPU implementations (`rapidht.cpp`, `kernel.cu`)
+- `include/` — public headers (`rapidht.h`, `utilities.h`). These never name a
+  CUDA type, so consuming the library requires no CUDA toolkit even when the
+  GPU backend is compiled in, and the class layout does not depend on
+  `RAPIDHT_WITH_CUDA`.
+- `source/` — implementations plus internal headers not meant for consumers
+  (`rapidht.cpp`, `kernel.cu`, `kernel.h`, `dev_array.h`)
 - `tests/` — tests (GoogleTest) and utility examples
 - `3dparty/` — third-party dependencies (GoogleTest, FFTW for experiments)
 

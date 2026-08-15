@@ -10,12 +10,9 @@
 
 #include "rapidht_config.h"
 
-#ifdef RAPIDHT_WITH_CUDA
-#include "dev_array.h"
-#endif
-
 #include <array>
 #include <cstdint>
+#include <memory>
 #include <stdexcept>
 #include <vector>
 
@@ -57,6 +54,15 @@ public:
      */
     HartleyTransform(size_t width, size_t height, size_t depth, Modes mode);
 
+    // Declared here and defined in the translation unit where Impl is
+    // complete. Copying is disabled because the object may own device
+    // memory, which cannot be duplicated meaningfully.
+    ~HartleyTransform();
+    HartleyTransform(const HartleyTransform&) = delete;
+    HartleyTransform& operator=(const HartleyTransform&) = delete;
+    HartleyTransform(HartleyTransform&&) noexcept;
+    HartleyTransform& operator=(HartleyTransform&&) noexcept;
+
     /**
      * @brief Performs the forward Hartley transform on the input data.
      * @param data Pointer to the input/output data array.
@@ -68,11 +74,6 @@ public:
      * @param data Pointer to the input/output data array.
      */
     void InverseTransform(T* data);
-
-#ifdef RAPIDHT_WITH_CUDA
-    static void GpuMatrixMultiply111(T* A, T* B, T* C, int n);
-    static void GpuMatrixMultiplyInt(const uint8_t* A, const uint8_t* B, uint32_t* C, int n);
-#endif
 
     constexpr size_t Width() const noexcept { return _dims[static_cast<size_t>(Direction::Y)]; }
     constexpr size_t Height() const noexcept { return _dims[static_cast<size_t>(Direction::X)]; }
@@ -141,7 +142,14 @@ private:
      */
     void FDHT3D(T* data);
 
-#ifdef RAPIDHT_WITH_CUDA
+    /*
+     * GPU entry points. Declared unconditionally so that the class layout and
+     * interface do not depend on RAPIDHT_WITH_CUDA -- otherwise a consumer
+     * compiled with a different setting than the library would silently
+     * disagree about this type. They are only defined, and only ever called,
+     * in a CUDA-enabled build.
+     */
+
     /**
      * @brief Performs a 1D Hartley Transform using CUDA matrix-vector multiplication.
      * @param hX Pointer to the input data vector.
@@ -160,7 +168,6 @@ private:
      * @param image Pointer to the input/output 3D data array.
      */
     void DHT3DCuda(T* data);
-#endif
 
     /**
      * @brief Performs a 1D Real Fourier Transform along the specified direction.
@@ -231,9 +238,18 @@ private:
 
     std::array<std::vector<T>, static_cast<size_t>(Direction::Count)> _hTransformMatrices;
 
-#ifdef RAPIDHT_WITH_CUDA
-    std::array<dev_array<T>, static_cast<size_t>(Direction::Count)> _dTransformMatrices;
-#endif
+    /*
+     * Device-side state lives behind an opaque pointer so that this header
+     * never names a CUDA type. Without it, <cuda_runtime.h> reached every
+     * consumer of the library through dev_array.h, forcing them to have a
+     * CUDA toolkit installed even to use the CPU backend.
+     *
+     * The member is present in every configuration, keeping the class layout
+     * independent of RAPIDHT_WITH_CUDA. In a CPU-only build Impl is simply
+     * empty and the pointer stays null.
+     */
+    struct Impl;
+    std::unique_ptr<Impl> _impl;
 };
 } // namespace RapiDHT
 

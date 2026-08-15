@@ -13,11 +13,12 @@ endif()
 
 add_library(coreht ${RAPIDHT_SOURCES})
 
-# PUBLIC: OpenMP pragmas and (for now) dev_array.h leak into the public headers.
 target_link_libraries(coreht PUBLIC OpenMP::OpenMP_CXX)
 
 if(RAPIDHT_WITH_CUDA)
-    target_link_libraries(coreht PUBLIC CUDA::cudart CUDA::cublas)
+    # PRIVATE: the device state hides behind HartleyTransform::Impl, so no
+    # installed header names a CUDA type and consumers need no toolkit.
+    target_link_libraries(coreht PRIVATE CUDA::cudart CUDA::cublas)
     set_target_properties(coreht PROPERTIES CUDA_SEPARABLE_COMPILATION ON)
 endif()
 
