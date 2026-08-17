@@ -151,8 +151,40 @@ __global__ void MatrixMultiplication3D_Z_Kernel(
     }
 }
 
+/*
+ * Bracewell correction, turning the separable result of the per-axis passes
+ * into the true multidimensional Hartley transform.
+ *
+ * Out of place on purpose: every output reads four (2D) or four (3D) input
+ * points, including mirrored ones, so writing into the source buffer races
+ * with neighbouring threads that still need the original values.
+ *
+ * The formulas match BracewellTransform2DCPU and BracewellTransform3DCPU
+ * exactly; the tests compare both backends against the same reference.
+ */
 template <typename T>
-__global__ void BracewellTransform3D_Kernel(T* A, int W, int H, int D)
+__global__ void BracewellTransform2D_Kernel(const T* __restrict__ in, T* __restrict__ out, int W, int H)
+{
+    int x = blockIdx.x * blockDim.x + threadIdx.x;
+    int y = blockIdx.y * blockDim.y + threadIdx.y;
+
+    if (x >= W || y >= H) {
+        return;
+    }
+
+    const int xm = (x == 0) ? 0 : W - x;
+    const int ym = (y == 0) ? 0 : H - y;
+
+    const T a = in[y * W + x];
+    const T b = in[y * W + xm]; // mirrored in X
+    const T c = in[ym * W + x]; // mirrored in Y
+    const T d = in[ym * W + xm]; // mirrored in both
+
+    out[y * W + x] = static_cast<T>(0.5) * (a + b + c - d);
+}
+
+template <typename T>
+__global__ void BracewellTransform3D_Kernel(const T* __restrict__ in, T* __restrict__ out, int W, int H, int D)
 {
     int x = blockIdx.x * blockDim.x + threadIdx.x;
     int y = blockIdx.y * blockDim.y + threadIdx.y;
@@ -162,20 +194,17 @@ __global__ void BracewellTransform3D_Kernel(T* A, int W, int H, int D)
         return;
     }
 
-    int xm = x == 0 ? 0 : W - x;
-    int ym = y == 0 ? 0 : H - y;
-    int zm = z == 0 ? 0 : D - z;
+    const int xm = (x == 0) ? 0 : W - x;
+    const int ym = (y == 0) ? 0 : H - y;
+    const int zm = (z == 0) ? 0 : D - z;
 
-    T Axyz = A[z * H * W + y * W + x];
-    T Bxyz = A[z * H * W + y * W + xm];
-    T Cxyz = A[z * H * W + ym * W + x];
-    T Dxyz = A[z * H * W + ym * W + xm];
-    T Exyz = A[zm * H * W + y * W + x];
-    T Fxyz = A[zm * H * W + y * W + xm];
-    T Gxyz = A[zm * H * W + ym * W + x];
-    T Hxyz = A[zm * H * W + ym * W + xm];
+    const size_t plane = static_cast<size_t>(H) * W;
+    const T a = in[zm * plane + y * W + x]; // mirrored in Z
+    const T b = in[z * plane + ym * W + x]; // mirrored in Y
+    const T c = in[z * plane + y * W + xm]; // mirrored in X
+    const T d = in[zm * plane + ym * W + xm]; // mirrored in all three
 
-    A[z * H * W + y * W + x] = 0.5 * (Axyz + Bxyz + Cxyz - Dxyz + Exyz + Fxyz + Gxyz - Hxyz);
+    out[z * plane + y * W + x] = static_cast<T>(0.5) * (a + b + c - d);
 }
 
 __global__ void InitializeHartleyMatrixKernel(double* kernel, size_t height)
@@ -272,14 +301,25 @@ void MatrixMultiplication3D_Z(const T* d_input, const T* d_transformZ, T* d_outp
 }
 
 template <typename T>
-void BracewellTransform3D(T* d_A, int W, int H, int D)
+void BracewellTransform2D(const T* d_in, T* d_out, int W, int H)
+{
+    dim3 blockDim(16, 16);
+    dim3 gridDim((W + blockDim.x - 1) / blockDim.x,
+        (H + blockDim.y - 1) / blockDim.y);
+
+    BracewellTransform2D_Kernel<<<gridDim, blockDim>>>(d_in, d_out, W, H);
+    cudaDeviceSynchronize();
+}
+
+template <typename T>
+void BracewellTransform3D(const T* d_in, T* d_out, int W, int H, int D)
 {
     dim3 blockDim(8, 8, 8); // можно подбирать под вашу карту
     dim3 gridDim((W + blockDim.x - 1) / blockDim.x,
         (H + blockDim.y - 1) / blockDim.y,
         (D + blockDim.z - 1) / blockDim.z);
 
-    BracewellTransform3D_Kernel<<<gridDim, blockDim>>>(d_A, W, H, D);
+    BracewellTransform3D_Kernel<<<gridDim, blockDim>>>(d_in, d_out, W, H, D);
     cudaDeviceSynchronize();
 }
 
@@ -326,7 +366,10 @@ template void VectorMatrixMultiplication<float>(const float* A, const float* x, 
 template void VectorMatrixMultiplication<double>(const double* A, const double* x, double* y, int N);
 
 // 3D преобразование Брэсвелла
-template void BracewellTransform3D<float>(float* d_A, int W, int H, int D);
-template void BracewellTransform3D<double>(double* d_A, int W, int H, int D);
+template void BracewellTransform2D<float>(const float* d_in, float* d_out, int W, int H);
+template void BracewellTransform2D<double>(const double* d_in, double* d_out, int W, int H);
+
+template void BracewellTransform3D<float>(const float* d_in, float* d_out, int W, int H, int D);
+template void BracewellTransform3D<double>(const double* d_in, double* d_out, int W, int H, int D);
 
 } // namespace RapiDHT

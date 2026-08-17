@@ -668,7 +668,13 @@ void HartleyTransform<T>::DHT2DCuda(T* h_X)
         d_Y.getData(), Width(), Height(), Height());
     MatrixTranspose(d_Y.getData(), d_X.getData(), Width(), Height());
 
-    d_X.get(h_X, sliceSize);
+    // Without this the GPU produced the separable transform while the CPU
+    // produced the true multidimensional one: the two backends computed
+    // different functions for every extent except 1D.
+    BracewellTransform2D(d_X.getData(), d_Y.getData(), static_cast<int>(Width()),
+        static_cast<int>(Height()));
+
+    d_Y.get(h_X, sliceSize);
 }
 
 namespace {
@@ -838,12 +844,17 @@ void HartleyTransform<T>::DHT3DCuda(T* h_X)
     }
 
     // -------------------------------
-    // Bracewell 3D (осталось так, как у тебя)
+    // Bracewell 3D
     // -------------------------------
-    // BracewellTransform3D(d_Y.getData(), W, H, D);
+    // This call used to be commented out, which left the GPU computing the
+    // separable transform while the CPU computed the true multidimensional
+    // one. Writes into d_X because the correction reads mirrored points and
+    // cannot share its input and output buffer.
+    BracewellTransform3D(d_Y.getData(), d_X.getData(), static_cast<int>(W), static_cast<int>(H),
+        static_cast<int>(D));
 
     // copy GPU -> CPU
-    d_Y.get(h_X, totalSize);
+    d_X.get(h_X, totalSize);
 
     cublasDestroy(handle);
     cudaDeviceSynchronize();

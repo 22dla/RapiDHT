@@ -49,10 +49,14 @@ void transpose_YZ_cuda(const T* d_in, T* d_out, int W, int H, int D);
 template <typename T>
 void MatrixMultiplication3D_Z(const T* d_input, const T* d_transformZ, T* d_output, int W, int H, int D);
 
-/// In-place Bracewell correction turning a separable 3D result into the true
-/// multidimensional Hartley transform.
+/// Bracewell correction turning the separable per-axis result into the true
+/// multidimensional Hartley transform. Out of place: each output reads
+/// mirrored inputs, so sharing one buffer would race.
 template <typename T>
-void BracewellTransform3D(T* d_A, int W, int H, int D);
+void BracewellTransform2D(const T* d_in, T* d_out, int W, int H);
+
+template <typename T>
+void BracewellTransform3D(const T* d_in, T* d_out, int W, int H, int D);
 
 /// Fills a square device matrix with cas(2*pi*k*j/height).
 void InitializeHartleyMatrix(double* dKernel, size_t height);
