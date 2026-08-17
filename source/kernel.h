@@ -3,47 +3,58 @@
  * File: kernel.h
  * Brief: Заголовок CUDA-обёрток и ядер для линейной алгебры и преобразования Хартли.
  * Author: Волков Евгений Александрович, volkov22dla@yandex.ru
+ *
+ * Internal header: not installed and not part of the public API.
+ *
+ * Every declaration below is backed by an explicit instantiation for float and
+ * double at the bottom of kernel.cu. Three declarations used to sit here that
+ * were not: they were templates whose parameter appeared nowhere in the
+ * signature, e.g.
+ *
+ *     template <typename T>
+ *     void MatrixMultiplication(const double* A, const double* B, double* C, int N);
+ *
+ * T could not be deduced, so such a function could only be called by naming T
+ * explicitly, which nothing did -- and no matching definition existed anyway.
  */
 
 #ifndef KERNEL_H
 #define KERNEL_H
 
-#include <stdint.h>
+#include <cstddef>
 
 namespace RapiDHT {
 
-// Базовые операции
-template <typename T>
-void MatrixMultiplication(const double* A, const double* B, double* C, int N);
-
-template <typename T>
-void MatrixTranspose(double* A, int N);
-
-template <typename T>
-void BracewellTransform2D(double* A, int N);
-
-// Расширенные операции (с параметрами размеров)
-template <typename T>
-void transpose_YZ_cuda(const T* d_in, T* d_out, int W, int H, int D);
-
-template <typename T>
-void permute_ZXY_simple(const T* d_in, T* d_out, int W, int H, int D);
-
-template <typename T>
-void MatrixMultiplication3D_Z(const T* d_input, const T* d_transformZ, T* d_output, int W, int H, int D);
-
+/// C[M x N] = A[M x K] * B[K x N].
 template <typename T>
 void MatrixMultiplication(const T* A, const T* B, T* C, int M, int K, int N);
 
+/// B = transpose(A), for an A of rows x cols.
 template <typename T>
 void MatrixTranspose(const T* A, T* B, int rows, int cols);
 
+/// y = A * x, for a square A of order N.
 template <typename T>
 void VectorMatrixMultiplication(const T* A, const T* x, T* y, int N);
 
+/// Reorders a W x H x D volume from (z, x, y) into (x, y, z).
+template <typename T>
+void permute_ZXY_simple(const T* d_in, T* d_out, int W, int H, int D);
+
+/// Swaps the Y and Z axes of a W x H x D volume.
+template <typename T>
+void transpose_YZ_cuda(const T* d_in, T* d_out, int W, int H, int D);
+
+/// Applies the Z-direction transform matrix across a W x H x D volume.
+template <typename T>
+void MatrixMultiplication3D_Z(const T* d_input, const T* d_transformZ, T* d_output, int W, int H, int D);
+
+/// In-place Bracewell correction turning a separable 3D result into the true
+/// multidimensional Hartley transform.
 template <typename T>
 void BracewellTransform3D(T* d_A, int W, int H, int D);
 
+/// Fills a square device matrix with cas(2*pi*k*j/height).
 void InitializeHartleyMatrix(double* dKernel, size_t height);
 void InitializeHartleyMatrix(float* dKernel, size_t height);
 

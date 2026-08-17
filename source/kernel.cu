@@ -64,20 +64,6 @@ __global__ void permute_ZXY_simple_kernel(const T* __restrict__ in, T* __restric
     out[out_idx] = in[in_idx];
 }
 
-__global__ void MatrixMultiplicationKernel(const double* A, const double* B, double* C, int M, int K, int N)
-{
-    int row = blockIdx.y * blockDim.y + threadIdx.y; // индекс строки C
-    int col = blockIdx.x * blockDim.x + threadIdx.x; // индекс столбца C
-
-    if (row < M && col < N) {
-        double sum = 0.0;
-        for (int t = 0; t < K; ++t) {
-            sum += A[row * K + t] * B[t * N + col];
-        }
-        C[row * N + col] = sum;
-    }
-}
-
 template <typename T>
 __global__ void MatrixMultiplicationKernelShared(const T* __restrict__ A, const T* __restrict__ B,
     T* __restrict__ C, int M, int K, int N)
@@ -133,19 +119,6 @@ __global__ void MatrixVectorMultKernel(const T* A, const T* x, T* y, int N)
 }
 
 template <typename T>
-__global__ void MatrixTransposeKernel(T* A, int N)
-{
-    int i = blockIdx.x * blockDim.x + threadIdx.x;
-    int j = blockIdx.y * blockDim.y + threadIdx.y;
-
-    if (i < N && j < N && i < j) {
-        T tmp = A[i * N + j];
-        A[i * N + j] = A[j * N + i];
-        A[j * N + i] = tmp;
-    }
-}
-
-template <typename T>
 __global__ void MatrixTransposeKernel(const T* A, T* B, int rows, int cols)
 {
     int col = blockIdx.x * blockDim.x + threadIdx.x;
@@ -154,26 +127,6 @@ __global__ void MatrixTransposeKernel(const T* A, T* B, int rows, int cols)
     if (col < cols && row < rows) {
         B[col * rows + row] = A[row * cols + col];
     }
-}
-
-template <typename T>
-__global__ void BracewellKernel(T* A, int N)
-{
-    int u = blockIdx.x * blockDim.x + threadIdx.x;
-    int v = blockIdx.y * blockDim.y + threadIdx.y;
-
-    if (u >= N || v >= N)
-        return;
-
-    int iu = u == 0 ? 0 : N - u;
-    int iv = v == 0 ? 0 : N - v;
-
-    T Auv = A[u * N + v];
-    T Buv = A[u * N + iv];
-    T Cuv = A[iu * N + v];
-    T Duv = A[iu * N + iv];
-
-    A[u * N + v] = (T)0.5 * (Auv + Buv + Cuv - Duv);
 }
 
 template <typename T>
@@ -285,12 +238,6 @@ void MatrixMultiplication(const T* A, const T* B, T* C, int M, int K, int N)
 }
 
 template <typename T>
-void MatrixMultiplication(const T* A, const T* B, T* C, int N)
-{
-    MatrixMultiplication(A, B, C, N, N, N);
-}
-
-template <typename T>
 void VectorMatrixMultiplication(const T* A, const T* x, T* y, int N)
 {
     int threadsPerBlock = (N > 512) ? 512 : N;
@@ -310,29 +257,6 @@ void MatrixTranspose(const T* A, T* B, int rows, int cols)
         (rows + BLOCK_SIZE - 1) / BLOCK_SIZE);
 
     MatrixTransposeKernel<<<blocksPerGrid, threadsPerBlock>>>(A, B, rows, cols);
-    cudaDeviceSynchronize();
-}
-
-template <typename T>
-void MatrixTranspose(T* A, int N)
-{
-    int BLOCK_SIZE = 16; // оптимальный размер блока
-    dim3 threadsPerBlock(BLOCK_SIZE, BLOCK_SIZE);
-    dim3 blocksPerGrid((N + BLOCK_SIZE - 1) / BLOCK_SIZE,
-        (N + BLOCK_SIZE - 1) / BLOCK_SIZE);
-
-    MatrixTransposeKernel<<<blocksPerGrid, threadsPerBlock>>>(A, N);
-    cudaDeviceSynchronize();
-}
-
-template <typename T>
-void BracewellTransform2D(T* A, int N)
-{
-    dim3 blockDim(16, 16);
-    dim3 gridDim((N + blockDim.x - 1) / blockDim.x,
-        (N + blockDim.y - 1) / blockDim.y);
-
-    BracewellKernel<<<gridDim, blockDim>>>(A, N);
     cudaDeviceSynchronize();
 }
 
