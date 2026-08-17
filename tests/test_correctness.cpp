@@ -227,6 +227,24 @@ TEST(Correctness, RejectsNonPowerOfTwoLength)
     EXPECT_THROW(ht.ForwardTransform(data.data()), std::invalid_argument);
 }
 
+// Powers of two must be accepted right up to the boundary cases, where the
+// previous ceil(log2)/floor(log2) test was at the mercy of rounding.
+TEST(Correctness, AcceptsEveryPowerOfTwo)
+{
+    for (size_t width = 1; width <= (size_t { 1 } << 20); width <<= 1) {
+        SCOPED_TRACE("width " + std::to_string(width));
+        std::vector<double> data(width, 1.0);
+        HartleyTransform<double> ht(width, 0, 0, Modes::CPU);
+        EXPECT_NO_THROW(ht.ForwardTransform(data.data()));
+    }
+}
+
+TEST(Correctness, RejectsNullData)
+{
+    HartleyTransform<double> ht(8, 0, 0, Modes::CPU);
+    EXPECT_THROW(ht.ForwardTransform(nullptr), std::invalid_argument);
+}
+
 TEST(Correctness, RejectsZeroWidth)
 {
     EXPECT_THROW(HartleyTransform<double>(0, 0, 0, Modes::CPU), std::invalid_argument);

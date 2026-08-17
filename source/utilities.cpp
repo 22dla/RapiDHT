@@ -32,9 +32,12 @@ LoadingConfig ParseArgs(int argc, char** argv)
 {
     LoadingConfig cfg;
 
+    // Throws rather than calling exit(): this lives in the library, and a
+    // caller that mis-parses its own arguments should get the chance to
+    // print its own usage message.
     if (argc < 2) {
-        std::cerr << "Usage: " << argv[0] << " NxM[xK] [device]" << std::endl;
-        exit(1);
+        throw std::runtime_error(
+            std::string("Usage: ") + (argc > 0 ? argv[0] : "rapidht") + " NxM[xK] [device]");
     }
 
     auto dims = ParseDims(argv[1]);

@@ -9,24 +9,26 @@
 #define DEV_ARRAY_H
 
 #include <algorithm>
-#include <chrono>
 #include <cuda_runtime.h>
-#include <iostream>
 #include <stdexcept>
+#include <string>
 
-#define CUDA_CHECK(err)                       \
-    {                                         \
-        gpuAssert((err), __FILE__, __LINE__); \
-    }
-inline void gpuAssert(cudaError_t code, const char* file, int line, bool abort = true)
+/*
+ * Reports a failed CUDA call by throwing. This used to call exit(code):
+ * a library has no business terminating its host process, which denied the
+ * caller any chance to recover, run its own cleanup, or even report what
+ * happened.
+ */
+inline void CudaCheckImpl(cudaError_t code, const char* expression, const char* file, int line)
 {
     if (code != cudaSuccess) {
-        std::cerr << "CUDA Error: " << cudaGetErrorString(code) << " at " << file << ":" << line << std::endl;
-        if (abort) {
-            exit(code);
-        }
+        throw std::runtime_error(std::string("CUDA error: ") + cudaGetErrorString(code)
+                                 + " (" + cudaGetErrorName(code) + ") while evaluating '" + expression + "' at "
+                                 + file + ":" + std::to_string(line));
     }
 }
+
+#define CUDA_CHECK(err) ::CudaCheckImpl((err), #err, __FILE__, __LINE__)
 
 inline float ElapsedMsGPU(cudaEvent_t start, cudaEvent_t stop)
 {
@@ -40,18 +42,29 @@ class dev_array {
 public:
     explicit dev_array(): start_(nullptr), end_(nullptr), stream_(0)
     {
-        cudaStreamCreate(&stream_);
+        CUDA_CHECK(cudaStreamCreate(&stream_));
     }
 
     explicit dev_array(size_t size): start_(nullptr), end_(nullptr), stream_(0)
     {
-        cudaStreamCreate(&stream_);
+        CUDA_CHECK(cudaStreamCreate(&stream_));
         allocate(size);
     }
 
+    // Owns device memory, so copying would double-free.
+    dev_array(const dev_array&) = delete;
+    dev_array& operator=(const dev_array&) = delete;
+
     ~dev_array()
     {
-        free();
+        // Destructors must not propagate exceptions: free() used to throw,
+        // which turns any failure during unwinding into std::terminate.
+        // Nothing useful can be done about a failed release here anyway.
+        if (start_ != nullptr) {
+            cudaFreeAsync(start_, stream_);
+            cudaStreamSynchronize(stream_);
+            start_ = end_ = nullptr;
+        }
         cudaStreamDestroy(stream_);
     }
 
@@ -79,56 +92,35 @@ public:
 
     void set(const T* src, size_t size)
     {
-        size_t min = std::min(size, getSize());
-        cudaError_t result = cudaMemcpyAsync(start_, src, min * sizeof(T), cudaMemcpyHostToDevice, stream_);
-        if (result != cudaSuccess) {
-            throw std::runtime_error("failed to copy to device memory");
-        }
-        // дождаться завершения копирования
-        cudaStreamSynchronize(stream_);
+        const size_t count = std::min(size, getSize());
+        CUDA_CHECK(cudaMemcpyAsync(start_, src, count * sizeof(T), cudaMemcpyHostToDevice, stream_));
+        CUDA_CHECK(cudaStreamSynchronize(stream_));
     }
 
     void get(T* dest, size_t size) const
     {
-        size_t min = std::min(size, getSize());
-
-        cudaError_t result = cudaMemcpyAsync(dest, start_, min * sizeof(T), cudaMemcpyDeviceToHost, stream_);
-        if (result != cudaSuccess) {
-            std::cerr << "cudaMemcpyAsync failed: " << cudaGetErrorName(result) << " - " << cudaGetErrorString(result)
-                      << std::endl;
-            std::abort();
-        }
-
-        result = cudaStreamSynchronize(stream_);
-        if (result != cudaSuccess) {
-            std::cerr << "cudaStreamSynchronize failed: " << cudaGetErrorName(result) << " - "
-                      << cudaGetErrorString(result) << std::endl;
-            std::abort();
-        }
+        const size_t count = std::min(size, getSize());
+        CUDA_CHECK(cudaMemcpyAsync(dest, start_, count * sizeof(T), cudaMemcpyDeviceToHost, stream_));
+        CUDA_CHECK(cudaStreamSynchronize(stream_));
     }
 
 private:
     void allocate(size_t size)
     {
-        cudaError_t result = cudaMallocAsync((void**)&start_, size * sizeof(T), stream_);
+        const cudaError_t result = cudaMallocAsync((void**)&start_, size * sizeof(T), stream_);
         if (result != cudaSuccess) {
             start_ = end_ = nullptr;
-            std::cerr << "cudaStreamSynchronize failed: " << cudaGetErrorName(result) << " - "
-                      << cudaGetErrorString(result) << std::endl;
-            throw std::runtime_error("failed to allocate device memory (cudaMallocAsync)");
         }
+        CUDA_CHECK(result);
         end_ = start_ + size;
     }
 
     void free()
     {
         if (start_ != nullptr) {
-            cudaError_t result = cudaFreeAsync(start_, stream_);
-            if (result != cudaSuccess) {
-                throw std::runtime_error("failed to free device memory (cudaFreeAsync)");
-            }
+            CUDA_CHECK(cudaFreeAsync(start_, stream_));
             start_ = end_ = nullptr;
-            cudaStreamSynchronize(stream_);
+            CUDA_CHECK(cudaStreamSynchronize(stream_));
         }
     }
 
