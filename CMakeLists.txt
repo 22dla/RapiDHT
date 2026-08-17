@@ -15,6 +15,9 @@ set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 option(RAPIDHT_WITH_CUDA "Build the CUDA/cuBLAS GPU backend (Modes::GPU)" OFF)
 option(RAPIDHT_WITH_MPI  "Build the MPI-distributed 3D backend" OFF)
 option(RAPIDHT_BUILD_TESTS "Build the test executables" ON)
+# Off by default: enabling it makes the configure step fetch Google Benchmark,
+# so the default build stays buildable without network access.
+option(RAPIDHT_BUILD_BENCHMARKS "Build the benchmark executable" OFF)
 option(ENABLE_PROFILING "Enable function profiling" OFF)
 
 # Set folder to installing
@@ -72,6 +75,10 @@ enable_testing()
 
 if(RAPIDHT_BUILD_TESTS)
     add_subdirectory(tests)
+endif()
+
+if(RAPIDHT_BUILD_BENCHMARKS)
+    add_subdirectory(benchmarks)
 endif()
 
 # Install targets

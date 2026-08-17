@@ -57,6 +57,39 @@ Enabled backends are recorded in the generated header `rapidht_config.h`
 `constexpr bool` flags `RapiDHT::kCudaEnabled` and `RapiDHT::kMpiEnabled`.
 GPU tests skip themselves automatically in a CPU-only build.
 
+### Benchmarks
+Off by default, because enabling them makes the configure step fetch Google
+Benchmark:
+```bash
+cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DRAPIDHT_BUILD_BENCHMARKS=ON
+cmake --build build --config Release
+./build/benchmarks/bench_transform
+```
+If FFTW is installed and visible to `pkg-config`, an `FFTW_DHT` baseline is
+built alongside. Note that in 2D/3D FFTW computes the *separable* transform,
+whereas RapiDHT computes the true multidimensional one and pays for an extra
+Bracewell pass — so the multidimensional comparison is not like for like.
+
+Indicative figures, double precision, 2 threads on a shared cloud VM
+(13th Gen Core i7-1360P). Absolute numbers are not meaningful; the ratios and
+the trend are:
+
+| case | time | throughput |
+| --- | --- | --- |
+| 1D 1 024 | 55 µs | 18.5 M pt/s |
+| 1D 16 384 | 1 244 µs | 13.2 M pt/s |
+| 1D 262 144 | 27 257 µs | 9.6 M pt/s |
+| 2D 128² | 641 µs | 25.5 M pt/s |
+| 2D 512² | 16 030 µs | 16.4 M pt/s |
+| 3D 32³ | 1 400 µs | 23.4 M pt/s |
+| 3D 64³ | 15 505 µs | 16.9 M pt/s |
+
+That works out to roughly 130–280 cycles per point, where a tuned FFT costs
+10–20. The cause is `FDHT1D`, which evaluates `std::cos` and `std::sin` inside
+its innermost butterfly loop instead of using a precomputed twiddle table:
+measured separately, the trigonometry alone accounts for about 70% of the run
+time at n = 16 384 and above. This is the first thing to optimise.
+
 ### Running Tests
 ```bash
 cd build
