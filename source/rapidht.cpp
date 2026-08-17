@@ -325,85 +325,6 @@ void HartleyTransform<T>::BitReverse(std::vector<size_t>& indices)
 }
 
 template <typename T>
-void HartleyTransform<T>::InitializeKernelHost(std::vector<T>& kernel, size_t height)
-{
-    PROFILE_FUNCTION();
-
-    kernel.resize(height * height);
-    const auto m_pi = std::acos(-1);
-
-    // Initialize the matrice on the host
-    for (size_t k = 0; k < height; ++k) {
-        for (size_t j = 0; j < height; ++j) {
-            kernel[k * height + j] = std::cos(2 * m_pi * k * j / height) + std::sin(2 * m_pi * k * j / height);
-        }
-    }
-}
-
-// test function
-template <typename T>
-std::vector<T> HartleyTransform<T>::DHT1D(const std::vector<T>& a, const std::vector<T>& kernel)
-{
-    PROFILE_FUNCTION();
-
-    std::vector<T> result(a.size());
-    for (size_t i = 0; i < a.size(); i++) {
-        for (size_t j = 0; j < a.size(); j++) {
-            result[i] += (kernel[i * a.size() + j] * a[j]);
-        }
-    }
-    return result;
-}
-
-template <typename T>
-void HartleyTransform<T>::Transpose(std::vector<std::vector<T>>& matrix)
-{
-    PROFILE_FUNCTION();
-
-#pragma omp parallel for
-    for (int i = 0; i < matrix.size(); ++i) {
-#pragma omp parallel for
-        for (int j = i + 1; j < matrix[0].size(); ++j) {
-            std::swap(matrix[i][j], matrix[j][i]);
-        }
-    }
-}
-
-template <typename T>
-void HartleyTransform<T>::TransposeSimple(T* matrix, size_t width, size_t height)
-{
-    PROFILE_FUNCTION();
-
-    if (matrix == nullptr) {
-        throw std::invalid_argument("The pointer to matrix is null.");
-    }
-
-    if (width == height) {
-#pragma omp parallel for
-        // Square matrix
-        for (int i = 0; i < width; ++i) {
-#pragma omp parallel for
-            for (int j = i + 1; j < height; ++j) {
-                std::swap(matrix[i * height + j], matrix[j * height + i]);
-            }
-        }
-    } else {
-        // Non-square matrix
-        std::vector<T> transposed(width * height);
-#pragma omp parallel for
-        for (int i = 0; i < width; ++i) {
-#pragma omp parallel for
-            for (int j = 0; j < height; ++j) {
-                transposed[j * width + i] = matrix[i * height + j];
-            }
-        }
-        // std::memcpy(matrix, transposed.data(), sizeof(double) * width * height);
-        // require to check
-        std::copy(transposed.data(), transposed.data() + (width * height), matrix);
-    }
-}
-
-template <typename T>
 void HartleyTransform<T>::Series1D(T* data, Direction direction)
 {
     PROFILE_FUNCTION();
@@ -692,79 +613,27 @@ void HartleyTransform<T>::DHT1DCuda(T* h_x)
     d_y.get(h_x, Width());
 }
 
-// По большей части функция является отладочной
-// и поэтому работает на самописных cuda-ядрах
 template <typename T>
 void HartleyTransform<T>::DHT2DCuda(T* h_X)
 {
     PROFILE_FUNCTION();
 
-    // Allocate memory on the device
-    dev_array<T> d_X(Width() * Height()); // one slice
-    dev_array<T> d_Y(Width() * Height()); // one slice
+    const size_t sliceSize = Width() * Height();
 
-    // Events
-    cudaEvent_t start, stop;
-    CUDA_CHECK(cudaEventCreate(&start));
-    CUDA_CHECK(cudaEventCreate(&stop));
+    dev_array<T> d_X(sliceSize);
+    dev_array<T> d_Y(sliceSize);
 
-    float ms = 0.0f;
+    d_X.set(h_X, sliceSize);
 
-    // ---------------- CPU -> GPU ----------------
-    CUDA_CHECK(cudaEventRecord(start));
-    d_X.set(&h_X[0], Width() * Height());
-    CUDA_CHECK(cudaEventRecord(stop));
-    CUDA_CHECK(cudaEventSynchronize(stop));
-    std::cout << "Memcpy H2D:\t\t\t" << ElapsedMsGPU(start, stop) << " ms\n";
-
-    // ---------------- MatrixMultiplication X ----------------
-    CUDA_CHECK(cudaEventRecord(start));
-    MatrixMultiplication(d_X.getData(), _impl->transformMatrices[static_cast<size_t>(Direction::X)].getData(), d_Y.getData(),
-        Height(), Width(), Width());
-    CUDA_CHECK(cudaEventRecord(stop));
-    CUDA_CHECK(cudaEventSynchronize(stop));
-    std::cout << "MatrixMultiplication (X):\t" << ElapsedMsGPU(start, stop) << " ms\n";
-
-    // ---------------- Transpose ----------------
-    CUDA_CHECK(cudaEventRecord(start));
+    MatrixMultiplication(d_X.getData(), _impl->transformMatrices[static_cast<size_t>(Direction::X)].getData(),
+        d_Y.getData(), Height(), Width(), Width());
     MatrixTranspose(d_Y.getData(), d_X.getData(), Height(), Width());
-    CUDA_CHECK(cudaEventRecord(stop));
-    CUDA_CHECK(cudaEventSynchronize(stop));
-    std::cout << "Transpose (after X):\t\t" << ElapsedMsGPU(start, stop) << " ms\n";
 
-    // ---------------- MatrixMultiplication Y ----------------
-    CUDA_CHECK(cudaEventRecord(start));
-    MatrixMultiplication(d_X.getData(), _impl->transformMatrices[static_cast<size_t>(Direction::Y)].getData(), d_Y.getData(),
-        Width(), Height(), Height());
-    CUDA_CHECK(cudaEventRecord(stop));
-    CUDA_CHECK(cudaEventSynchronize(stop));
-    std::cout << "MatrixMultiplication (Y):\t" << ElapsedMsGPU(start, stop) << " ms\n";
-
-    // ---------------- Transpose ----------------
-    CUDA_CHECK(cudaEventRecord(start));
+    MatrixMultiplication(d_X.getData(), _impl->transformMatrices[static_cast<size_t>(Direction::Y)].getData(),
+        d_Y.getData(), Width(), Height(), Height());
     MatrixTranspose(d_Y.getData(), d_X.getData(), Width(), Height());
-    CUDA_CHECK(cudaEventRecord(stop));
-    CUDA_CHECK(cudaEventSynchronize(stop));
-    std::cout << "Transpose (after Y):\t\t" << ElapsedMsGPU(start, stop) << " ms\n";
 
-    // PrintData2d(d_Y, Width(), Height());
-
-    // Bracewell
-    // BracewellTransform2D(d_X.getData(), Width());
-
-    // ---------------- GPU -> CPU ----------------
-    CUDA_CHECK(cudaEventRecord(start));
-    d_X.get(&h_X[0], Width() * Height());
-    CUDA_CHECK(cudaEventRecord(stop));
-    CUDA_CHECK(cudaEventSynchronize(stop));
-    std::cout << "Memcpy D2H:\t\t\t" << ElapsedMsGPU(start, stop) << " ms\n";
-
-    // Cleanup
-    cudaEventDestroy(start);
-    cudaEventDestroy(stop);
-    std::cout << std::endl
-              << std::endl
-              << std::endl;
+    d_X.get(h_X, sliceSize);
 }
 
 namespace {

@@ -190,36 +190,6 @@ private:
     static void BitReverse(std::vector<size_t>& indices);
 
     /**
-     * @brief Initializes the kernel used for 1D Hartley transform.
-     * @param kernel Pointer to the kernel vector to initialize.
-     * @param height Height of the 1D transform.
-     */
-    [[deprecated]] static void InitializeKernelHost(std::vector<T>& kernel, size_t height);
-
-    /**
-     * @brief Computes the 1D Hartley transform using a given kernel.
-     * @param a Input vector.
-     * @param kernel Precomputed kernel vector.
-     * @return Transformed 1D vector.
-     */
-    static std::vector<T> DHT1D(const std::vector<T>& a, const std::vector<T>& kernel);
-
-    /**
-     * @brief Transposes a 2D vector.
-     * @tparam T Type of elements in the vector.
-     * @param image Pointer to the 2D vector to transpose.
-     */
-    static void Transpose(std::vector<std::vector<T>>& image);
-
-    /**
-     * @brief Performs a simple transpose of a 2D array in place.
-     * @param image Pointer to the 2D array.
-     * @param width Width of the array.
-     * @param height Height of the array.
-     */
-    static void TransposeSimple(T* image, size_t width, size_t height);
-
-    /**
      * @brief Performs the 2D Hartley Transform on the CPU using Bracewell's algorithm.
      * @param imagePtr Pointer to the input/output 2D data array.
      */
