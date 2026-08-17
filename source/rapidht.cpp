@@ -61,6 +61,34 @@ void MpiBarrier(const MpiContext& ctx)
 #endif
 }
 
+#ifdef RAPIDHT_WITH_MPI
+/*
+ * Maps the element type onto its MPI datatype. Previously MPI_DOUBLE was
+ * hardcoded inside this class template, so HartleyTransform<float> told MPI
+ * that each element was eight bytes wide: the gather read past the end of the
+ * send buffer and scattered the result over twice the intended receive area.
+ */
+template <typename T>
+struct MpiDatatype;
+
+template <>
+struct MpiDatatype<float> {
+    static MPI_Datatype value() { return MPI_FLOAT; }
+};
+
+template <>
+struct MpiDatatype<double> {
+    static MPI_Datatype value() { return MPI_DOUBLE; }
+};
+#endif
+
+/// Exact power-of-two test. The previous check compared ceil(log2(n)) with
+/// floor(log2(n)), which relies on floating point being exact at the boundary.
+constexpr bool IsPowerOfTwo(size_t n) noexcept
+{
+    return n != 0 && (n & (n - 1)) == 0;
+}
+
 [[noreturn]] void ThrowGpuUnavailable()
 {
     throw std::runtime_error(
@@ -208,8 +236,9 @@ void HartleyTransform<T>::ForwardTransform(T* data)
             displs[i] = offs;
             offs += sendcounts[i];
         }
-        MPI_Allgatherv(localData, sendcounts[rank], MPI_DOUBLE,
-            data, sendcounts.data(), displs.data(), MPI_DOUBLE,
+        const MPI_Datatype elementType = MpiDatatype<T>::value();
+        MPI_Allgatherv(localData, sendcounts[rank], elementType,
+            data, sendcounts.data(), displs.data(), elementType,
             MPI_COMM_WORLD);
     }
 #endif
@@ -490,16 +519,10 @@ void HartleyTransform<T>::FDHT1D(T* data, Direction direction)
 
     const size_t n = Length(direction);
 
-    // Indices for bit reversal operation
-    // and length of vector depending of direction
-    if (n < 0) {
-        std::cout << "Error: length must be non-negative." << std::endl;
-        throw std::invalid_argument("Error: length must be non-negative.");
-    }
-    // Check that length is power of 2
-    if (std::ceil(std::log2(n)) != std::floor(std::log2(n))) {
-        std::cout << "Error: length must be a power of two." << std::endl;
-        throw std::invalid_argument("Error: length must be a power of two.");
+    // No lower-bound check: n is size_t, so "n < 0" was always false.
+    if (!IsPowerOfTwo(n)) {
+        throw std::invalid_argument("FDHT1D: length must be a power of two, got "
+                                    + std::to_string(n) + ".");
     }
 
     // временный буфер
@@ -558,8 +581,7 @@ void HartleyTransform<T>::FDHT2D(T* image_ptr)
     PROFILE_FUNCTION();
 
     if (image_ptr == nullptr) {
-        std::cout << "The pointer to image is null." << std::endl;
-        throw std::invalid_argument("The pointer to image is null.");
+        throw std::invalid_argument("FDHT2D: the pointer to image is null.");
     }
 
     Series1D(image_ptr, Direction::X);
@@ -574,8 +596,7 @@ void HartleyTransform<T>::FDHT3D(T* volume_ptr)
     PROFILE_FUNCTION();
 
     if (volume_ptr == nullptr) {
-        std::cout << "The pointer to volume is null." << std::endl;
-        throw std::invalid_argument("The pointer to volume is null.");
+        throw std::invalid_argument("FDHT3D: the pointer to volume is null.");
     }
 
     // 1D transforms along X, Y, Z dimensions
@@ -592,18 +613,13 @@ void HartleyTransform<T>::RealFFT1D(T* vec, Direction direction)
     PROFILE_FUNCTION();
 
     if (vec == nullptr) {
-        std::cout << "The pointer to vector is null." << std::endl;
-        throw std::invalid_argument("The pointer to vector is null.");
+        throw std::invalid_argument("RealFFT1D: the pointer to vector is null.");
     }
 
-    if (Length(direction) < 0) {
-        std::cout << "Error: length must be non-negative." << std::endl;
-        throw std::invalid_argument("Error: length must be non-negative.");
-    }
-    // Check that length is power of 2
-    if (std::ceil(std::log2(Length(direction))) != std::floor(std::log2(Length(direction)))) {
-        std::cout << "Error: length must be a power of two." << std::endl;
-        throw std::invalid_argument("Error: length must be a power of two.");
+    // No lower-bound check: Length() returns size_t, so "< 0" was always false.
+    if (!IsPowerOfTwo(Length(direction))) {
+        throw std::invalid_argument("RealFFT1D: length must be a power of two, got "
+                                    + std::to_string(Length(direction)) + ".");
     }
 
     // RealFFT
