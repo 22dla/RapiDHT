@@ -201,12 +201,36 @@ private:
      */
     void BracewellTransform3DCPU(T* volumePtr);
 
+    /**
+     * @brief Fills _twiddles for the given direction.
+     * @param direction Axis whose length determines the table size.
+     */
+    void BuildTwiddleTable(Direction direction);
+
     std::array<size_t, static_cast<size_t>(Direction::Count)> _dims { };
     std::array<std::vector<size_t>, static_cast<size_t>(Direction::Count)> _bitReversedIndices;
 
     Modes _mode = Modes::CPU;
 
-    std::array<std::vector<T>, static_cast<size_t>(Direction::Count)> _hTransformMatrices;
+    /*
+     * Butterfly twiddle factors, precomputed once per axis.
+     *
+     * FDHT1D used to evaluate std::cos and std::sin inside its innermost loop.
+     * The argument there depends only on the stage and the butterfly index, so
+     * the same handful of values was recomputed for every block of every stage
+     * and again on every call. Measured on the benchmark suite, that
+     * trigonometry accounted for roughly 70% of the run time.
+     *
+     * Layout: stage s occupies [2^(s-1) .. 2^s), so the factor for index j of
+     * stage s lives at _twiddles[m2 + j] where m2 = 2^(s-1). That wastes the
+     * first slot and costs n entries in total, against n/2 for a tightly
+     * packed layout, in exchange for index arithmetic that stays trivial.
+     */
+    struct Twiddle {
+        T cosine;
+        T sine;
+    };
+    std::array<std::vector<Twiddle>, static_cast<size_t>(Direction::Count)> _twiddles;
 
     /*
      * Device-side state lives behind an opaque pointer so that this header

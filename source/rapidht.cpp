@@ -139,6 +139,7 @@ HartleyTransform<T>::HartleyTransform(size_t width, size_t height, size_t depth,
         for (size_t i = 0; i < _bitReversedIndices.size(); ++i) {
             _bitReversedIndices[i].resize(_dims[i]);
             BitReverse(_bitReversedIndices[i]);
+            BuildTwiddleTable(static_cast<Direction>(i));
         }
     }
     if (_mode == Modes::GPU) {
@@ -325,6 +326,35 @@ void HartleyTransform<T>::BitReverse(std::vector<size_t>& indices)
 }
 
 template <typename T>
+void HartleyTransform<T>::BuildTwiddleTable(Direction direction)
+{
+    PROFILE_FUNCTION();
+
+    const size_t n = Length(direction);
+    auto& table = _twiddles[static_cast<size_t>(direction)];
+    table.clear();
+
+    // Sizes that FDHT1D would reject need no table; it throws on its own.
+    if (n < 4 || !IsPowerOfTwo(n)) {
+        return;
+    }
+
+    const T kPi = static_cast<T>(std::acos(-1));
+    table.resize(n);
+
+    // Mirrors the loop structure of FDHT1D: stage s uses m2 = 2^(s-1) and
+    // indices j in [1, m2/2), with angle j*pi/m2.
+    for (size_t s = 2; (size_t(1) << s) <= n; ++s) {
+        const size_t m2 = size_t(1) << (s - 1);
+        const size_t m4 = m2 / 2;
+        for (size_t j = 1; j < m4; ++j) {
+            const T angle = static_cast<T>(j) * kPi / static_cast<T>(m2);
+            table[m2 + j] = Twiddle { std::cos(angle), std::sin(angle) };
+        }
+    }
+}
+
+template <typename T>
 void HartleyTransform<T>::Series1D(T* data, Direction direction)
 {
     PROFILE_FUNCTION();
@@ -463,7 +493,7 @@ void HartleyTransform<T>::FDHT1D(T* data, Direction direction)
 
     // FHT for 1rd axis
     const auto kLog2n = static_cast<size_t>(std::log2(n));
-    const T kPi = static_cast<T>(std::acos(-1));
+    const Twiddle* twiddles = _twiddles[static_cast<size_t>(direction)].data();
 
     // Main cicle
     for (size_t s = 1; s <= kLog2n; ++s) {
@@ -471,13 +501,18 @@ void HartleyTransform<T>::FDHT1D(T* data, Direction direction)
         const auto m2 = m / 2;
         const auto m4 = m / 4;
 
+        // Hoisted out of the loop over r: the factors depend on the stage and
+        // on j, never on the block, so the inner loops below only ever read
+        // from the table built in the constructor.
+        const Twiddle* stage = twiddles + m2;
+
         for (size_t r = 0; r <= n - m; r = r + m) {
             for (size_t j = 1; j < m4; ++j) {
-                int k = m2 - j;
+                const size_t k = m2 - j;
                 const auto u = vec[r + m2 + j];
                 const auto v = vec[r + m2 + k];
-                const auto cosVal = std::cos(j * kPi / m2);
-                const auto sinVal = std::sin(j * kPi / m2);
+                const T cosVal = stage[j].cosine;
+                const T sinVal = stage[j].sine;
                 vec[r + m2 + j] = u * cosVal + v * sinVal;
                 vec[r + m2 + k] = u * sinVal - v * cosVal;
             }

@@ -239,6 +239,24 @@ TEST(Correctness, AcceptsEveryPowerOfTwo)
     }
 }
 
+// The twiddle table is built once in the constructor and reused by every call,
+// so a stale or partially built table would only show up on the second and
+// later transforms. Guards against exactly that.
+TEST(Correctness, RepeatedCallsAgreeWithReference)
+{
+    const size_t width = 256;
+    const auto input = MakeSignal(width);
+    const auto expected = ReferenceDht(input, Dims::Of(width, 0, 0));
+
+    HartleyTransform<double> ht(width, 0, 0, Modes::CPU);
+    for (int call = 0; call < 5; ++call) {
+        SCOPED_TRACE("call " + std::to_string(call));
+        std::vector<double> data = input;
+        ht.ForwardTransform(data.data());
+        ExpectClose(data, expected);
+    }
+}
+
 TEST(Correctness, RejectsNullData)
 {
     HartleyTransform<double> ht(8, 0, 0, Modes::CPU);

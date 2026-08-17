@@ -71,24 +71,25 @@ whereas RapiDHT computes the true multidimensional one and pays for an extra
 Bracewell pass — so the multidimensional comparison is not like for like.
 
 Indicative figures, double precision, 2 threads on a shared cloud VM
-(13th Gen Core i7-1360P). Absolute numbers are not meaningful; the ratios and
-the trend are:
+(13th Gen Core i7-1360P), median of 7 repetitions. Absolute numbers say more
+about that VM than about the library; the ratios are the point. "Before" is
+the state prior to precomputing the butterfly twiddle factors:
 
-| case | time | throughput |
-| --- | --- | --- |
-| 1D 1 024 | 55 µs | 18.5 M pt/s |
-| 1D 16 384 | 1 244 µs | 13.2 M pt/s |
-| 1D 262 144 | 27 257 µs | 9.6 M pt/s |
-| 2D 128² | 641 µs | 25.5 M pt/s |
-| 2D 512² | 16 030 µs | 16.4 M pt/s |
-| 3D 32³ | 1 400 µs | 23.4 M pt/s |
-| 3D 64³ | 15 505 µs | 16.9 M pt/s |
+| case | before | after | speedup |
+| --- | --- | --- | --- |
+| 1D 1 024 | 35.1 µs | 9.0 µs | 3.90× |
+| 1D 16 384 | 822.8 µs | 242.1 µs | 3.40× |
+| 1D 262 144 | 17 404 µs | 4 988 µs | 3.49× |
+| 2D 128² | 426.2 µs | 208.2 µs | 2.05× |
+| 2D 512² | 10 019 µs | 4 991 µs | 2.01× |
+| 3D 32³ | 965.9 µs | 614.6 µs | 1.57× |
+| 3D 64³ | 10 170 µs | 6 223 µs | 1.63× |
 
-That works out to roughly 130–280 cycles per point, where a tuned FFT costs
-10–20. The cause is `FDHT1D`, which evaluates `std::cos` and `std::sin` inside
-its innermost butterfly loop instead of using a precomputed twiddle table:
-measured separately, the trigonometry alone accounts for about 70% of the run
-time at n = 16 384 and above. This is the first thing to optimise.
+`FDHT1D` used to call `std::cos` and `std::sin` inside its innermost butterfly
+loop; the factors are now built once per axis in the constructor. The gain
+falls off with dimension because the multidimensional paths spend a growing
+share of their time in the Bracewell correction and in strided memory access
+rather than in the butterflies — those are the next things to look at.
 
 ### Running Tests
 ```bash
