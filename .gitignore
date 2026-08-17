@@ -6,6 +6,11 @@
 *.pdb
 *.xlsx
 build/
+build-*/
 install/
 .idea/
 .vscode/
+
+# Benchmark output
+bench-*.json
+*.benchmark.json
