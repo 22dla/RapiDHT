@@ -90,7 +90,12 @@ ht.InverseTransform(data.data());
 - `source/` — implementations plus internal headers not meant for consumers
   (`rapidht.cpp`, `kernel.cu`, `kernel.h`, `dev_array.h`)
 - `tests/` — tests (GoogleTest) and utility examples
-- `3dparty/` — third-party dependencies (GoogleTest, FFTW for experiments)
+- `3dparty/` — vendored third-party dependencies (GoogleTest)
 
 ### License & Authors
-See licenses in `3dparty/*` directories and the project root files.
+RapiDHT is released under the MIT License — see [LICENSE](LICENSE).
+
+Author: Evgeny A. Volkov.
+
+The vendored GoogleTest in `3dparty/googletest` carries its own BSD-3-Clause
+licence, reproduced in `3dparty/googletest/LICENSE`.
