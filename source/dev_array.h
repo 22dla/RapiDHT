@@ -30,13 +30,6 @@ inline void CudaCheckImpl(cudaError_t code, const char* expression, const char* 
 
 #define CUDA_CHECK(err) ::CudaCheckImpl((err), #err, __FILE__, __LINE__)
 
-inline float ElapsedMsGPU(cudaEvent_t start, cudaEvent_t stop)
-{
-    float ms = 0.0f;
-    cudaEventElapsedTime(&ms, start, stop);
-    return ms;
-}
-
 template <class T>
 class dev_array {
 public:
