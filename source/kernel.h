@@ -33,6 +33,11 @@ void MatrixMultiplication(const T* A, const T* B, T* C, int M, int K, int N);
 template <typename T>
 void MatrixTranspose(const T* A, T* B, int rows, int cols);
 
+/// The same transpose applied to each of `batch` consecutive rows x cols
+/// slices, in a single launch.
+template <typename T>
+void MatrixTransposeBatched(const T* d_in, T* d_out, int rows, int cols, int batch);
+
 /// y = A * x, for a square A of order N.
 template <typename T>
 void VectorMatrixMultiplication(const T* A, const T* x, T* y, int N);
