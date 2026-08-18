@@ -821,11 +821,22 @@ void HartleyTransform<T>::DHT3DCuda(T* h_X)
             &beta, d_X.getData(), ldc, strideC, batchCount);
     }
 
-    // Транспонируем
-    for (size_t z = 0; z < D; ++z) {
-        CublasGeam<T>::call(handle, CUBLAS_OP_T, CUBLAS_OP_N, W, H, &alpha, d_X.getData() + z * W * H, H, &beta,
-            nullptr, W, d_Y.getData() + z * W * H, W);
-    }
+    // Swap the Y and Z axes, rather than transposing each slice.
+    //
+    // At this point the volume is back in its natural layout, x fastest:
+    //   idx = x + W*y + W*H*z
+    // but the batched multiply below asks for H batches of a W x D matrix with
+    // leading dimension W, that is
+    //   idx = x + W*z + W*D*y
+    // so Y and Z have to change places. The per-slice geam that used to sit
+    // here transposed within each slice instead, which is a different
+    // permutation entirely -- and one that happens to coincide only when the
+    // extents are equal, which is why even the cubic case came out wrong.
+    //
+    // transpose_YZ_cuda does exactly this and was already written, instantiated
+    // and never called.
+    transpose_YZ_cuda(d_X.getData(), d_Y.getData(), static_cast<int>(W), static_cast<int>(H),
+        static_cast<int>(D));
 
     {
         int m = W;
@@ -846,10 +857,12 @@ void HartleyTransform<T>::DHT3DCuda(T* h_X)
             &beta, d_X.getData(), ldc, strideC, batchCount);
     }
 
-    // Транспонируем
-    {
-        permute_ZXY_simple(d_X.getData(), d_Y.getData(), W, H, D);
-    }
+    // Swap Y and Z back, restoring the natural layout. The volume is currently
+    // (x, z, y), so it is the same operation applied with D and H exchanged.
+    // permute_ZXY_simple used to be called here; it produces a third layout
+    // again, which neither the correction below nor the copy back expects.
+    transpose_YZ_cuda(d_X.getData(), d_Y.getData(), static_cast<int>(W), static_cast<int>(D),
+        static_cast<int>(H));
 
     // -------------------------------
     // Bracewell 3D
