@@ -660,11 +660,19 @@ void HartleyTransform<T>::DHT2DCuda(T* h_X)
 
     d_X.set(h_X, sliceSize);
 
-    MatrixMultiplication(d_X.getData(), _impl->transformMatrices[static_cast<size_t>(Direction::X)].getData(),
+    // The slice is Height() rows of Width() elements, so the first pass runs
+    // along the fast axis and must use the Width()-sized matrix -- that is
+    // Direction::Y, per InitializeHartleyMatrix in the constructor.
+    //
+    // These two were the other way round, which made the inner dimension of
+    // the multiply disagree with the size of the matrix: on any non-square
+    // extent the kernel read past the end of the transform matrix, which is
+    // why 8x4 and 16x8 produced stable garbage while 4x4 happened to work.
+    MatrixMultiplication(d_X.getData(), _impl->transformMatrices[static_cast<size_t>(Direction::Y)].getData(),
         d_Y.getData(), Height(), Width(), Width());
     MatrixTranspose(d_Y.getData(), d_X.getData(), Height(), Width());
 
-    MatrixMultiplication(d_X.getData(), _impl->transformMatrices[static_cast<size_t>(Direction::Y)].getData(),
+    MatrixMultiplication(d_X.getData(), _impl->transformMatrices[static_cast<size_t>(Direction::X)].getData(),
         d_Y.getData(), Width(), Height(), Height());
     MatrixTranspose(d_Y.getData(), d_X.getData(), Width(), Height());
 
