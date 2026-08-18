@@ -16,6 +16,13 @@ FetchContent_MakeAvailable(googlebenchmark)
 add_executable(bench_transform bench_transform.cpp)
 target_link_libraries(bench_transform PRIVATE coreht benchmark::benchmark)
 
+# The PCIe round-trip case calls the CUDA runtime directly, to separate the
+# transfer from the transform. coreht keeps CUDA private, as it should, so the
+# benchmark asks for it on its own account.
+if(RAPIDHT_WITH_CUDA)
+    target_link_libraries(bench_transform PRIVATE CUDA::cudart)
+endif()
+
 # Optional FFTW baseline. Ubuntu's libfftw3-dev ships a pkg-config file but no
 # CMake package config, so pkg-config is the reliable route.
 find_package(PkgConfig QUIET)
