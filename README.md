@@ -72,6 +72,8 @@ Bracewell pass — so the multidimensional comparison is not like for like.
 
 Measured on 6 cores at 4.4 GHz with an RTX 3060 Ti, median of 7 repetitions.
 
+![3D benchmark](docs/images/benchmark-3d.svg)
+
 **3D volumes, which is what the library is for.** `GPU−PCIe` subtracts the
 host/device round trip, which the current API performs on every call:
 
