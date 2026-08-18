@@ -70,33 +70,44 @@ built alongside. Note that in 2D/3D FFTW computes the *separable* transform,
 whereas RapiDHT computes the true multidimensional one and pays for an extra
 Bracewell pass — so the multidimensional comparison is not like for like.
 
-Double precision, 6 cores at 4.4 GHz, median of 7 repetitions:
+Measured on 6 cores at 4.4 GHz with an RTX 3060 Ti, median of 7 repetitions.
 
-| case | RapiDHT CPU | FFTW `FFTW_DHT` | RapiDHT GPU |
-| --- | --- | --- | --- |
-| 1D 1 024 | 4.81 µs | 2.10 µs | 316 µs |
-| 1D 16 384 | 122 µs | 48.2 µs | 9 822 µs |
-| 1D 262 144 | 4 297 µs | — | out of memory |
+**3D volumes, which is what the library is for.** `GPU−PCIe` subtracts the
+host/device round trip, which the current API performs on every call:
 
-Two things to read off that table.
+| | CPU | GPU | GPU−PCIe | speedup vs CPU |
+| --- | --- | --- | --- | --- |
+| f32 128³ | 15 392 µs | 4 803 µs | 2 832 µs | 3.2× (5.4× net) |
+| f32 256³ | 410 724 µs | 51 712 µs | 36 584 µs | 7.9× (11.2× net) |
+| f32 512³ | 3 861 066 µs | 434 567 µs | 312 945 µs | 8.9× (12.3× net) |
+| f64 128³ | 24 759 µs | 14 444 µs | 10 604 µs | 1.7× (2.3× net) |
+| f64 256³ | 470 233 µs | 202 110 µs | 171 917 µs | 2.3× (2.7× net) |
+| f64 512³ | 4 432 536 µs | 2 442 008 µs | 2 201 164 µs | 1.8× (2.0× net) |
 
-**The GPU backend is far slower than the CPU one**, by 66× at n = 1024 and 80×
-at n = 16 384. This is not a tuning problem. The backend multiplies by a dense
-`cas` matrix, which is `O(n²)` work against the `O(n log n)` of the CPU
-butterflies: at n = 16 384 it performs about 1 170× more arithmetic and gets
-through it only 80× slower, so the hardware is in fact pulling its weight. The
-algorithm is the problem. The same reasoning caps the problem size, since the
-matrix needs `n²` elements — 1D at n = 262 144 would ask for 512 GiB, so the
-benchmark does not register GPU cases beyond a 1 GiB budget. The multi
-dimensional paths use one matrix per axis and are far less affected; 3D is
-where this backend has a chance.
+The GPU backend wins on volumes, and the margin grows with size. Its dense
+`cas` matrix is only `W × W` per axis and is reused once per line, so the work
+becomes a batched GEMM — the case GPUs are built for — rather than the
+memory-bound matrix-vector product a single long 1D transform degenerates into.
 
-**FFTW is roughly 2.5× faster than the CPU backend.** Worth keeping in view as
-the target to close on.
+**Precision dominates on consumer hardware.** A GeForce runs FP64 at a fraction
+of its FP32 rate, so moving to `float` speeds the GPU up by 3–5.6× while barely
+moving the CPU (1.15×). Anyone using this backend for volumes should be in
+single precision.
 
-Note that FFTW computes the separable transform in 2D/3D while RapiDHT computes
-the true multidimensional one and pays for an extra Bracewell pass, so only the
-1D comparison is like for like.
+**Only 3D is worth offloading.** In 2D the GPU is slower than the CPU in double
+and roughly at parity in float; in 1D it is 66–80× slower, and the `n × n`
+matrix makes large sizes impossible outright.
+
+For reference, FFTW `FFTW_DHT` in double takes 11 503 / 125 314 / 1 360 737 µs
+on the same volumes — about 3× faster than this CPU backend, and about 3×
+slower than this GPU backend in float. Note that FFTW computes the separable
+transform in 2D/3D while RapiDHT computes the true multidimensional one and
+pays for an extra Bracewell pass, so it is doing less work.
+
+Two openings visible in the same table. The CPU backend gains almost nothing
+from `float` (1.15× where 2× is available), which points at butterflies that do
+not vectorise. And its throughput falls from 85 to 36 M points/s between 128³
+and 256³, exactly where the volume stops fitting in the 18 MiB L3.
 
 ### Running Tests
 ```bash
