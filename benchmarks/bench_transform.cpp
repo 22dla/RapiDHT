@@ -146,6 +146,31 @@ struct Extent {
     size_t depth;
 };
 
+/*
+ * Device memory the GPU backend needs just to hold its transform matrices.
+ *
+ * That backend multiplies by a dense cas matrix per axis, so an axis of length
+ * L costs L^2 elements. In 2D and 3D the axes are short and this is nothing,
+ * but in 1D the single axis is the whole signal: n = 262144 would ask for
+ * 549 GB. Attempting it produced a stream of allocation failures and then a
+ * segfault inside the harness, so such cases are not registered at all.
+ */
+size_t GpuMatrixBytes(const Extent& e)
+{
+    size_t elements = e.width * e.width;
+    if (e.height > 0) {
+        elements += e.height * e.height;
+    }
+    if (e.depth > 0) {
+        elements += e.depth * e.depth;
+    }
+    return elements * sizeof(double);
+}
+
+// Deliberately conservative: large enough to keep the cases that show the
+// trend, small enough to fit a modest card.
+constexpr size_t kGpuMatrixBudget = size_t { 1 } << 30; // 1 GiB
+
 std::string Describe(const Extent& e)
 {
     std::string name = std::to_string(e.width);
@@ -173,7 +198,7 @@ void RegisterFor(const Extent* extents, size_t n, const char* rank)
             [e](benchmark::State& s) { BM_Forward(s, e.width, e.height, e.depth, Modes::CPU); })
             ->Unit(benchmark::kMicrosecond);
 
-        if (kCudaEnabled) {
+        if (kCudaEnabled && GpuMatrixBytes(e) <= kGpuMatrixBudget) {
             benchmark::RegisterBenchmark(("GPU/" + suffix).c_str(),
                 [e](benchmark::State& s) { BM_Forward(s, e.width, e.height, e.depth, Modes::GPU); })
                 ->Unit(benchmark::kMicrosecond);

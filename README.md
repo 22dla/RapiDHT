@@ -70,26 +70,33 @@ built alongside. Note that in 2D/3D FFTW computes the *separable* transform,
 whereas RapiDHT computes the true multidimensional one and pays for an extra
 Bracewell pass — so the multidimensional comparison is not like for like.
 
-Indicative figures, double precision, 2 threads on a shared cloud VM
-(13th Gen Core i7-1360P), median of 7 repetitions. Absolute numbers say more
-about that VM than about the library; the ratios are the point. "Before" is
-the state prior to precomputing the butterfly twiddle factors:
+Double precision, 6 cores at 4.4 GHz, median of 7 repetitions:
 
-| case | before | after | speedup |
+| case | RapiDHT CPU | FFTW `FFTW_DHT` | RapiDHT GPU |
 | --- | --- | --- | --- |
-| 1D 1 024 | 35.1 µs | 9.0 µs | 3.90× |
-| 1D 16 384 | 822.8 µs | 242.1 µs | 3.40× |
-| 1D 262 144 | 17 404 µs | 4 988 µs | 3.49× |
-| 2D 128² | 426.2 µs | 208.2 µs | 2.05× |
-| 2D 512² | 10 019 µs | 4 991 µs | 2.01× |
-| 3D 32³ | 965.9 µs | 614.6 µs | 1.57× |
-| 3D 64³ | 10 170 µs | 6 223 µs | 1.63× |
+| 1D 1 024 | 4.81 µs | 2.10 µs | 316 µs |
+| 1D 16 384 | 122 µs | 48.2 µs | 9 822 µs |
+| 1D 262 144 | 4 297 µs | — | out of memory |
 
-`FDHT1D` used to call `std::cos` and `std::sin` inside its innermost butterfly
-loop; the factors are now built once per axis in the constructor. The gain
-falls off with dimension because the multidimensional paths spend a growing
-share of their time in the Bracewell correction and in strided memory access
-rather than in the butterflies — those are the next things to look at.
+Two things to read off that table.
+
+**The GPU backend is far slower than the CPU one**, by 66× at n = 1024 and 80×
+at n = 16 384. This is not a tuning problem. The backend multiplies by a dense
+`cas` matrix, which is `O(n²)` work against the `O(n log n)` of the CPU
+butterflies: at n = 16 384 it performs about 1 170× more arithmetic and gets
+through it only 80× slower, so the hardware is in fact pulling its weight. The
+algorithm is the problem. The same reasoning caps the problem size, since the
+matrix needs `n²` elements — 1D at n = 262 144 would ask for 512 GiB, so the
+benchmark does not register GPU cases beyond a 1 GiB budget. The multi
+dimensional paths use one matrix per axis and are far less affected; 3D is
+where this backend has a chance.
+
+**FFTW is roughly 2.5× faster than the CPU backend.** Worth keeping in view as
+the target to close on.
+
+Note that FFTW computes the separable transform in 2D/3D while RapiDHT computes
+the true multidimensional one and pays for an extra Bracewell pass, so only the
+1D comparison is like for like.
 
 ### Running Tests
 ```bash
