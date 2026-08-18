@@ -89,6 +89,22 @@ TEST(Correctness, ForwardMatchesReference_GPU)
     }
 }
 
+// Sizes above 65536 exercise a bit-reversal path that the smaller cases do
+// not: an inline 32-bit reversal used to overflow into indices far outside the
+// array there, which segfaulted rather than returning a wrong answer.
+TEST(Correctness, RFFT_AgreesWithCpuAboveTheBitReversalThreshold)
+{
+    for (size_t width : { size_t { 1 } << 16, size_t { 1 } << 17, size_t { 1 } << 18 }) {
+        SCOPED_TRACE("width " + std::to_string(width));
+        const auto input = MakeSignal(width);
+
+        const auto viaRfft = Forward(input, width, 0, 0, Modes::RFFT);
+        const auto viaCpu = Forward(input, width, 0, 0, Modes::CPU);
+
+        ExpectClose(viaRfft, viaCpu, 1e-10);
+    }
+}
+
 // RFFT is only wired up for the 1D case; 2D/3D fall through to the CPU path.
 TEST(Correctness, ForwardMatchesReference_RFFT_1D)
 {

@@ -317,7 +317,8 @@ void HartleyTransform<T>::BitReverse(std::vector<size_t>& indices)
         size_t temp = j;
         for (int i = 0; i < kLog2n; ++i) {
             if (temp & 1) {
-                reversed |= 1 << (kLog2n - 1 - i);
+                // size_t{1}, not 1: shifting an int is undefined past 31 bits.
+                reversed |= size_t { 1 } << (kLog2n - 1 - i);
             }
             temp >>= 1;
         }
@@ -602,20 +603,18 @@ void HartleyTransform<T>::RealFFT1D(T* vec, Direction direction)
             TTT *= phiT;
         }
     }
-    // Decimate
-    size_t m = (size_t)log2(Length(direction));
-    for (size_t a = 0; a < Length(direction); a++) {
-        size_t b = a;
-        // Reverse bits
-        b = (((b & 0xaaaaaaaa) >> 1) | ((b & 0x55555555) << 1));
-        b = (((b & 0xcccccccc) >> 2) | ((b & 0x33333333) << 2));
-        b = (((b & 0xf0f0f0f0) >> 4) | ((b & 0x0f0f0f0f) << 4));
-        b = (((b & 0xff00ff00) >> 8) | ((b & 0x00ff00ff) << 8));
-        b = ((b >> 16) | (b << 16)) >> (32 - m);
+    // Decimate, reusing the table the constructor already builds.
+    //
+    // This used to reverse the bits inline with the classic 32-bit sequence of
+    // masked shifts, but on a size_t the final "b << 16" keeps the bits that
+    // the 32-bit version discards, and the following shift does not remove
+    // them. Above n = 65536 the result exceeded the array: at n = 262144 it
+    // reached index 12885164031, which segfaulted. The precomputed table is
+    // both correct and already paid for.
+    for (size_t a = 1; a < Length(direction); ++a) {
+        const size_t b = BitReversedIndex(direction, a);
         if (b > a) {
-            std::complex<T> t = x[a];
-            x[a] = x[b];
-            x[b] = t;
+            std::swap(x[a], x[b]);
         }
     }
 
