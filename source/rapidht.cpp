@@ -107,6 +107,18 @@ template <typename T>
 struct HartleyTransform<T>::Impl {
 #ifdef RAPIDHT_WITH_CUDA
     std::array<dev_array<T>, static_cast<size_t>(Direction::Count)> transformMatrices;
+
+    /*
+     * Working buffers, allocated once with the object rather than on every
+     * call. They used to be locals inside each DHT*Cuda method, so a 512^3
+     * transform allocated and released two 512 MiB regions, and created and
+     * destroyed two CUDA streams, every single time it ran.
+     *
+     * Holding them costs twice the volume in device memory for the lifetime of
+     * the object, which is the usual bargain for a transform plan.
+     */
+    dev_array<T> scratchA;
+    dev_array<T> scratchB;
 #endif
 };
 
@@ -156,6 +168,13 @@ HartleyTransform<T>::HartleyTransform(size_t width, size_t height, size_t depth,
         InitializeHartleyMatrix(matrices[static_cast<size_t>(Direction::X)].getData(), Height());
         InitializeHartleyMatrix(matrices[static_cast<size_t>(Direction::Y)].getData(), Width());
         InitializeHartleyMatrix(matrices[static_cast<size_t>(Direction::Z)].getData(), Depth());
+
+        // Sized for the whole volume, which is the largest any of the 1D, 2D
+        // or 3D paths asks for.
+        const size_t totalElements = Width() * (Height() == 0 ? size_t { 1 } : Height())
+                                   * (Depth() == 0 ? size_t { 1 } : Depth());
+        _impl->scratchA.resize(totalElements);
+        _impl->scratchB.resize(totalElements);
 #else
         ThrowGpuUnavailable();
 #endif
@@ -632,11 +651,10 @@ void HartleyTransform<T>::DHT1DCuda(T* h_x)
 {
     PROFILE_FUNCTION();
 
-    // Allocate memory on the device
-    dev_array<T> d_x(Width()); // input vector
-    dev_array<T> d_y(Width()); // output vector
-
-    // write_matrix_to_csv(h_A.data(), length, length, "matrix.csv");
+    // Buffers live in Impl and are allocated once with the object, not on
+    // every call.
+    dev_array<T>& d_x = _impl->scratchA;
+    dev_array<T>& d_y = _impl->scratchB;
 
     // transfer CPU -> GPU
     d_x.set(h_x, Width());
@@ -654,8 +672,8 @@ void HartleyTransform<T>::DHT2DCuda(T* h_X)
 
     const size_t sliceSize = Width() * Height();
 
-    dev_array<T> d_X(sliceSize);
-    dev_array<T> d_Y(sliceSize);
+    dev_array<T>& d_X = _impl->scratchA;
+    dev_array<T>& d_Y = _impl->scratchB;
 
     d_X.set(h_X, sliceSize);
 
@@ -725,9 +743,8 @@ void HartleyTransform<T>::DHT3DCuda(T* h_X)
 
     size_t totalSize = W * H * D;
 
-    // Allocate device memory
-    dev_array<T> d_X(totalSize);
-    dev_array<T> d_Y(totalSize);
+    dev_array<T>& d_X = _impl->scratchA;
+    dev_array<T>& d_Y = _impl->scratchB;
 
     // copy CPU -> GPU
     d_X.set(h_X, totalSize);
