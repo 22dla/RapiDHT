@@ -240,6 +240,13 @@ HartleyTransform<T>::HartleyTransform(size_t width, size_t height, size_t depth,
     if (height == 0 && depth > 0) {
         throw std::invalid_argument("If height is zero, depth must also be zero.");
     }
+    // RealFFT1D is the only thing this mode has. Asking for it in 2D or 3D used
+    // to run FDHT2D/FDHT3D instead, silently handing back a different backend
+    // than the caller selected.
+    if (mode == Modes::RFFT && height > 0) {
+        throw std::invalid_argument(
+            "Modes::RFFT is implemented for 1D only. Use Modes::CPU for 2D and 3D.");
+    }
 
     _dims = { width, height, depth };
 
@@ -310,12 +317,8 @@ void HartleyTransform<T>::ForwardTransform(T* data)
                 }
                 break;
             case Modes::RFFT:
-                if (is1D) {
-                    RealFFT1D(data);
-                } else {
-                    FDHT2D(data);
-                }
-
+                // The constructor rejects RFFT for anything but 1D.
+                RealFFT1D(data);
                 break;
         }
         MpiBarrier(mpi);
@@ -332,13 +335,11 @@ void HartleyTransform<T>::ForwardTransform(T* data)
 
     switch (_mode) {
         case Modes::CPU:
+        case Modes::RFFT: // rejected for 3D by the constructor; kept for the warning
             FDHT3D(localData);
             break;
         case Modes::GPU:
             DHT3DCuda(localData);
-            break;
-        case Modes::RFFT:
-            FDHT3D(localData);
             break;
     }
 

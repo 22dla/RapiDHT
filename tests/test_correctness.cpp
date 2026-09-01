@@ -379,6 +379,16 @@ TEST(Correctness, RejectsNullData)
     EXPECT_THROW(ht.ForwardTransform(nullptr), std::invalid_argument);
 }
 
+// RFFT only has a 1D implementation. It used to accept 2D and 3D and quietly
+// run the CPU path instead, so the caller got a different backend than asked
+// for with no indication.
+TEST(Correctness, RejectsRfftBeyondOneDimension)
+{
+    EXPECT_NO_THROW(HartleyTransform<double>(64, 0, 0, Modes::RFFT));
+    EXPECT_THROW(HartleyTransform<double>(64, 64, 0, Modes::RFFT), std::invalid_argument);
+    EXPECT_THROW(HartleyTransform<double>(64, 64, 64, Modes::RFFT), std::invalid_argument);
+}
+
 TEST(Correctness, RejectsZeroWidth)
 {
     EXPECT_THROW(HartleyTransform<double>(0, 0, 0, Modes::CPU), std::invalid_argument);
