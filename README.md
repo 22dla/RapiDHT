@@ -57,6 +57,26 @@ Enabled backends are recorded in the generated header `rapidht_config.h`
 `constexpr bool` flags `RapiDHT::kCudaEnabled` and `RapiDHT::kMpiEnabled`.
 GPU tests skip themselves automatically in a CPU-only build.
 
+### Keeping data on the device
+The host-pointer overloads upload, transform and download on every call. For a
+512³ volume that round trip costs about three times as much as the transform,
+so a pipeline applying more than one operation should hold the volume on the
+card instead:
+
+```cpp
+HartleyTransform<float> ht(512, 512, 512, Modes::GPU);
+DeviceVolume<float> volume(512ull * 512 * 512);
+
+volume.Upload(data.data());     // once
+ht.ForwardTransform(volume);    // in place, no transfer
+ht.InverseTransform(volume);    // still no transfer
+volume.Download(data.data());   // once
+```
+
+`DeviceVolume` owns its allocation, is move-only, and names no CUDA type, so
+this header still needs no CUDA toolkit to include. Constructing one in a build
+without CUDA throws.
+
 ### Benchmarks
 Off by default, because enabling them makes the configure step fetch Google
 Benchmark:

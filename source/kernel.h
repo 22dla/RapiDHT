@@ -38,6 +38,11 @@ void MatrixTranspose(const T* A, T* B, int rows, int cols);
 template <typename T>
 void MatrixTransposeBatched(const T* d_in, T* d_out, int rows, int cols, int batch);
 
+/// Scales a device buffer in place, for the 1/N of an inverse transform that
+/// never leaves the device.
+template <typename T>
+void ScaleOnDevice(T* d_data, size_t count, T factor);
+
 /// y = A * x, for a square A of order N.
 template <typename T>
 void VectorMatrixMultiplication(const T* A, const T* x, T* y, int N);

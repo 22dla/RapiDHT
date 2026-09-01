@@ -40,6 +40,64 @@ enum class Modes { CPU,
     GPU,
     RFFT };
 
+/**
+ * @brief A volume held in device memory, so that repeated transforms do not
+ *        copy it across the bus every time.
+ *
+ * The host-pointer overloads of ForwardTransform and InverseTransform upload
+ * the data, transform it and download it again on every call. For a 512^3
+ * volume that round trip costs roughly three times as much as the transform
+ * itself, which makes it the dominant cost of any pipeline that applies more
+ * than one operation. Uploading once and transforming in place removes it.
+ *
+ * The type is deliberately opaque: it names no CUDA type, so consuming this
+ * header still requires no CUDA toolkit. It owns its allocation and is
+ * move-only, since device memory cannot be duplicated implicitly.
+ *
+ * Constructing one in a build without CUDA throws std::runtime_error.
+ */
+template <typename T>
+class DeviceVolume {
+public:
+    /**
+     * @brief Allocates room for `count` elements on the device.
+     * @param count Number of elements, which must match the transform's extent.
+     */
+    explicit DeviceVolume(size_t count);
+
+    ~DeviceVolume();
+    DeviceVolume(const DeviceVolume&) = delete;
+    DeviceVolume& operator=(const DeviceVolume&) = delete;
+    DeviceVolume(DeviceVolume&&) noexcept;
+    DeviceVolume& operator=(DeviceVolume&&) noexcept;
+
+    /**
+     * @brief Copies `count` elements from host memory onto the device.
+     * @param host Source buffer, at least Size() elements long.
+     */
+    void Upload(const T* host);
+
+    /**
+     * @brief Copies the volume back from the device into host memory.
+     * @param host Destination buffer, at least Size() elements long.
+     */
+    void Download(T* host) const;
+
+    /// Number of elements the volume holds.
+    size_t Size() const noexcept;
+
+private:
+    template <typename>
+    friend class HartleyTransform;
+
+    /// Raw device pointer, for the transform to work on. Typed as void* so the
+    /// header stays free of CUDA, and only ever handed to the implementation.
+    void* DeviceData() const noexcept;
+
+    struct Impl;
+    std::unique_ptr<Impl> _impl;
+};
+
 template <typename T>
 class HartleyTransform {
 public:
@@ -74,6 +132,23 @@ public:
      * @param data Pointer to the input/output data array.
      */
     void InverseTransform(T* data);
+
+    /**
+     * @brief Transforms a volume already resident on the device, in place.
+     *
+     * No host/device copying takes place, so a pipeline that applies several
+     * operations pays for the transfer once rather than per call. Requires
+     * Modes::GPU and a volume whose size matches this transform's extent.
+     *
+     * @param volume Input/output, left holding the transformed data.
+     */
+    void ForwardTransform(DeviceVolume<T>& volume);
+
+    /**
+     * @brief The in-place inverse of the above, on device-resident data.
+     * @param volume Input/output, left holding the transformed data.
+     */
+    void InverseTransform(DeviceVolume<T>& volume);
 
     constexpr size_t Width() const noexcept { return _dims[static_cast<size_t>(Direction::Y)]; }
     constexpr size_t Height() const noexcept { return _dims[static_cast<size_t>(Direction::X)]; }
@@ -168,6 +243,21 @@ private:
      * @param image Pointer to the input/output 3D data array.
      */
     void DHT3DCuda(T* data);
+
+    /*
+     * The device-side halves of the three above, working on memory that is
+     * already there. The host-pointer versions are now a copy in, one of
+     * these, and a copy out; the resident overloads call them directly.
+     *
+     * Each leaves its result in `deviceInOut` and may use `deviceScratch`,
+     * which must hold at least as many elements.
+     */
+    void DHT1DOnDevice(T* deviceInOut, T* deviceScratch);
+    void DHT2DOnDevice(T* deviceInOut, T* deviceScratch);
+    void DHT3DOnDevice(T* deviceInOut, T* deviceScratch);
+
+    /// Dispatches to the right rank, and rejects anything but Modes::GPU.
+    void TransformOnDevice(T* deviceInOut, T* deviceScratch);
 
     /**
      * @brief Performs a 1D Real Fourier Transform along the specified direction.

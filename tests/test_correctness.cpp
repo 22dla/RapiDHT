@@ -233,6 +233,106 @@ TEST(Correctness, IsLinear)
 }
 
 // ---------------------------------------------------------------------------
+// Device-resident path
+// ---------------------------------------------------------------------------
+
+// Upload once, transform in place, download once: the result must be identical
+// to the host path, which copies on every call.
+TEST(Correctness, DeviceResidentMatchesReference_GPU)
+{
+    SKIP_IF_NO_CUDA();
+    for (const Extent& e : kReferenceExtents) {
+        SCOPED_TRACE("extent " + Describe(e));
+        const Dims dims = Dims::Of(e.width, e.height, e.depth);
+        const auto input = MakeSignal(dims.Total());
+
+        HartleyTransform<double> ht(e.width, e.height, e.depth, Modes::GPU);
+        DeviceVolume<double> volume(dims.Total());
+
+        volume.Upload(input.data());
+        ht.ForwardTransform(volume);
+
+        std::vector<double> actual(dims.Total());
+        volume.Download(actual.data());
+
+        ExpectClose(actual, ReferenceDht(input, dims), 1e-9);
+    }
+}
+
+// The whole point of the type is that the data survives between calls. Two
+// forward transforms without touching the host must scale the input by N, the
+// same as two host-path calls would.
+TEST(Correctness, DeviceResidentSurvivesBetweenCalls_GPU)
+{
+    SKIP_IF_NO_CUDA();
+    const size_t width = 16, height = 8, depth = 4;
+    const Dims dims = Dims::Of(width, height, depth);
+    const auto input = MakeSignal(dims.Total());
+
+    HartleyTransform<double> ht(width, height, depth, Modes::GPU);
+    DeviceVolume<double> volume(dims.Total());
+
+    volume.Upload(input.data());
+    ht.ForwardTransform(volume);
+    ht.ForwardTransform(volume);
+
+    std::vector<double> actual(dims.Total());
+    volume.Download(actual.data());
+
+    std::vector<double> expected(dims.Total());
+    for (size_t i = 0; i < expected.size(); ++i) {
+        expected[i] = static_cast<double>(dims.Total()) * input[i];
+    }
+    ExpectClose(actual, expected, 1e-9);
+}
+
+TEST(Correctness, DeviceResidentInverseUndoesForward_GPU)
+{
+    SKIP_IF_NO_CUDA();
+    const size_t width = 16, height = 8, depth = 4;
+    const Dims dims = Dims::Of(width, height, depth);
+    const auto input = MakeSignal(dims.Total());
+
+    HartleyTransform<double> ht(width, height, depth, Modes::GPU);
+    DeviceVolume<double> volume(dims.Total());
+
+    volume.Upload(input.data());
+    ht.ForwardTransform(volume);
+    ht.InverseTransform(volume);
+
+    std::vector<double> actual(dims.Total());
+    volume.Download(actual.data());
+
+    ExpectClose(actual, input, 1e-9);
+}
+
+TEST(Correctness, DeviceResidentRejectsWrongSize_GPU)
+{
+    SKIP_IF_NO_CUDA();
+    HartleyTransform<double> ht(16, 8, 4, Modes::GPU);
+    DeviceVolume<double> wrong(16 * 8 * 2);
+    EXPECT_THROW(ht.ForwardTransform(wrong), std::invalid_argument);
+}
+
+TEST(Correctness, DeviceResidentRejectsCpuMode)
+{
+    if (!kCudaEnabled) {
+        GTEST_SKIP() << "DeviceVolume needs a CUDA build";
+    }
+    HartleyTransform<double> ht(16, 8, 4, Modes::CPU);
+    DeviceVolume<double> volume(16 * 8 * 4);
+    EXPECT_THROW(ht.ForwardTransform(volume), std::invalid_argument);
+}
+
+TEST(Correctness, DeviceVolumeIsRejectedWithoutCuda)
+{
+    if (kCudaEnabled) {
+        GTEST_SKIP() << "Built with CUDA, so DeviceVolume is available";
+    }
+    EXPECT_THROW(DeviceVolume<double>(64), std::runtime_error);
+}
+
+// ---------------------------------------------------------------------------
 // Argument validation
 // ---------------------------------------------------------------------------
 

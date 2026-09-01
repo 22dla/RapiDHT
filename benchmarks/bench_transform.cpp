@@ -108,6 +108,45 @@ void BM_Forward(benchmark::State& state, size_t width, size_t height, size_t dep
 }
 
 #ifdef RAPIDHT_WITH_CUDA
+/*
+ * The transform on data that is already on the device: upload once outside the
+ * loop, then transform in place.
+ *
+ * This is what the GPU figure would be if the caller kept the volume on the
+ * card between operations, which is the realistic pattern for any pipeline and
+ * the one the MPI decomposition assumes. The difference against the plain GPU
+ * entry is the price of the current copy-per-call interface.
+ */
+template <typename T>
+void BM_Resident(benchmark::State& state, size_t width, size_t height, size_t depth)
+{
+    const size_t count = ElementCount(width, height, depth);
+    const std::vector<T> pristine = MakeSignal<T>(count);
+
+    std::unique_ptr<HartleyTransform<T>> transform;
+    std::unique_ptr<RapiDHT::DeviceVolume<T>> volume;
+    try {
+        transform = std::make_unique<HartleyTransform<T>>(width, height, depth, Modes::GPU);
+        volume = std::make_unique<RapiDHT::DeviceVolume<T>>(count);
+        volume->Upload(pristine.data());
+    } catch (const std::exception& error) {
+        state.SkipWithError(error.what());
+        return;
+    }
+
+    // The input is not restored between iterations: values grow by N each time,
+    // but nothing here depends on their magnitude, and restoring would put a
+    // transfer back into the measurement, which is exactly what this case is
+    // built to exclude.
+    for (auto _ : state) {
+        transform->ForwardTransform(*volume);
+    }
+
+    state.SetItemsProcessed(static_cast<int64_t>(state.iterations() * count));
+    state.SetBytesProcessed(static_cast<int64_t>(state.iterations() * count * sizeof(T)));
+    state.counters["N"] = static_cast<double>(count);
+}
+
 /// Host to device and back, nothing else. Subtract from the GPU figure for the
 /// same extent to separate the transform from the transfer.
 template <typename T>
@@ -251,6 +290,10 @@ void RegisterFor(const Extent* extents, size_t n, const char* rank, const char* 
                 ->Unit(benchmark::kMicrosecond);
 
 #ifdef RAPIDHT_WITH_CUDA
+            benchmark::RegisterBenchmark(("Resident/" + suffix).c_str(),
+                [e](benchmark::State& s) { BM_Resident<T>(s, e.width, e.height, e.depth); })
+                ->Unit(benchmark::kMicrosecond);
+
             const size_t count = ElementCount(e.width, e.height, e.depth);
             benchmark::RegisterBenchmark(("PCIe/" + suffix).c_str(),
                 [count](benchmark::State& s) { BM_DeviceRoundTrip<T>(s, count); })

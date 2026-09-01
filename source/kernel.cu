@@ -155,6 +155,17 @@ __global__ void MatrixTransposeBatchedKernel(const T* __restrict__ in, T* __rest
         = in[offset + static_cast<size_t>(row) * cols + col];
 }
 
+/// Multiplies every element by a constant, for the 1/N of an inverse transform
+/// applied to data that stays on the device.
+template <typename T>
+__global__ void ScaleKernel(T* data, size_t count, T factor)
+{
+    const size_t i = static_cast<size_t>(blockIdx.x) * blockDim.x + threadIdx.x;
+    if (i < count) {
+        data[i] *= factor;
+    }
+}
+
 template <typename T>
 __global__ void MatrixMultiplication3D_Z_Kernel(
     const T* d_input,
@@ -316,6 +327,16 @@ void MatrixTranspose(const T* A, T* B, int rows, int cols)
 }
 
 template <typename T>
+void ScaleOnDevice(T* d_data, size_t count, T factor)
+{
+    const int threads = 256;
+    const size_t blocks = (count + threads - 1) / threads;
+
+    ScaleKernel<<<static_cast<unsigned int>(blocks), threads>>>(d_data, count, factor);
+    cudaDeviceSynchronize();
+}
+
+template <typename T>
 void MatrixTransposeBatched(const T* d_in, T* d_out, int rows, int cols, int batch)
 {
     const int BLOCK_SIZE = 16;
@@ -402,6 +423,9 @@ template void MatrixTranspose<double>(const double* A, double* B, int rows, int 
 
 template void MatrixTransposeBatched<float>(const float* d_in, float* d_out, int rows, int cols, int batch);
 template void MatrixTransposeBatched<double>(const double* d_in, double* d_out, int rows, int cols, int batch);
+
+template void ScaleOnDevice<float>(float* d_data, size_t count, float factor);
+template void ScaleOnDevice<double>(double* d_data, size_t count, double factor);
 
 // Умножение вектор-матрица
 template void VectorMatrixMultiplication<float>(const float* A, const float* x, float* y, int N);
