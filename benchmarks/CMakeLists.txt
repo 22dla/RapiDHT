@@ -13,14 +13,19 @@ FetchContent_Declare(googlebenchmark
 )
 FetchContent_MakeAvailable(googlebenchmark)
 
-add_executable(bench_transform bench_transform.cpp)
+set(RAPIDHT_BENCH_SOURCES bench_transform.cpp)
+if(RAPIDHT_WITH_CUDA)
+    list(APPEND RAPIDHT_BENCH_SOURCES cufft_baseline.cu)
+endif()
+
+add_executable(bench_transform ${RAPIDHT_BENCH_SOURCES})
 target_link_libraries(bench_transform PRIVATE coreht benchmark::benchmark)
 
 # The PCIe round-trip case calls the CUDA runtime directly, to separate the
-# transfer from the transform. coreht keeps CUDA private, as it should, so the
-# benchmark asks for it on its own account.
+# transfer from the transform, and the cuFFT baseline needs cuFFT. coreht keeps
+# CUDA private, as it should, so the benchmark asks for both on its own account.
 if(RAPIDHT_WITH_CUDA)
-    target_link_libraries(bench_transform PRIVATE CUDA::cudart)
+    target_link_libraries(bench_transform PRIVATE CUDA::cudart CUDA::cufft)
 endif()
 
 # Bare driver for nsys/ncu: one transform, in a loop, and nothing else.

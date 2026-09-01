@@ -53,6 +53,7 @@
 #endif
 
 #ifdef RAPIDHT_WITH_CUDA
+#include "cufft_baseline.h"
 #include <cuda_runtime.h>
 #endif
 
@@ -144,6 +145,69 @@ void BM_Resident(benchmark::State& state, size_t width, size_t height, size_t de
 
     state.SetItemsProcessed(static_cast<int64_t>(state.iterations() * count));
     state.SetBytesProcessed(static_cast<int64_t>(state.iterations() * count * sizeof(T)));
+    state.counters["N"] = static_cast<double>(count);
+}
+
+/*
+ * cuFFT computing the same thing, on data that is likewise already resident.
+ *
+ * Before timing anything the result is checked against this library's own GPU
+ * path, which the test suite validates against a directly evaluated reference.
+ * A baseline that computes something else is worse than no baseline, so a
+ * mismatch skips the case rather than reporting a number.
+ */
+void BM_Cufft(benchmark::State& state, size_t width, size_t height, size_t depth)
+{
+    const size_t count = ElementCount(width, height, depth);
+    const std::vector<float> pristine = MakeSignal<float>(count);
+
+    float* device = nullptr;
+    if (cudaMalloc(&device, count * sizeof(float)) != cudaSuccess) {
+        state.SkipWithError("cudaMalloc failed");
+        return;
+    }
+
+    try {
+        rapidht_bench::CufftHartley cufft(static_cast<int>(width), static_cast<int>(height),
+            static_cast<int>(depth));
+
+        // Agreement check against our own GPU path.
+        std::vector<float> viaCufft(count);
+        cudaMemcpy(device, pristine.data(), count * sizeof(float), cudaMemcpyHostToDevice);
+        cufft.Forward(device);
+        cudaMemcpy(viaCufft.data(), device, count * sizeof(float), cudaMemcpyDeviceToHost);
+
+        std::vector<float> viaMatrix = pristine;
+        HartleyTransform<float> ours(width, height, depth, Modes::GPU);
+        ours.ForwardTransform(viaMatrix.data());
+
+        double worst = 0.0;
+        double scale = 0.0;
+        for (size_t i = 0; i < count; ++i) {
+            worst = std::max(worst, std::fabs(double(viaCufft[i]) - double(viaMatrix[i])));
+            scale = std::max(scale, std::fabs(double(viaMatrix[i])));
+        }
+        if (worst > 1e-3 * std::max(scale, 1.0)) {
+            cudaFree(device);
+            state.SkipWithError("cuFFT baseline disagrees with the matrix path");
+            return;
+        }
+        state.counters["extraMiB"]
+            = static_cast<double>(cufft.ExtraDeviceBytes()) / (1024.0 * 1024.0);
+
+        cudaMemcpy(device, pristine.data(), count * sizeof(float), cudaMemcpyHostToDevice);
+        for (auto _ : state) {
+            cufft.Forward(device);
+        }
+    } catch (const std::exception& error) {
+        cudaFree(device);
+        state.SkipWithError(error.what());
+        return;
+    }
+
+    cudaFree(device);
+    state.SetItemsProcessed(static_cast<int64_t>(state.iterations() * count));
+    state.SetBytesProcessed(static_cast<int64_t>(state.iterations() * count * sizeof(float)));
     state.counters["N"] = static_cast<double>(count);
 }
 
@@ -303,6 +367,28 @@ void RegisterFor(const Extent* extents, size_t n, const char* rank, const char* 
     }
 }
 
+/// cuFFT is registered for volumes in single precision only: that is the
+/// comparison being made, and keeping it narrow keeps the run short.
+void RegisterCufft(const Extent* extents, size_t n, const char* rank)
+{
+#ifdef RAPIDHT_WITH_CUDA
+    if (!RapiDHT::IsGpuAvailable()) {
+        return;
+    }
+    for (size_t i = 0; i < n; ++i) {
+        const Extent e = extents[i];
+        benchmark::RegisterBenchmark(
+            ("cuFFT/f32/" + std::string(rank) + "/" + Describe(e)).c_str(),
+            [e](benchmark::State& s) { BM_Cufft(s, e.width, e.height, e.depth); })
+            ->Unit(benchmark::kMicrosecond);
+    }
+#else
+    (void)extents;
+    (void)n;
+    (void)rank;
+#endif
+}
+
 void RegisterDoubleOnly(const Extent* extents, size_t n, const char* rank)
 {
     for (size_t i = 0; i < n; ++i) {
@@ -340,6 +426,7 @@ int main(int argc, char** argv)
     // Volumes first: they are what the measurements are for.
     RegisterFor<double>(kExtents3D, CountOf(kExtents3D), "3D", "f64");
     RegisterFor<float>(kExtents3D, CountOf(kExtents3D), "3D", "f32");
+    RegisterCufft(kExtents3D, CountOf(kExtents3D), "3D");
     RegisterDoubleOnly(kExtents3D, CountOf(kExtents3D), "3D");
 
     RegisterFor<double>(kExtents2D, CountOf(kExtents2D), "2D", "f64");
