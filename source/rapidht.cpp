@@ -1061,11 +1061,24 @@ void HartleyTransform<T>::ForwardTransform(DeviceVolume<T>& volume)
 {
     PROFILE_FUNCTION();
 
+    // This has to come first. _impl exists only for Modes::GPU, and the call
+    // below reads _impl->scratchB while evaluating its own arguments -- before
+    // any check inside the callee can run. Validating the mode there instead
+    // meant dereferencing a null _impl on the way to the diagnostic.
+    if (_mode != Modes::GPU) {
+        throw std::invalid_argument(
+            "Device-resident transforms require Modes::GPU; this object was built for another mode.");
+    }
+
     const size_t expected = Width() * (Height() == 0 ? size_t { 1 } : Height())
                           * (Depth() == 0 ? size_t { 1 } : Depth());
     if (volume.Size() != expected) {
         throw std::invalid_argument("DeviceVolume holds " + std::to_string(volume.Size())
                                     + " elements but this transform expects " + std::to_string(expected) + ".");
+    }
+
+    if (volume.DeviceData() == nullptr) {
+        throw std::invalid_argument("DeviceVolume holds no allocation.");
     }
 
 #ifdef RAPIDHT_WITH_CUDA
