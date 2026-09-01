@@ -98,6 +98,18 @@ constexpr bool IsPowerOfTwo(size_t n) noexcept
 
 } // namespace
 
+bool IsGpuAvailable() noexcept
+{
+#ifdef RAPIDHT_WITH_CUDA
+    int count = 0;
+    // Reports the failure through its return value rather than a sticky error,
+    // so an absent or too-old driver just yields false.
+    return cudaGetDeviceCount(&count) == cudaSuccess && count > 0;
+#else
+    return false;
+#endif
+}
+
 /* ------------------------------ DeviceVolume ------------------------------ */
 
 template <typename T>

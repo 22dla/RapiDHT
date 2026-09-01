@@ -16,13 +16,29 @@
 #include <gtest/gtest.h>
 #include <vector>
 
-// GPU tests skip themselves when the library is built without CUDA.
-#define SKIP_IF_NO_CUDA()                                                         \
+/*
+ * Skips a test that needs the GPU, for either of the two separate reasons it
+ * might be unavailable: the backend was not compiled in, or it was but there is
+ * no card. The second case is the normal state of a CI runner, which carries
+ * the toolkit so the code compiles and no device to run it on.
+ *
+ * Every test that touches the device must use this. Excluding them by a "GPU"
+ * substring in the test name is not enough -- that convention silently failed
+ * for DeviceResidentRejectsCpuMode, which needs a device despite testing a
+ * rejection path.
+ */
+#define SKIP_IF_NO_GPU()                                                          \
     do {                                                                          \
         if (!RapiDHT::kCudaEnabled) {                                             \
             GTEST_SKIP() << "Built without CUDA support (RAPIDHT_WITH_CUDA=OFF)"; \
         }                                                                         \
+        if (!RapiDHT::IsGpuAvailable()) {                                         \
+            GTEST_SKIP() << "No usable CUDA device on this machine";              \
+        }                                                                         \
     } while (0)
+
+/// Retained spelling, now meaning the same thing.
+#define SKIP_IF_NO_CUDA() SKIP_IF_NO_GPU()
 
 namespace rapidht_test {
 

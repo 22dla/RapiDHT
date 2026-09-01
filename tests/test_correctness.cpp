@@ -314,11 +314,11 @@ TEST(Correctness, DeviceResidentRejectsWrongSize_GPU)
     EXPECT_THROW(ht.ForwardTransform(wrong), std::invalid_argument);
 }
 
+// Needs a device despite testing a rejection path: constructing the volume
+// allocates on the card before the transform ever sees it.
 TEST(Correctness, DeviceResidentRejectsCpuMode)
 {
-    if (!kCudaEnabled) {
-        GTEST_SKIP() << "DeviceVolume needs a CUDA build";
-    }
+    SKIP_IF_NO_GPU();
     HartleyTransform<double> ht(16, 8, 4, Modes::CPU);
     DeviceVolume<double> volume(16 * 8 * 4);
     EXPECT_THROW(ht.ForwardTransform(volume), std::invalid_argument);

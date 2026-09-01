@@ -32,6 +32,19 @@ inline constexpr bool kMpiEnabled = true;
 inline constexpr bool kMpiEnabled = false;
 #endif
 
+/**
+ * @brief Whether a usable CUDA device is actually present, right now.
+ *
+ * kCudaEnabled reports only that the backend was compiled in, which is a
+ * different question: a machine can carry the toolkit and no card at all, which
+ * is the normal state of a build server. Anything that will touch the device --
+ * Modes::GPU, DeviceVolume -- needs this one, and it is the check to make
+ * before offering the GPU backend to a user.
+ *
+ * Never throws; a driver too old for the runtime simply reports false.
+ */
+bool IsGpuAvailable() noexcept;
+
 enum class Direction : size_t { Y = 0,
     X = 1,
     Z = 2,

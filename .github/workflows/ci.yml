@@ -82,7 +82,10 @@ jobs:
       - name: Build
         run: cmake --build build --parallel
 
-      # Everything except the GPU cases, which need an actual device. This
-      # still checks that a CUDA-enabled build produces correct CPU results.
-      - name: Test (CPU cases only)
-        run: ctest --test-dir build --output-on-failure -E GPU
+      # The whole suite. Cases needing a device skip themselves through
+      # IsGpuAvailable, which asks the driver rather than trusting the build
+      # flag. This used to filter on a "GPU" substring in the test name, and
+      # that convention silently missed a test that allocates on the device
+      # while checking a rejection path.
+      - name: Test
+        run: ctest --test-dir build --output-on-failure
