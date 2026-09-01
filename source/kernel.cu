@@ -48,23 +48,6 @@ __global__ void transpose_YZ_kernel(const T* __restrict__ in, T* __restrict__ ou
 }
 
 template <typename T>
-__global__ void permute_ZXY_simple_kernel(const T* __restrict__ in, T* __restrict__ out, int W, int H, int D)
-{
-    int x = blockIdx.x * blockDim.x + threadIdx.x;
-    int y = blockIdx.y * blockDim.y + threadIdx.y;
-    int z = blockIdx.z * blockDim.z + threadIdx.z;
-
-    if (x >= W || y >= H || z >= D)
-        return;
-
-    // исходный индекс (row-major, x fastest)
-    size_t in_idx = (size_t)z * (W * (size_t)H) + (size_t)y * W + x;
-    size_t out_idx = (size_t)y * ((size_t)D * W) + (size_t)x * D + z;
-
-    out[out_idx] = in[in_idx];
-}
-
-template <typename T>
 __global__ void MatrixMultiplicationKernelShared(const T* __restrict__ A, const T* __restrict__ B,
     T* __restrict__ C, int M, int K, int N)
 {
@@ -166,28 +149,6 @@ __global__ void ScaleKernel(T* data, size_t count, T factor)
     }
 }
 
-template <typename T>
-__global__ void MatrixMultiplication3D_Z_Kernel(
-    const T* d_input,
-    const T* d_transformZ,
-    T* d_output,
-    int W, int H, int D)
-{
-    int x = blockIdx.x * blockDim.x + threadIdx.x;
-    int y = blockIdx.y * blockDim.y + threadIdx.y;
-
-    if (x >= W || y >= H)
-        return;
-
-    for (int z_out = 0; z_out < D; ++z_out) {
-        T sum = 0.0;
-        for (int z_in = 0; z_in < D; ++z_in) {
-            sum += d_input[z_in * H * W + y * W + x] * d_transformZ[z_out * D + z_in];
-        }
-        d_output[z_out * H * W + y * W + x] = sum;
-    }
-}
-
 /*
  * Bracewell correction, turning the separable result of the per-axis passes
  * into the true multidimensional Hartley transform.
@@ -279,16 +240,6 @@ void transpose_YZ_cuda(const T* d_in, T* d_out, int W, int H, int D)
 }
 
 template <typename T>
-void permute_ZXY_simple(const T* d_in, T* d_out, int W, int H, int D)
-{
-    dim3 block(8, 8, 8);
-    dim3 grid((W + block.x - 1) / block.x, (H + block.y - 1) / block.y, (D + block.z - 1) / block.z);
-
-    permute_ZXY_simple_kernel<T><<<grid, block>>>(d_in, d_out, W, H, D);
-    cudaDeviceSynchronize();
-}
-
-template <typename T>
 void MatrixMultiplication(const T* A, const T* B, T* C, int M, int K, int N)
 {
     const int BLOCK_SIZE = 16;
@@ -350,17 +301,6 @@ void MatrixTransposeBatched(const T* d_in, T* d_out, int rows, int cols, int bat
 }
 
 template <typename T>
-void MatrixMultiplication3D_Z(const T* d_input, const T* d_transformZ, T* d_output, int W, int H, int D)
-{
-    dim3 blockDim(16, 16);
-    dim3 gridDim((W + blockDim.x - 1) / blockDim.x,
-        (H + blockDim.y - 1) / blockDim.y);
-
-    MatrixMultiplication3D_Z_Kernel<<<gridDim, blockDim>>>(d_input, d_transformZ, d_output, W, H, D);
-    cudaDeviceSynchronize();
-}
-
-template <typename T>
 void BracewellTransform2D(const T* d_in, T* d_out, int W, int H)
 {
     dim3 blockDim(16, 16);
@@ -403,15 +343,6 @@ void InitializeHartleyMatrix(float* dKernel, size_t height)
 
 template void transpose_YZ_cuda<float>(const float* d_in, float* d_out, int W, int H, int D);
 template void transpose_YZ_cuda<double>(const double* d_in, double* d_out, int W, int H, int D);
-
-template void permute_ZXY_simple<float>(const float* d_in, float* d_out, int W, int H, int D);
-template void permute_ZXY_simple<double>(const double* d_in, double* d_out, int W, int H, int D);
-
-// 3D матричные умножения
-template void MatrixMultiplication3D_Z<float>(const float* d_input, const float* d_transformZ, float* d_output, int W,
-    int H, int D);
-template void MatrixMultiplication3D_Z<double>(const double* d_input, const double* d_transformZ, double* d_output,
-    int W, int H, int D);
 
 // Общая матричная операция
 template void MatrixMultiplication<float>(const float* A, const float* B, float* C, int M, int K, int N);

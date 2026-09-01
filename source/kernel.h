@@ -47,17 +47,9 @@ void ScaleOnDevice(T* d_data, size_t count, T factor);
 template <typename T>
 void VectorMatrixMultiplication(const T* A, const T* x, T* y, int N);
 
-/// Reorders a W x H x D volume from (z, x, y) into (x, y, z).
-template <typename T>
-void permute_ZXY_simple(const T* d_in, T* d_out, int W, int H, int D);
-
 /// Swaps the Y and Z axes of a W x H x D volume.
 template <typename T>
 void transpose_YZ_cuda(const T* d_in, T* d_out, int W, int H, int D);
-
-/// Applies the Z-direction transform matrix across a W x H x D volume.
-template <typename T>
-void MatrixMultiplication3D_Z(const T* d_input, const T* d_transformZ, T* d_output, int W, int H, int D);
 
 /// Bracewell correction turning the separable per-axis result into the true
 /// multidimensional Hartley transform. Out of place: each output reads
