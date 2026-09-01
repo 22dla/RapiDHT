@@ -94,42 +94,47 @@ Measured on 6 cores at 4.4 GHz with an RTX 3060 Ti, median of 7 repetitions.
 
 ![3D benchmark](docs/images/benchmark-3d.svg)
 
-**3D volumes, which is what the library is for.** `GPU−PCIe` subtracts the
-host/device round trip, which the current API performs on every call:
+**3D volumes, which is what the library is for.** `GPU` copies the data across
+the bus on every call; `Resident` keeps it on the card, as `DeviceVolume` does:
 
-| | CPU | GPU | GPU−PCIe | speedup vs CPU |
+| | CPU | GPU | Resident | vs CPU |
 | --- | --- | --- | --- | --- |
-| f32 128³ | 15 392 µs | 4 803 µs | 2 832 µs | 3.2× (5.4× net) |
-| f32 256³ | 410 724 µs | 51 712 µs | 36 584 µs | 7.9× (11.2× net) |
-| f32 512³ | 3 861 066 µs | 434 567 µs | 312 945 µs | 8.9× (12.3× net) |
-| f64 128³ | 24 759 µs | 14 444 µs | 10 604 µs | 1.7× (2.3× net) |
-| f64 256³ | 470 233 µs | 202 110 µs | 171 917 µs | 2.3× (2.7× net) |
-| f64 512³ | 4 432 536 µs | 2 442 008 µs | 2 201 164 µs | 1.8× (2.0× net) |
+| f32 128³ | 15 025 µs | 2 595 µs | **806 µs** | 18.6× |
+| f32 256³ | 412 630 µs | 19 858 µs | **5 047 µs** | **81.8×** |
+| f32 512³ | 3 815 926 µs | 177 130 µs | **58 117 µs** | **65.7×** |
+| f64 128³ | 26 856 µs | 11 117 µs | 7 292 µs | 3.7× |
+| f64 256³ | 476 088 µs | 136 434 µs | 107 829 µs | 4.4× |
+| f64 512³ | 4 422 303 µs | 1 903 826 µs | 1 673 060 µs | 2.6× |
 
-The GPU backend wins on volumes, and the margin grows with size. Its dense
-`cas` matrix is only `W × W` per axis and is reused once per line, so the work
-becomes a batched GEMM — the case GPUs are built for — rather than the
-memory-bound matrix-vector product a single long 1D transform degenerates into.
+Three things to read off that table.
 
-**Precision dominates on consumer hardware.** A GeForce runs FP64 at a fraction
-of its FP32 rate, so moving to `float` speeds the GPU up by 3–5.6× while barely
-moving the CPU (1.15×). Anyone using this backend for volumes should be in
-single precision.
+**The transform itself is 65× faster than the CPU backend, and the bus was
+hiding it.** At 512³ the resident figure of 58.1 ms matches the 58.1 ms that a
+profiler attributes to the kernels, so nothing but the transform is being
+measured. The dense `cas` matrix is only `W × W` per axis and is reused once per
+line, which turns the work into a batched GEMM — the case GPUs are built for —
+rather than the memory-bound matrix-vector product a single long 1D transform
+degenerates into. The GEMMs run at 10.5 TFLOP/s against a 16.2 TFLOP/s peak.
 
-**Only 3D is worth offloading.** In 2D the GPU is slower than the CPU in double
-and roughly at parity in float; in 1D it is 66–80× slower, and the `n × n`
-matrix makes large sizes impossible outright.
+**Precision decides the outcome on consumer hardware.** A GeForce runs FP64 at a
+fraction of its FP32 rate, so single precision is 9–29× faster on the device
+while barely moving the CPU. Anyone using this backend for volumes should be in
+`float`.
 
-For reference, FFTW `FFTW_DHT` in double takes 11 503 / 125 314 / 1 360 737 µs
-on the same volumes — about 3× faster than this CPU backend, and about 3×
-slower than this GPU backend in float. Note that FFTW computes the separable
-transform in 2D/3D while RapiDHT computes the true multidimensional one and
-pays for an extra Bracewell pass, so it is doing less work.
+**2D now pays off too, 3D emphatically.** In 1D the GPU remains far slower: the
+axis is the whole signal, so the matrix is `n × n` and the approach collapses.
 
-Two openings visible in the same table. The CPU backend gains almost nothing
-from `float` (1.15× where 2× is available), which points at butterflies that do
-not vectorise. And its throughput falls from 85 to 36 M points/s between 128³
-and 256³, exactly where the volume stops fitting in the 18 MiB L3.
+For reference, FFTW `FFTW_DHT` in double takes 11 316 / 127 101 / 1 386 526 µs
+on the same volumes. That comparison carries three caveats: FFTW here is
+single-threaded, it is in double against our float, and in 2D/3D it computes the
+separable transform while RapiDHT computes the true multidimensional one and
+pays for an extra Bracewell pass. The honest reading is that a GPU beats a
+single CPU core, not that this beats FFTW.
+
+Two openings remain. The CPU backend gains almost nothing from `float`, which
+points at butterflies that do not vectorise. And its throughput falls from 85 to
+36 M points/s between 128³ and 256³, exactly where the volume stops fitting in
+the 18 MiB L3.
 
 ### Running Tests
 ```bash

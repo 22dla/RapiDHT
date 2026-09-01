@@ -55,10 +55,13 @@ int Run(size_t width, int iterations, const char* label)
         const auto finish = std::chrono::high_resolution_clock::now();
 
         const double ms = std::chrono::duration<double, std::milli>(finish - start).count();
+        const double msPer = ms / iterations;
         // 3 axes, W^2 lines each, 2*W^2 flops per line.
         const double gflop = 6.0 * std::pow(static_cast<double>(width), 4.0) / 1e9;
+        // GFLOP per millisecond is already TFLOP per second; the earlier
+        // division by 1000 here printed 0.00 for every run.
         std::printf("  %.2f ms per transform, %.1f GFLOP of matrix arithmetic, %.2f TFLOP/s\n",
-            ms / iterations, gflop, gflop / (ms / iterations) / 1000.0);
+            msPer, gflop, gflop / msPer);
     } catch (const std::exception& error) {
         std::fprintf(stderr, "  failed: %s\n", error.what());
         return 1;
