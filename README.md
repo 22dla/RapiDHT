@@ -124,6 +124,39 @@ while barely moving the CPU. Anyone using this backend for volumes should be in
 **2D now pays off too, 3D emphatically.** In 1D the GPU remains far slower: the
 axis is the whole signal, so the matrix is `n × n` and the approach collapses.
 
+### Against cuFFT
+
+cuFFT computes the Fourier transform, but for real input the Hartley transform
+follows by one linear pass, `Re(X) − Im(X)`, so cuFFT plus an `O(N)` conversion
+computes exactly what this library computes. That makes it the baseline that
+matters. At 512³ in single precision, both working on data already resident on
+the device, and both measured in the same run so the figures are directly
+comparable (which is why the 57.4 ms below differs by 1% from the 58.1 ms in
+the table above, taken from a separate run):
+
+| | time | arithmetic | achieved | extra device memory |
+| --- | --- | --- | --- | --- |
+| RapiDHT, matrix | 57.4 ms | 412 GFLOP | 7.2 TFLOP/s | **515 MiB** |
+| cuFFT + conversion | **11.9 ms** | ~9 GFLOP | 0.76 TFLOP/s | 1 028 MiB |
+
+**cuFFT is 4.8× faster on the transform.** No amount of framing changes that,
+and it is the number to quote.
+
+Two things sit alongside it. The matrix path performs about 46× more arithmetic
+yet finishes only 4.8× behind, because it is compute-bound and reaches 44% of
+the card while an FFT is bandwidth-bound and reaches around 5%. And it needs
+**half the extra device memory**: 515 MiB of scratch and matrices against
+cuFFT's 1 028 MiB of spectrum and workspace, measured through
+`cufftGetSize3d`. On this 8 GiB card that is the difference between a largest
+cubic volume of about 997³ and about 871³.
+
+Whether the arithmetic disadvantage or the memory advantage decides depends on
+the hardware and on the surrounding pipeline, neither of which this table
+covers. A GEMM maps onto tensor cores and an FFT does not, so the gap is a
+property of the card as much as of the algorithm; and the transform is only one
+stage of a filtering pipeline, where a Hartley spectrum multiplies by an even
+kernel with a real Hadamard product rather than a complex one.
+
 For reference, FFTW `FFTW_DHT` in double takes 11 316 / 127 101 / 1 386 526 µs
 on the same volumes. That comparison carries three caveats: FFTW here is
 single-threaded, it is in double against our float, and in 2D/3D it computes the
