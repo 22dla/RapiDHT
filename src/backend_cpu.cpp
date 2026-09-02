@@ -9,9 +9,10 @@
 
 #include "internal/support.h"
 
+#include <omp.h>
+
 #include <cmath>
 #include <complex>
-#include <omp.h>
 #include <string>
 
 namespace RapiDHT {
@@ -116,17 +117,12 @@ void HartleyTransform<T>::Series1D(T* data, Direction direction)
         }
         return;
     }
-    // if (_mode == Modes::RFFT) {
-    // #pragma omp parallel for
-    //	for (int i = 0; i < Width(); ++i) {
-    //		RealFFT1D(image_ptr + i * Height(), direction);
-    //	}
-    //	return;
-    // }
+    // No RFFT branch here on purpose: the constructor rejects Modes::RFFT for
+    // anything but 1D, and Series1D is only ever reached from 2D and 3D.
 }
 
 template <typename T>
-void HartleyTransform<T>::BracewellTransform2DCPU(T* image_ptr)
+void HartleyTransform<T>::BracewellTransform2DCPU(T* image)
 {
     PROFILE_FUNCTION();
 
@@ -135,23 +131,24 @@ void HartleyTransform<T>::BracewellTransform2DCPU(T* image_ptr)
 
     std::vector<T> result(W * H, T(0));
 
-    // collapse(N) требует идеально вложенных циклов: объявления переносим внутрь
+    // collapse(N) needs perfectly nested loops, so anything declared between
+    // them has to move inside the innermost one.
 #pragma omp parallel for collapse(2)
     for (int y = 0; y < W; ++y) {
         for (int x = 0; x < H; ++x) {
             const int ym = (y > 0) ? (W - y) : 0;
             const int xm = (x > 0) ? (H - x) : 0;
 
-            const T A = image_ptr[LinearIndex(y, x, 0)];
-            const T B = image_ptr[LinearIndex(y, xm, 0)]; // flip X
-            const T C = image_ptr[LinearIndex(ym, x, 0)]; // flip Y
-            const T D = image_ptr[LinearIndex(ym, xm, 0)]; // flip both
+            const T A = image[LinearIndex(y, x, 0)];
+            const T B = image[LinearIndex(y, xm, 0)]; // flip X
+            const T C = image[LinearIndex(ym, x, 0)]; // flip Y
+            const T D = image[LinearIndex(ym, xm, 0)]; // flip both
 
             result[LinearIndex(y, x, 0)] = (A + B + C - D) / static_cast<T>(2);
         }
     }
 
-    std::copy(result.begin(), result.end(), image_ptr);
+    std::copy(result.begin(), result.end(), image);
 }
 
 template <typename T>
@@ -164,7 +161,8 @@ void HartleyTransform<T>::BracewellTransform3DCPU(T* volumePtr)
 
     std::vector<T> result(W * H * D, T(0));
 
-    // collapse(N) требует идеально вложенных циклов: объявления переносим внутрь
+    // collapse(N) needs perfectly nested loops, so anything declared between
+    // them has to move inside the innermost one.
 #pragma omp parallel for collapse(3)
     for (int y = 0; y < W; ++y) {
         for (int x = 0; x < H; ++x) {
@@ -201,10 +199,11 @@ void HartleyTransform<T>::FDHT1D(T* data, Direction direction)
                                     + std::to_string(n) + ".");
     }
 
-    // временный буфер
+    // Gather buffer: the line along this axis is strided in memory, and the
+    // 1D transform wants it contiguous.
     std::vector<T> vec(n);
 
-    // собрать данные в буфер
+    // Gather
     for (size_t idx = 0; idx < n; ++idx) {
         vec[idx] = data[AxisIndex(idx, 0, 0, direction)];
     }
@@ -250,42 +249,42 @@ void HartleyTransform<T>::FDHT1D(T* data, Direction direction)
         }
     }
 
-    // записать обратно
+    // Scatter back
     for (size_t idx = 0; idx < n; ++idx) {
         data[AxisIndex(idx, 0, 0, direction)] = vec[idx];
     }
 }
 
 template <typename T>
-void HartleyTransform<T>::FDHT2D(T* image_ptr)
+void HartleyTransform<T>::FDHT2D(T* image)
 {
     PROFILE_FUNCTION();
 
-    if (image_ptr == nullptr) {
+    if (image == nullptr) {
         throw std::invalid_argument("FDHT2D: the pointer to image is null.");
     }
 
-    Series1D(image_ptr, Direction::X);
-    Series1D(image_ptr, Direction::Y);
+    Series1D(image, Direction::X);
+    Series1D(image, Direction::Y);
 
-    BracewellTransform2DCPU(image_ptr);
+    BracewellTransform2DCPU(image);
 }
 
 template <typename T>
-void HartleyTransform<T>::FDHT3D(T* volume_ptr)
+void HartleyTransform<T>::FDHT3D(T* volume)
 {
     PROFILE_FUNCTION();
 
-    if (volume_ptr == nullptr) {
+    if (volume == nullptr) {
         throw std::invalid_argument("FDHT3D: the pointer to volume is null.");
     }
 
     // 1D transforms along X, Y, Z dimensions
-    Series1D(volume_ptr, Direction::Y);
-    Series1D(volume_ptr, Direction::X);
-    Series1D(volume_ptr, Direction::Z);
+    Series1D(volume, Direction::Y);
+    Series1D(volume, Direction::X);
+    Series1D(volume, Direction::Z);
     // Bracewell 3D
-    BracewellTransform3DCPU(volume_ptr);
+    BracewellTransform3DCPU(volume);
 }
 
 template <typename T>

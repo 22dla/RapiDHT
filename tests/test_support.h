@@ -10,10 +10,11 @@
 
 #include <rapidht/transform.h>
 
+#include <gtest/gtest.h>
+
 #include <algorithm>
 #include <cmath>
 #include <cstddef>
-#include <gtest/gtest.h>
 #include <vector>
 
 /*
@@ -123,10 +124,10 @@ inline double MaxAbs(const std::vector<double>& v)
 /// Compares two vectors with a tolerance scaled to the magnitude of `expected`,
 /// which matters because an unnormalised DHT grows like N.
 inline void ExpectClose(const std::vector<double>& actual, const std::vector<double>& expected,
-    double relative_tolerance = 1e-12)
+    double relativeTolerance = 1e-12)
 {
     ASSERT_EQ(actual.size(), expected.size());
-    const double tol = relative_tolerance * std::max(MaxAbs(expected), 1.0);
+    const double tol = relativeTolerance * std::max(MaxAbs(expected), 1.0);
     for (size_t i = 0; i < actual.size(); ++i) {
         ASSERT_NEAR(actual[i], expected[i], tol) << "Mismatch at index " << i;
     }

@@ -11,12 +11,13 @@
  * of the definition, and against analytically known signal/spectrum pairs.
  */
 
-#include "test_support.h"
-
 #include <gtest/gtest.h>
+
 #include <numeric>
 #include <string>
 #include <vector>
+
+#include "test_support.h"
 
 using namespace RapiDHT;
 using namespace rapidht_test;
@@ -189,12 +190,12 @@ TEST(Correctness, PreservesEnergy)
         const auto input = MakeSignal(dims.Total());
         const auto spectrum = Forward(input, e.width, e.height, e.depth, Modes::CPU);
 
-        const double input_energy = std::inner_product(input.begin(), input.end(), input.begin(), 0.0);
-        const double spectrum_energy
+        const double inputEnergy = std::inner_product(input.begin(), input.end(), input.begin(), 0.0);
+        const double spectrumEnergy
             = std::inner_product(spectrum.begin(), spectrum.end(), spectrum.begin(), 0.0);
 
-        EXPECT_NEAR(spectrum_energy, static_cast<double>(dims.Total()) * input_energy,
-            1e-9 * spectrum_energy);
+        EXPECT_NEAR(spectrumEnergy, static_cast<double>(dims.Total()) * inputEnergy,
+            1e-9 * spectrumEnergy);
     }
 }
 

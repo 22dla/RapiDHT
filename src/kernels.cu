@@ -1,19 +1,13 @@
 /*
  * Project: RapiDHT
  * File: src/kernels.cu
- * Brief: CUDA-ядра и хост-обёртки для матричных операций и преобразования Хартли.
- * Author: Волков Евгений Александрович, volkov22dla@yandex.ru
+ * Brief: The CUDA kernels for the matrix operations and the Hartley matrices.
+ * Author: Volkov Evgeny Aleksandrovich, volkov22dla@yandex.ru
  */
 
-#include "device_launch_parameters.h"
 #include "internal/kernels.h"
 
-// #ifndef TILE_DIM
-// #define TILE_DIM 32
-// #endif
-// #ifndef BLOCK_ROWS
-// #define BLOCK_ROWS 8
-// #endif
+#include "device_launch_parameters.h"
 
 // ------------------------------ Kernels ------------------------------
 
@@ -37,13 +31,13 @@ __global__ void TransposeYZKernel(const T* __restrict__ in, T* __restrict__ out,
     if (x >= W || y >= H || z >= D)
         return;
 
-    // исходный индекс (row-major, x fastest)
-    size_t in_idx = (size_t)z * (W * (size_t)H) + (size_t)y * W + x;
-    // целевой индекс после swap Y<->Z: out dims = W x D x H
-    // координаты в out: (x_out, y_out, z_out) = (x, z, y)
-    size_t out_idx = (size_t)y * (W * (size_t)D) + (size_t)z * W + x;
+    // Source index, row-major with x fastest.
+    size_t sourceIndex = (size_t)z * (W * (size_t)H) + (size_t)y * W + x;
+    // Destination after swapping Y and Z: the output is W x D x H, so the
+    // point (x, y, z) lands at (x, z, y).
+    size_t destIndex = (size_t)y * (W * (size_t)D) + (size_t)z * W + x;
 
-    out[out_idx] = in[in_idx];
+    out[destIndex] = in[sourceIndex];
 }
 
 template <typename T>
@@ -59,9 +53,9 @@ __global__ void MatrixMultiplicationSharedKernel(const T* __restrict__ A, const 
 
     T sum = 0.0;
 
-    // Цикл по "плиткам" (tiles) матриц A и B
+    // Tile by tile over A and B.
     for (int t = 0; t < (K + BLOCK_SIZE - 1) / BLOCK_SIZE; ++t) {
-        // Загружаем кусок A и B в shared memory
+        // Stage both tiles in shared memory.
         if (row < M && t * BLOCK_SIZE + threadIdx.x < K)
             As[threadIdx.y][threadIdx.x] = A[row * K + t * BLOCK_SIZE + threadIdx.x];
         else
@@ -74,14 +68,14 @@ __global__ void MatrixMultiplicationSharedKernel(const T* __restrict__ A, const 
 
         __syncthreads();
 
-        // Умножаем плитки
+        // Multiply the staged tiles.
         for (int i = 0; i < BLOCK_SIZE; ++i) {
             sum += As[threadIdx.y][i] * Bs[i][threadIdx.x];
         }
         __syncthreads();
     }
 
-    // Записываем результат
+    // Write the accumulated result out.
     if (row < M && col < N) {
         C[row * N + col] = sum;
     }
@@ -247,7 +241,6 @@ void MatrixMultiplication(const T* A, const T* B, T* C, int M, int K, int N)
         (N + BLOCK_SIZE - 1) / BLOCK_SIZE,
         (M + BLOCK_SIZE - 1) / BLOCK_SIZE);
 
-    // MatrixMultiplicationKernel << <blocksPerGrid, threadsPerBlock >> > (A, B, C, M, K, N);
     MatrixMultiplicationSharedKernel<<<blocksPerGrid, threadsPerBlock>>>(A, B, C, M, K, N);
 
     cudaDeviceSynchronize();
@@ -263,7 +256,7 @@ void VectorMatrixMultiplication(const T* A, const T* x, T* y, int N)
     cudaDeviceSynchronize();
 }
 
-// rows, cols - целевые (размеры матрицы B)
+// rows and cols describe the destination, that is the shape of B.
 template <typename T>
 void MatrixTranspose(const T* A, T* B, int rows, int cols)
 {
@@ -313,7 +306,7 @@ void BracewellTransform2D(const T* deviceIn, T* deviceOut, int W, int H)
 template <typename T>
 void BracewellTransform3D(const T* deviceIn, T* deviceOut, int W, int H, int D)
 {
-    dim3 blockDim(8, 8, 8); // можно подбирать под вашу карту
+    dim3 blockDim(8, 8, 8); // 512 threads; worth retuning per architecture.
     dim3 gridDim((W + blockDim.x - 1) / blockDim.x,
         (H + blockDim.y - 1) / blockDim.y,
         (D + blockDim.z - 1) / blockDim.z);
@@ -343,11 +336,11 @@ void InitializeHartleyMatrix(float* deviceMatrix, size_t height)
 template void TransposeYZ<float>(const float* deviceIn, float* deviceOut, int W, int H, int D);
 template void TransposeYZ<double>(const double* deviceIn, double* deviceOut, int W, int H, int D);
 
-// Общая матричная операция
+// Matrix operations
 template void MatrixMultiplication<float>(const float* A, const float* B, float* C, int M, int K, int N);
 template void MatrixMultiplication<double>(const double* A, const double* B, double* C, int M, int K, int N);
 
-// Транспонирование
+// Transposition
 template void MatrixTranspose<float>(const float* A, float* B, int rows, int cols);
 template void MatrixTranspose<double>(const double* A, double* B, int rows, int cols);
 
@@ -357,11 +350,11 @@ template void MatrixTransposeBatched<double>(const double* deviceIn, double* dev
 template void ScaleOnDevice<float>(float* deviceData, size_t count, float factor);
 template void ScaleOnDevice<double>(double* deviceData, size_t count, double factor);
 
-// Умножение вектор-матрица
+// Vector times matrix
 template void VectorMatrixMultiplication<float>(const float* A, const float* x, float* y, int N);
 template void VectorMatrixMultiplication<double>(const double* A, const double* x, double* y, int N);
 
-// 3D преобразование Брэсвелла
+// Bracewell correction
 template void BracewellTransform2D<float>(const float* deviceIn, float* deviceOut, int W, int H);
 template void BracewellTransform2D<double>(const double* deviceIn, double* deviceOut, int W, int H);
 

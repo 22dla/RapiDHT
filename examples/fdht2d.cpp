@@ -1,3 +1,11 @@
+/*
+ * Project: RapiDHT
+ * File: examples/fdht2d.cpp
+ * Brief: Forward then inverse 2D transform, reporting the round-trip error.
+ *
+ * Run with no arguments for the defaults, or as: fdht2d NxM [CPU|GPU]
+ */
+
 #include <rapidht/transform.h>
 #include <rapidht/utilities.h>
 
@@ -5,44 +13,26 @@ using namespace RapiDHT;
 
 int main(int argc, char** argv)
 {
-    // ---- Обработка аргументов ----
-    auto cfg = ParseArgs(argc, argv);
+    LoadingConfig cfg;
     cfg.width = 1 << 5;
     cfg.height = 1 << 10;
-    // cfg.height = cfg.width;
-
-    auto width = cfg.width;
-    auto height = cfg.height;
-    auto mode = cfg.mode;
-
+    if (argc > 1) {
+        cfg = ParseArgs(argc, argv);
+    }
     cfg.print();
 
-    // ---- Создание данных ----
-    auto original_data = MakeData<double>({ width, height }, FillMode::Random);
+    auto originalData = MakeData<double>({ cfg.width, cfg.height }, FillMode::Random);
+    auto transformedData = originalData;
 
-    // original_data = {183.00, 248.00, 80.00,	 203.00, 129.00, 200.00, 31.00,	 5.00,	 19.00,	 196.00, 186.00,
-    //				 167.00, 107.00, 245.00, 39.00,	 156.00, 199.00, 126.00, 103.00, 181.00, 185.00, 16.00,
-    //				 234.00, 125.00, 218.00, 86.00,	 118.00, 151.00, 72.00,	 232.00, 206.00, 141.00};
+    auto startTime = std::chrono::high_resolution_clock::now();
 
-    auto transformed_data = original_data;
-    // PrintData2d(original_data.data(), width, height);
+    HartleyTransform<double> ht(cfg.width, cfg.height, 0, cfg.mode);
+    ht.ForwardTransform(transformedData.data());
+    ht.InverseTransform(transformedData.data());
 
-    // ---- Засекаем время ----
-    auto start_time = std::chrono::high_resolution_clock::now();
+    auto endTime = std::chrono::high_resolution_clock::now();
+    ShowElapsedTime<std::chrono::milliseconds>(startTime, endTime, "Common time");
 
-    // ---- Преобразование Хартли ----
-    HartleyTransform<double> ht(width, height, 0, mode);
-    ht.ForwardTransform(transformed_data.data());
-    // PrintData2d(transformed_data.data(), width, height);
-
-    ht.InverseTransform(transformed_data.data());
-    // PrintData2d(transformed_data.data(), width, height);
-
-    auto end_time = std::chrono::high_resolution_clock::now();
-    ShowElapsedTime<std::chrono::milliseconds>(start_time, end_time, "Common time");
-
-    // PrintData2d(transformed_data.data(), width, height);
-    //  ---- Подсчёт ошибки ----
-    CompareData(original_data, transformed_data);
+    CompareData(originalData, transformedData);
     return 0;
 }

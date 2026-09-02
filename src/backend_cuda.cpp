@@ -138,14 +138,13 @@ void HartleyTransform<T>::DHT3DOnDevice(T* deviceInOut, T* deviceScratch)
     auto H = Height();
     auto D = Depth();
 
-
     cublasHandle_t handle;
     cublasCreate(&handle);
     const T alpha = 1.0;
     const T beta = 0.0;
 
     // -------------------------------
-    // Приводим к column major
+    // Into column-major order, which is what cuBLAS reads.
     // -------------------------------
     // One launch instead of one per slice. Profiling 512^3 showed 1024 geam
     // launches per transform against 3 GEMMs, with the device idle for 83% of
@@ -175,7 +174,7 @@ void HartleyTransform<T>::DHT3DOnDevice(T* deviceInOut, T* deviceScratch)
             &beta, deviceInOut, ldc, strideC, batchCount);
     }
 
-    // Транспонируем
+    // Back, ready for the next axis.
     MatrixTransposeBatched(deviceInOut, deviceScratch, static_cast<int>(W), static_cast<int>(H),
         static_cast<int>(D));
 

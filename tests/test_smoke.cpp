@@ -1,14 +1,17 @@
 #include <rapidht/transform.h>
-#include "test_support.h" // SKIP_IF_NO_CUDA
 #include <rapidht/utilities.h>
-#include <cmath>
+
 #include <gtest/gtest.h>
+
+#include <cmath>
 #include <numeric>
 #include <vector>
 
+#include "test_support.h" // SKIP_IF_NO_CUDA
+
 using namespace RapiDHT;
 
-// Вспомогательная проверка на близость векторов (покомпонентно)
+// Element-wise closeness, reported as a single assertion.
 template <typename T>
 void ExpectVectorsNear(const std::vector<T>& a, const std::vector<T>& b, double tol = 1e-6)
 {
@@ -18,7 +21,7 @@ void ExpectVectorsNear(const std::vector<T>& a, const std::vector<T>& b, double 
     }
 }
 
-// ---- 1D тесты ----
+// ---- 1D ----
 // ------- CPU ------
 TEST(FDHT, Test1D_Small_CPU)
 {
@@ -83,7 +86,7 @@ TEST(FDHT, Test1D_Large_GPU)
     ExpectVectorsNear(original, transformed);
 }
 
-// ---- 2D тесты ----
+// ---- 2D ----
 // ------- CPU ------
 TEST(FDHT, Test2D_Small_CPU)
 {
@@ -186,7 +189,7 @@ TEST(FDHT, Test2D_Large_Different_Sizes_GPU)
     ExpectVectorsNear(original, transformed);
 }*/
 
-// ---- 3D тесты ----
+// ---- 3D ----
 // ------- CPU ------
 TEST(FDHT, Test3D_Small_CPU)
 {

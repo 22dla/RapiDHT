@@ -1,8 +1,8 @@
 /*
  * Project: RapiDHT
  * File: include/rapidht/transform.h
- * Brief: Публичный API дискретного преобразования Хартли (1D/2D/3D), CPU/GPU режимы.
- * Author: Волков Евгений Александрович, volkov22dla@yandex.ru
+ * Brief: The public API of the discrete Hartley transform, 1D/2D/3D, CPU and GPU.
+ * Author: Volkov Evgeny Aleksandrovich, volkov22dla@yandex.ru
  */
 
 #ifndef RAPIDHT_TRANSFORM_H
@@ -19,25 +19,64 @@
 
 namespace RapiDHT {
 
+/// Axis of a transform. The names are historical: Y runs along the fastest
+/// varying index, X along the next, Z along the slowest.
 enum class Direction : size_t { Y = 0,
     X = 1,
     Z = 2,
     Count };
-enum class Modes { CPU,
-    GPU,
-    RFFT };
 
+/// Which backend carries out the transform.
+enum class Modes { CPU, ///< OpenMP, fast Hartley transform.
+    GPU, ///< CUDA, dense matrices through cuBLAS. Needs RAPIDHT_WITH_CUDA.
+    RFFT ///< Real FFT, 1D only, for comparison.
+};
+
+/**
+ * @brief The discrete Hartley transform of a 1D, 2D or 3D array.
+ *
+ * This computes the **true multidimensional** transform,
+ *
+ *     H(a,b,c) = sum over i,j,k of x(i,j,k) * cas(2*pi*(ia/W + jb/H + kc/D))
+ *
+ * where cas(t) = cos(t) + sin(t). That is not the same thing as applying a 1D
+ * transform along each axis in turn: the separable product and the true
+ * transform coincide only in 1D. The 2D and 3D paths therefore end with a
+ * Bracewell correction, on both backends.
+ *
+ * Conventions, all deliberate:
+ *  - the forward transform is unnormalised; InverseTransform applies the 1/N;
+ *  - storage is row-major, index = i + Width*(j + Height*k);
+ *  - every extent must be a power of two;
+ *  - a 1D transform is (W, 0, 0) and a 2D one is (W, H, 0).
+ *
+ * The object owns whatever the backend needs -- bit-reversal tables and
+ * twiddles on the CPU, transform matrices and scratch buffers on the device --
+ * so it is worth keeping one around and reusing it, the way an FFT plan is
+ * reused. It is move-only for the same reason.
+ *
+ * @tparam T Element type: float or double, the only two instantiated.
+ */
 template <typename T>
 class HartleyTransform {
 public:
     HartleyTransform() = delete;
 
     /**
-     * @brief Constructs a HartleyTransform object with specified dimensions and mode.
-     * @param width Width of the 3D data.
-     * @param height Height of the 3D data.
-     * @param depth Depth of the 3D data.
-     * @param mode Transformation mode (CPU, GPU, RFFT).
+     * @brief Builds a transform for one fixed extent and backend.
+     *
+     * All the per-extent setup happens here rather than per call.
+     *
+     * @param width Extent along the fastest axis; must be a power of two.
+     * @param height Extent along the middle axis, or 0 for a 1D transform.
+     * @param depth Extent along the slowest axis, or 0 for 1D and 2D.
+     * @param mode Backend to use.
+     *
+     * @throws std::invalid_argument If width is zero, if depth is given
+     *         without height, or if Modes::RFFT is asked for in 2D or 3D,
+     *         where it is not implemented.
+     * @throws std::runtime_error If Modes::GPU is asked for in a build without
+     *         the CUDA backend.
      */
     HartleyTransform(size_t width, size_t height, size_t depth, Modes mode);
 
@@ -51,14 +90,19 @@ public:
     HartleyTransform& operator=(HartleyTransform&&) noexcept;
 
     /**
-     * @brief Performs the forward Hartley transform on the input data.
-     * @param data Pointer to the input/output data array.
+     * @brief Transforms an array in host memory, in place, unnormalised.
+     *
+     * On Modes::GPU this uploads the data, transforms it and downloads it
+     * again on every call. For anything that applies more than one operation,
+     * prefer the DeviceVolume overload below and pay for the transfer once.
+     *
+     * @param data Input/output, Width()*Height()*Depth() elements, row-major.
      */
     void ForwardTransform(T* data);
 
     /**
-     * @brief Performs the inverse Hartley transform on the input data.
-     * @param data Pointer to the input/output data array.
+     * @brief The inverse: a forward transform followed by scaling by 1/N.
+     * @param data Input/output, left holding the reconstructed data.
      */
     void InverseTransform(T* data);
 
@@ -83,22 +127,23 @@ public:
     constexpr size_t Height() const noexcept { return _dims[static_cast<size_t>(Direction::X)]; }
     constexpr size_t Depth() const noexcept { return _dims[static_cast<size_t>(Direction::Z)]; }
 
-    // Функция для получения линейного индекса в зависимости от направления
+    /// Linear offset of element (i, j, k) in row-major storage.
     size_t LinearIndex(size_t i, size_t j, size_t k) const
     {
         return i + Width() * (j + Height() * k); // row-major
     }
 
-    // Функция для получения индекса вдоль конкретной оси
-    size_t AxisIndex(size_t idx_along_axis, size_t fixed1, size_t fixed2, Direction direction) const
+    /// Linear offset of the point that sits at `idxAlongAxis` along
+    /// `direction`, with the other two coordinates fixed.
+    size_t AxisIndex(size_t idxAlongAxis, size_t fixed1, size_t fixed2, Direction direction) const
     {
         switch (direction) {
             case Direction::Y:
-                return LinearIndex(idx_along_axis, fixed1, fixed2);
+                return LinearIndex(idxAlongAxis, fixed1, fixed2);
             case Direction::X:
-                return LinearIndex(fixed1, idx_along_axis, fixed2);
+                return LinearIndex(fixed1, idxAlongAxis, fixed2);
             case Direction::Z:
-                return LinearIndex(fixed1, fixed2, idx_along_axis);
+                return LinearIndex(fixed1, fixed2, idxAlongAxis);
             default:
                 throw std::invalid_argument("Invalid direction");
         }
@@ -121,8 +166,6 @@ public:
     {
         return _bitReversedIndices[static_cast<size_t>(direction)][index];
     }
-
-    // static void Process3DDataWithHartley(std::vector<float>& h_data, int N);
 
 private:
     /* ------------------------- ND Transforms ------------------------- */

@@ -9,8 +9,9 @@
 #ifndef RAPIDHT_INTERNAL_DEVICE_ARRAY_H
 #define RAPIDHT_INTERNAL_DEVICE_ARRAY_H
 
-#include <algorithm>
 #include <cuda_runtime.h>
+
+#include <algorithm>
 #include <stdexcept>
 #include <string>
 

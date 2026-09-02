@@ -1,3 +1,11 @@
+/*
+ * Project: RapiDHT
+ * File: examples/fdht3d.cpp
+ * Brief: Forward then inverse 3D transform, reporting the round-trip error.
+ *
+ * Run with no arguments for the defaults, or as: fdht3d NxMxK [CPU|GPU]
+ */
+
 #include <rapidht/transform.h>
 #include <rapidht/utilities.h>
 
@@ -5,46 +13,36 @@ using namespace RapiDHT;
 
 int main(int argc, char** argv)
 {
-    // ---- Обработка аргументов ----
-    auto cfg = ParseArgs(argc, argv);
+    LoadingConfig cfg;
     cfg.width = 1 << 2;
     cfg.height = 1 << 3;
     cfg.depth = 1 << 4;
-    // cfg.height = 4;
-    // cfg.depth = 8;
 
-    // GPU-путь доступен только в сборке с RAPIDHT_WITH_CUDA=ON
-    cfg.mode = kCudaEnabled ? Modes::GPU : Modes::CPU;
-
+    if (argc > 1) {
+        cfg = ParseArgs(argc, argv);
+    } else {
+        // Exercise the backend this build actually has. IsGpuAvailable rather
+        // than kCudaEnabled: the latter only says the backend was compiled in,
+        // and a machine can carry the toolkit and no card at all.
+        cfg.mode = IsGpuAvailable() ? Modes::GPU : Modes::CPU;
+    }
     cfg.print();
 
-    auto width = cfg.width;
-    auto height = cfg.height;
-    auto depth = cfg.depth;
-    auto mode = cfg.mode;
+    auto makingStart = std::chrono::high_resolution_clock::now();
+    auto originalData = MakeData<float>({ cfg.width, cfg.height, cfg.depth }, FillMode::Sequential);
+    auto transformedData = originalData;
+    auto makingFinish = std::chrono::high_resolution_clock::now();
+    ShowElapsedTime<std::chrono::milliseconds>(makingStart, makingFinish, "Making time");
 
-    // ---- Создание данных ----
-    auto making_start = std::chrono::high_resolution_clock::now();
-    auto original_data = MakeData<float>({ width, height, depth }, FillMode::Sequential);
-    auto transformed_data = original_data;
-    auto making_finish = std::chrono::high_resolution_clock::now();
-    ShowElapsedTime<std::chrono::milliseconds>(making_start, making_finish, "Making time");
+    auto commonStart = std::chrono::high_resolution_clock::now();
 
-    // ---- Засекаем время ----
-    auto common_start = std::chrono::high_resolution_clock::now();
+    HartleyTransform<float> ht(cfg.width, cfg.height, cfg.depth, cfg.mode);
+    ht.ForwardTransform(transformedData.data());
+    ht.InverseTransform(transformedData.data());
 
-    // ---- Преобразование Хартли ----
-    // PrintData3d(original_data.data(), width, height, depth);
-    HartleyTransform<float> ht(width, height, depth, mode);
-    ht.ForwardTransform(original_data.data());
-    // PrintData3d(original_data.data(), width, height, depth);
-    ht.InverseTransform(original_data.data());
-    // PrintData3d(original_data.data(), width, height, depth);
+    auto commonFinish = std::chrono::high_resolution_clock::now();
+    ShowElapsedTime<std::chrono::milliseconds>(commonStart, commonFinish, "Common time");
 
-    auto common_finish = std::chrono::high_resolution_clock::now();
-    ShowElapsedTime<std::chrono::milliseconds>(common_start, common_finish, "Common time");
-
-    // ---- Подсчёт ошибки ----
-    CompareData(original_data, transformed_data);
+    CompareData(originalData, transformedData);
     return 0;
 }

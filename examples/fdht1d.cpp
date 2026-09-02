@@ -1,3 +1,11 @@
+/*
+ * Project: RapiDHT
+ * File: examples/fdht1d.cpp
+ * Brief: Forward then inverse 1D transform, reporting the round-trip error.
+ *
+ * Run with no arguments for the defaults, or as: fdht1d N [CPU|GPU|RFFT]
+ */
+
 #include <rapidht/transform.h>
 #include <rapidht/utilities.h>
 
@@ -5,38 +13,34 @@ using namespace RapiDHT;
 
 int main(int argc, char** argv)
 {
-    // ---- Обработка аргументов ----
-    auto cfg = ParseArgs(argc, argv);
+    LoadingConfig cfg;
     cfg.width = 1 << 10;
+    if (argc > 1) {
+        cfg = ParseArgs(argc, argv);
+    }
+    cfg.print();
 
-    auto width = cfg.width;
-    auto mode = cfg.mode;
+    auto originalData = MakeData<double>({ cfg.width });
+    auto transformedData = originalData;
 
-    // ---- Создание данных ----
-    auto original_data = MakeData<double>({ width });
-    auto transformed_data = original_data;
+    PrintData1d(originalData.data(), static_cast<int>(cfg.width));
 
-    PrintData1d(original_data.data(), width);
+    auto startTime = std::chrono::high_resolution_clock::now();
 
-    // ---- Засекаем время ----
-    auto start_time = std::chrono::high_resolution_clock::now();
+    HartleyTransform<double> ht(cfg.width, 0, 0, cfg.mode);
+    ht.ForwardTransform(transformedData.data());
+    ht.InverseTransform(transformedData.data());
 
-    // ---- Преобразование ----
-    HartleyTransform<double> ht(width, 0, 0, mode);
-    ht.ForwardTransform(transformed_data.data());
-    ht.InverseTransform(transformed_data.data());
+    PrintData1d(transformedData.data(), static_cast<int>(cfg.width));
 
-    PrintData1d(transformed_data.data(), width);
+    auto endTime = std::chrono::high_resolution_clock::now();
+    ShowElapsedTime<std::chrono::milliseconds>(startTime, endTime, "Common time");
 
-    auto end_time = std::chrono::high_resolution_clock::now();
-    ShowElapsedTime<std::chrono::milliseconds>(start_time, end_time, "Common time");
-
-    // ---- Подсчёт ошибки ----
-    double sum_sqr = std::transform_reduce(
-        transformed_data.begin(), transformed_data.end(),
-        original_data.begin(), 0.0, std::plus<>(),
+    double sumOfSquares = std::transform_reduce(
+        transformedData.begin(), transformedData.end(),
+        originalData.begin(), 0.0, std::plus<>(),
         [](double x, double y) { return (x - y) * (x - y); });
 
-    std::cout << "Error:\t" << std::sqrt(sum_sqr) << std::endl;
+    std::cout << "Error:\t" << std::sqrt(sumOfSquares) << std::endl;
     return 0;
 }

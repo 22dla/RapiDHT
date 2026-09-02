@@ -1,8 +1,8 @@
 /*
  * Project: RapiDHT
  * File: src/internal/kernels.h
- * Brief: Заголовок CUDA-обёрток и ядер для линейной алгебры и преобразования Хартли.
- * Author: Волков Евгений Александрович, volkov22dla@yandex.ru
+ * Brief: Host-side declarations of the CUDA kernels and their wrappers.
+ * Author: Volkov Evgeny Aleksandrovich, volkov22dla@yandex.ru
  *
  * Internal header: not installed and not part of the public API.
  *

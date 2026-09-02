@@ -4,7 +4,6 @@
 
 namespace RapiDHT {
 
-// Разбор строки размеров вида "NxM[xK]"
 std::vector<size_t> ParseDims(const std::string& str)
 {
     std::vector<size_t> dims;
@@ -16,7 +15,6 @@ std::vector<size_t> ParseDims(const std::string& str)
     return dims;
 }
 
-// Разбор устройства выполнения
 Modes ParseDevice(const char* device)
 {
     if (!strcmp(device, "CPU"))

@@ -101,13 +101,14 @@ void HartleyTransform<T>::ForwardTransform(T* data)
     bool is1D = (Height() == 0 && Depth() == 0);
     bool is2D = (Height() > 0 && Depth() == 0);
 
-    // Rank/size, если MPI собран и инициализирован хост-программой
+    // Rank and size, or 0 and 1 when MPI is absent or the host program never
+    // initialised it.
     const MpiContext mpi = QueryMpi();
     const int rank = mpi.rank;
     const int size = mpi.size;
 
     if (is1D || is2D) {
-        // Для 1D и 2D нет смысла в MPI
+        // Nothing to distribute for 1D and 2D.
         switch (_mode) {
             case Modes::CPU:
                 if (is1D) {
@@ -132,7 +133,7 @@ void HartleyTransform<T>::ForwardTransform(T* data)
         return;
     }
 
-    // 3D case: делим по Z между процессами, если MPI включен
+    // 3D: split along Z across the ranks.
     size_t depthPerProc = Depth() / size;
     size_t remainder = Depth() % size;
     size_t offset = rank * depthPerProc + std::min(static_cast<size_t>(rank), remainder);
@@ -151,7 +152,7 @@ void HartleyTransform<T>::ForwardTransform(T* data)
     }
 
 #ifdef RAPIDHT_WITH_MPI
-    // Сбор данных только если MPI активен
+    // Collect the slabs back only when MPI is actually running.
     if (mpi.active) {
         std::vector<int> sendcounts(size);
         std::vector<int> displs(size);
@@ -181,10 +182,9 @@ void HartleyTransform<T>::InverseTransform(T* data)
     const int rank = mpi.rank;
     const int size = mpi.size;
 
-    // Сначала выполняем прямое преобразование
+    // The Hartley transform is its own inverse up to the 1/N below.
     ForwardTransform(data);
 
-    // Общий размер данных
     size_t totalSize = Width();
     if (Height() > 0) {
         totalSize *= Height();
@@ -196,7 +196,6 @@ void HartleyTransform<T>::InverseTransform(T* data)
     auto denominator = 1.0 / static_cast<double>(totalSize);
 
     if (is1D || is2D) {
-        // Масштабируем полностью только на rank=0
         for (size_t i = 0; i < totalSize; ++i) {
             data[i] *= denominator;
         }
@@ -204,7 +203,7 @@ void HartleyTransform<T>::InverseTransform(T* data)
         return;
     }
 
-    // 3D case: делим по Z между процессами
+    // 3D: each rank scales only its own slab.
     size_t depthPerProc = Depth() / size;
     size_t remainder = Depth() % size;
     size_t offset = rank * depthPerProc + std::min(static_cast<size_t>(rank), remainder);
@@ -213,12 +212,10 @@ void HartleyTransform<T>::InverseTransform(T* data)
     size_t localSize = depthPerProc * Width() * Height();
     T* localData = data + offset * Width() * Height();
 
-    // Масштабируем локальный блок
     for (size_t i = 0; i < localSize; ++i) {
         localData[i] *= denominator;
     }
 
-    // Синхронизация процессов
     MpiBarrier(mpi);
 }
 
