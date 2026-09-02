@@ -9,6 +9,7 @@
 #define RAPIDHT_UTILITIES_H
 
 #include <rapidht/transform.h>
+
 #include <algorithm>
 #include <chrono>
 #include <cmath>

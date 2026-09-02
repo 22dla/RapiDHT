@@ -5,8 +5,8 @@
  * Author: Волков Евгений Александрович, volkov22dla@yandex.ru
  */
 
-#include "internal/device_array.h"
 #include "device_launch_parameters.h"
+#include "internal/device_array.h"
 #include "internal/kernels.h"
 
 // #ifndef TILE_DIM
