@@ -1,8 +1,35 @@
+# clangd configuration.
+#
+# clangd needs a compile_commands.json to know the include paths and defines
+# for each file. CMake writes one into whatever build directory is active, and
+# with presets that directory changes name -- build-cpu, build-cuda-local,
+# build-bench. Pointing this at a fixed one goes stale the moment the preset
+# changes, which is how every file came to be underlined red.
+#
+# So it points at the source root, and the build is asked to put a copy there:
+# in VS Code through "cmake.copyCompileCommands", or by hand with
+#
+#   ln -sf build-<preset>/compile_commands.json compile_commands.json
+#
+# The copy is gitignored.
 CompileFlags:
-  CompilationDatabase: build
+  CompilationDatabase: .
+
+  # nvcc accepts these; clang does not, and chokes on the whole file when it
+  # meets one. They only appear in the entries for kernels.cu.
+  Remove:
+    - -forward-unknown-to-host-compiler
+    - --generate-code=*
+    - -rdc=*
+    - --options-file
+    - -Xcompiler=*
+    - --expt-*
+    - -gencode*
+
   Add:
-    - --cuda-path="C:/Program Files/NVIDIA GPU Computing Toolkit/CUDA/v13.0"
-    - --cuda-gpu-arch=sm_75
-    - -DDEBUG=0
-    - -fms-compatibility
-    - -fms-compatibility-version=19.3
+    # clang ships its own list of CUDA releases it recognises and refuses newer
+    # ones outright. It parses them well enough for editing regardless.
+    - --no-cuda-version-check
+
+Diagnostics:
+  UnusedIncludes: Strict

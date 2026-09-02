@@ -15,6 +15,10 @@ install/
 bench-*.json
 *.benchmark.json
 
+# The copy clangd reads, put here by the build. Which build directory it came
+# from depends on the preset in use, so it is per-machine.
+/compile_commands.json
+
 # Per-machine presets: which compiler this particular box needs, where its
 # toolkit lives. CMake reads it alongside CMakePresets.json and it is not meant
 # to be shared.
