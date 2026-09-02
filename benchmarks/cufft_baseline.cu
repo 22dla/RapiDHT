@@ -4,12 +4,13 @@
  * Brief: The 3D Hartley transform via cuFFT, for comparison.
  */
 
-#include "cufft_baseline.h"
-
 #include <cuda_runtime.h>
 #include <cufft.h>
+
 #include <stdexcept>
 #include <string>
+
+#include "cufft_baseline.h"
 
 namespace rapidht_bench {
 namespace {

@@ -42,6 +42,7 @@
 #include <rapidht/transform.h>
 
 #include <benchmark/benchmark.h>
+
 #include <cmath>
 #include <cstring>
 #include <memory>
@@ -53,8 +54,9 @@
 #endif
 
 #ifdef RAPIDHT_WITH_CUDA
-#include "cufft_baseline.h"
 #include <cuda_runtime.h>
+
+#include "cufft_baseline.h"
 #endif
 
 using RapiDHT::HartleyTransform;
