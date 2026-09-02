@@ -8,7 +8,8 @@
 #ifndef RAPIDHT_TRANSFORM_H
 #define RAPIDHT_TRANSFORM_H
 
-#include <rapidht/config.h>
+#include <rapidht/config_flags.h>
+#include <rapidht/device_volume.h>
 
 #include <array>
 #include <cstdint>
@@ -18,33 +19,6 @@
 
 namespace RapiDHT {
 
-/// True when the library was built with the CUDA backend (Modes::GPU usable).
-#ifdef RAPIDHT_WITH_CUDA
-inline constexpr bool kCudaEnabled = true;
-#else
-inline constexpr bool kCudaEnabled = false;
-#endif
-
-/// True when the library was built with the MPI-distributed 3D backend.
-#ifdef RAPIDHT_WITH_MPI
-inline constexpr bool kMpiEnabled = true;
-#else
-inline constexpr bool kMpiEnabled = false;
-#endif
-
-/**
- * @brief Whether a usable CUDA device is actually present, right now.
- *
- * kCudaEnabled reports only that the backend was compiled in, which is a
- * different question: a machine can carry the toolkit and no card at all, which
- * is the normal state of a build server. Anything that will touch the device --
- * Modes::GPU, DeviceVolume -- needs this one, and it is the check to make
- * before offering the GPU backend to a user.
- *
- * Never throws; a driver too old for the runtime simply reports false.
- */
-bool IsGpuAvailable() noexcept;
-
 enum class Direction : size_t { Y = 0,
     X = 1,
     Z = 2,
@@ -52,64 +26,6 @@ enum class Direction : size_t { Y = 0,
 enum class Modes { CPU,
     GPU,
     RFFT };
-
-/**
- * @brief A volume held in device memory, so that repeated transforms do not
- *        copy it across the bus every time.
- *
- * The host-pointer overloads of ForwardTransform and InverseTransform upload
- * the data, transform it and download it again on every call. For a 512^3
- * volume that round trip costs roughly three times as much as the transform
- * itself, which makes it the dominant cost of any pipeline that applies more
- * than one operation. Uploading once and transforming in place removes it.
- *
- * The type is deliberately opaque: it names no CUDA type, so consuming this
- * header still requires no CUDA toolkit. It owns its allocation and is
- * move-only, since device memory cannot be duplicated implicitly.
- *
- * Constructing one in a build without CUDA throws std::runtime_error.
- */
-template <typename T>
-class DeviceVolume {
-public:
-    /**
-     * @brief Allocates room for `count` elements on the device.
-     * @param count Number of elements, which must match the transform's extent.
-     */
-    explicit DeviceVolume(size_t count);
-
-    ~DeviceVolume();
-    DeviceVolume(const DeviceVolume&) = delete;
-    DeviceVolume& operator=(const DeviceVolume&) = delete;
-    DeviceVolume(DeviceVolume&&) noexcept;
-    DeviceVolume& operator=(DeviceVolume&&) noexcept;
-
-    /**
-     * @brief Copies `count` elements from host memory onto the device.
-     * @param host Source buffer, at least Size() elements long.
-     */
-    void Upload(const T* host);
-
-    /**
-     * @brief Copies the volume back from the device into host memory.
-     * @param host Destination buffer, at least Size() elements long.
-     */
-    void Download(T* host) const;
-
-    /// Number of elements the volume holds.
-    size_t Size() const noexcept;
-
-private:
-    template <typename>
-    friend class HartleyTransform;
-
-    /// Raw device pointer, for the transform to work on. Typed as void* so the
-    /// header stays free of CUDA, and only ever handed to the implementation.
-    void* DeviceData() const noexcept;
-
-    struct Impl;
-    std::unique_ptr<Impl> _impl;
-};
 
 template <typename T>
 class HartleyTransform {

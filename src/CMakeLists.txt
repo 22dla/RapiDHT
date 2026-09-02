@@ -1,14 +1,18 @@
 find_package(OpenMP REQUIRED)
 
-# Explicit source list: the CUDA translation unit must only be compiled when
+# Explicit source list: the CUDA translation units must only be compiled when
 # the GPU backend is requested, which file(GLOB) cannot express.
 set(RAPIDHT_SOURCES
     transform.cpp
+    backend_cpu.cpp
+    device_volume.cpp
     utilities.cpp
 )
 
 if(RAPIDHT_WITH_CUDA)
-    list(APPEND RAPIDHT_SOURCES kernels.cu)
+    # backend_cuda.cpp drives cuBLAS and the runtime API but launches nothing
+    # itself, so it needs no device compiler; only kernels.cu does.
+    list(APPEND RAPIDHT_SOURCES backend_cuda.cpp kernels.cu)
 endif()
 
 add_library(coreht ${RAPIDHT_SOURCES})
