@@ -1,14 +1,14 @@
 /*
  * Project: RapiDHT
- * File: utilities.h
+ * File: include/rapidht/utilities.h
  * Brief: Вспомогательные утилиты: профилирование, генерация данных, парсинг аргументов.
  * Author: Волков Евгений Александрович, volkov22dla@yandex.ru
  */
 
-#ifndef UTILITIES_H
-#define UTILITIES_H
+#ifndef RAPIDHT_UTILITIES_H
+#define RAPIDHT_UTILITIES_H
 
-#include "rapidht.h"
+#include <rapidht/transform.h>
 #include <algorithm>
 #include <chrono>
 #include <cmath>
@@ -327,4 +327,4 @@ LoadingConfig ParseArgs(int argc, char** argv);
 
 } // namespace RapiDHT
 
-#endif // !UTILITIES_H
+#endif // !RAPIDHT_UTILITIES_H

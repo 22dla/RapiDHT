@@ -8,7 +8,7 @@
 #ifndef RAPIDHT_TEST_SUPPORT_H
 #define RAPIDHT_TEST_SUPPORT_H
 
-#include "rapidht.h"
+#include <rapidht/transform.h>
 
 #include <algorithm>
 #include <cmath>

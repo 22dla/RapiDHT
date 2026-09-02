@@ -1,21 +1,21 @@
 /*
  * Project: RapiDHT
- * File: rapidht.cpp
+ * File: src/transform.cpp
  * Brief: Реализация ND-преобразований Хартли (CPU/OpenMP и GPU/CUDA), транспонирования и Bracewell.
  * Author: Волков Евгений Александрович, volkov22dla@yandex.ru
  */
 
 // rapidht.h must come first: it pulls in the generated rapidht_config.h that
 // defines RAPIDHT_WITH_CUDA / RAPIDHT_WITH_MPI used by the guards below.
-#include "rapidht.h"
-#include "utilities.h"
+#include <rapidht/transform.h>
+#include <rapidht/utilities.h>
 
 #include <complex>
 #include <omp.h>
 
 #ifdef RAPIDHT_WITH_CUDA
-#include "dev_array.h"
-#include "kernel.h"
+#include "internal/device_array.h"
+#include "internal/kernels.h"
 #include <cublas_v2.h>
 #endif
 

@@ -1,5 +1,5 @@
-#include "rapidht.h"
-#include "utilities.h"
+#include <rapidht/transform.h>
+#include <rapidht/utilities.h>
 
 using namespace RapiDHT;
 

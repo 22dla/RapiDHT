@@ -1,6 +1,6 @@
-#include "rapidht.h"
+#include <rapidht/transform.h>
 #include "test_support.h" // SKIP_IF_NO_CUDA
-#include "utilities.h"
+#include <rapidht/utilities.h>
 #include <cmath>
 #include <gtest/gtest.h>
 #include <numeric>

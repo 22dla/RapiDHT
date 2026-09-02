@@ -1,6 +1,6 @@
 /*
  * Project: RapiDHT
- * File: kernel.h
+ * File: src/internal/kernels.h
  * Brief: Заголовок CUDA-обёрток и ядер для линейной алгебры и преобразования Хартли.
  * Author: Волков Евгений Александрович, volkov22dla@yandex.ru
  *
@@ -18,8 +18,8 @@
  * explicitly, which nothing did -- and no matching definition existed anyway.
  */
 
-#ifndef KERNEL_H
-#define KERNEL_H
+#ifndef RAPIDHT_INTERNAL_KERNELS_H
+#define RAPIDHT_INTERNAL_KERNELS_H
 
 #include <cstddef>
 
@@ -66,4 +66,4 @@ void InitializeHartleyMatrix(float* dKernel, size_t height);
 
 } // namespace RapiDHT
 
-#endif // KERNEL_H
+#endif // RAPIDHT_INTERNAL_KERNELS_H

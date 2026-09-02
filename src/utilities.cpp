@@ -1,4 +1,4 @@
-#include "utilities.h"
+#include <rapidht/utilities.h>
 
 #include <cstring> // strcmp -- previously pulled in transitively via <mpi.h>
 

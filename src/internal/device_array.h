@@ -1,12 +1,12 @@
 /*
  * Project: RapiDHT
- * File: dev_array.h
+ * File: src/internal/device_array.h
  * Brief: RAII-обёртка над памятью GPU (CUDA) для одномерных массивов.
  * Author: Волков Евгений Александрович, volkov22dla@yandex.ru
  */
 
-#ifndef DEV_ARRAY_H
-#define DEV_ARRAY_H
+#ifndef RAPIDHT_INTERNAL_DEVICE_ARRAY_H
+#define RAPIDHT_INTERNAL_DEVICE_ARRAY_H
 
 #include <algorithm>
 #include <cuda_runtime.h>
@@ -122,4 +122,4 @@ private:
     cudaStream_t stream_;
 };
 
-#endif // DEV_ARRAY_H
+#endif // RAPIDHT_INTERNAL_DEVICE_ARRAY_H

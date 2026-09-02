@@ -15,7 +15,7 @@
  * FFT-based alternatives do not pay.
  */
 
-#include "rapidht.h"
+#include <rapidht/transform.h>
 
 #include <chrono>
 #include <cmath>

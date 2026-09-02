@@ -1,14 +1,14 @@
 /*
  * Project: RapiDHT
- * File: rapidht.h
+ * File: include/rapidht/transform.h
  * Brief: Публичный API дискретного преобразования Хартли (1D/2D/3D), CPU/GPU режимы.
  * Author: Волков Евгений Александрович, volков22dla@yandex.ru
  */
 
-#ifndef RAPIDHT_H
-#define RAPIDHT_H
+#ifndef RAPIDHT_TRANSFORM_H
+#define RAPIDHT_TRANSFORM_H
 
-#include "rapidht_config.h"
+#include <rapidht/config.h>
 
 #include <array>
 #include <cstdint>
@@ -350,4 +350,4 @@ private:
 };
 } // namespace RapiDHT
 
-#endif // RAPIDHT_H
+#endif // RAPIDHT_TRANSFORM_H

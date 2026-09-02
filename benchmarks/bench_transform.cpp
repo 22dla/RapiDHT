@@ -39,7 +39,7 @@
  *   pays for an extra Bracewell pass, so it is doing strictly more work there.
  */
 
-#include "rapidht.h"
+#include <rapidht/transform.h>
 
 #include <benchmark/benchmark.h>
 #include <cmath>

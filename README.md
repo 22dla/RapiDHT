@@ -28,7 +28,7 @@ ctest --test-dir build --output-on-failure
 That is the CPU build — it needs no CUDA toolkit and no MPI.
 
 ```cpp
-#include "rapidht.h"
+#include <rapidht/transform.h>
 #include <vector>
 
 using namespace RapiDHT;
@@ -87,9 +87,11 @@ ForwardTransform
 ```
 
 ```
-include/            public headers — no CUDA type appears here
-source/             implementation and internal headers
+include/rapidht/    public headers — no CUDA type appears here
+src/                implementation
+    internal/       headers that are not installed
 tests/              GoogleTest suites, registered individually with CTest
+examples/           standalone demo programs
 benchmarks/         Google Benchmark harness, FFTW and cuFFT baselines
 docs/               benchmark report and figures
 ```

@@ -3,16 +3,17 @@ find_package(OpenMP REQUIRED)
 # Explicit source list: the CUDA translation unit must only be compiled when
 # the GPU backend is requested, which file(GLOB) cannot express.
 set(RAPIDHT_SOURCES
-    rapidht.cpp
+    transform.cpp
     utilities.cpp
 )
 
 if(RAPIDHT_WITH_CUDA)
-    list(APPEND RAPIDHT_SOURCES kernel.cu)
+    list(APPEND RAPIDHT_SOURCES kernels.cu)
 endif()
 
 add_library(coreht ${RAPIDHT_SOURCES})
 
+# PUBLIC: the OpenMP pragmas are in the headers as well as the sources.
 target_link_libraries(coreht PUBLIC OpenMP::OpenMP_CXX)
 
 if(RAPIDHT_WITH_CUDA)
@@ -26,6 +27,5 @@ if(RAPIDHT_WITH_MPI)
     target_link_libraries(coreht PUBLIC MPI::MPI_CXX)
 endif()
 
-# installing of library
 install(TARGETS coreht
         RUNTIME DESTINATION bin)

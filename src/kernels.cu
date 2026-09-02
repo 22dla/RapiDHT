@@ -1,13 +1,13 @@
 /*
  * Project: RapiDHT
- * File: kernel.cu
+ * File: src/kernels.cu
  * Brief: CUDA-ядра и хост-обёртки для матричных операций и преобразования Хартли.
  * Author: Волков Евгений Александрович, volkov22dla@yandex.ru
  */
 
-#include "dev_array.h"
+#include "internal/device_array.h"
 #include "device_launch_parameters.h"
-#include "kernel.h"
+#include "internal/kernels.h"
 
 // #ifndef TILE_DIM
 // #define TILE_DIM 32

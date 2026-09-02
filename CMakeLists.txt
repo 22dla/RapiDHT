@@ -52,14 +52,18 @@ endif()
 # ---------------------------------------------------------------------------
 # Generated feature-flag header
 # ---------------------------------------------------------------------------
+# Generated under a rapidht/ directory so that it is reached the same way as
+# every other public header, as <rapidht/config.h>.
 set(RAPIDHT_GENERATED_INCLUDE_DIR ${CMAKE_CURRENT_BINARY_DIR}/generated)
 configure_file(
     ${CMAKE_CURRENT_SOURCE_DIR}/cmake/rapidht_config.h.in
-    ${RAPIDHT_GENERATED_INCLUDE_DIR}/rapidht_config.h
+    ${RAPIDHT_GENERATED_INCLUDE_DIR}/rapidht/config.h
     @ONLY
 )
 
-# Include directories
+# Public headers are included as <rapidht/...>, so the search path is the
+# directory above them. Anything under src/internal is reached by relative
+# quoted include from within src/ and is deliberately not on this path.
 include_directories(include)
 include_directories(${RAPIDHT_GENERATED_INCLUDE_DIR})
 
@@ -67,14 +71,13 @@ if(ENABLE_PROFILING)
     add_compile_definitions(DEBUG)
 endif()
 
-# Add subdirectories
-add_subdirectory(source)
+add_subdirectory(src)
 
-# Enable testing
 enable_testing()
 
 if(RAPIDHT_BUILD_TESTS)
     add_subdirectory(tests)
+    add_subdirectory(examples)
 endif()
 
 if(RAPIDHT_BUILD_BENCHMARKS)
@@ -84,4 +87,4 @@ endif()
 # Install targets
 install(TARGETS coreht DESTINATION lib)
 install(DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/include/ DESTINATION include)
-install(FILES ${RAPIDHT_GENERATED_INCLUDE_DIR}/rapidht_config.h DESTINATION include)
+install(FILES ${RAPIDHT_GENERATED_INCLUDE_DIR}/rapidht/config.h DESTINATION include/rapidht)
