@@ -19,7 +19,7 @@ if(RAPIDHT_WITH_CUDA)
 endif()
 
 add_executable(bench_transform ${RAPIDHT_BENCH_SOURCES})
-target_link_libraries(bench_transform PRIVATE coreht benchmark::benchmark)
+target_link_libraries(bench_transform PRIVATE coreht benchmark::benchmark rapidht_warnings)
 
 # The PCIe round-trip case calls the CUDA runtime directly, to separate the
 # transfer from the transform, and the cuFFT baseline needs cuFFT. coreht keeps
@@ -30,7 +30,7 @@ endif()
 
 # Bare driver for nsys/ncu: one transform, in a loop, and nothing else.
 add_executable(profile_gpu3d profile_gpu3d.cpp)
-target_link_libraries(profile_gpu3d PRIVATE coreht)
+target_link_libraries(profile_gpu3d PRIVATE coreht rapidht_warnings)
 
 # Optional FFTW baseline. Ubuntu's libfftw3-dev ships a pkg-config file but no
 # CMake package config, so pkg-config is the reliable route.

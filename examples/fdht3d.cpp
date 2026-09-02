@@ -6,8 +6,7 @@ using namespace RapiDHT;
 int main(int argc, char** argv)
 {
     // ---- Обработка аргументов ----
-    // auto cfg = ParseArgs(argc, argv);
-    LoadingConfig cfg;
+    auto cfg = ParseArgs(argc, argv);
     cfg.width = 1 << 2;
     cfg.height = 1 << 3;
     cfg.depth = 1 << 4;

@@ -19,6 +19,7 @@ option(RAPIDHT_BUILD_TESTS "Build the test executables" ON)
 # so the default build stays buildable without network access.
 option(RAPIDHT_BUILD_BENCHMARKS "Build the benchmark executable" OFF)
 option(ENABLE_PROFILING "Enable function profiling" OFF)
+option(RAPIDHT_WARNINGS_AS_ERRORS "Turn compiler warnings into errors" OFF)
 
 # Set folder to installing
 set(CMAKE_INSTALL_PREFIX ${CMAKE_CURRENT_SOURCE_DIR}/install)
@@ -27,16 +28,32 @@ set(CMAKE_INSTALL_PREFIX ${CMAKE_CURRENT_SOURCE_DIR}/install)
 # Optional dependencies
 # ---------------------------------------------------------------------------
 if(RAPIDHT_WITH_CUDA)
+    # Must come before enable_language(CUDA), for two reasons. CMake fills
+    # CMAKE_CUDA_ARCHITECTURES in with a default there, so afterwards there is
+    # no way left to tell "the user asked for this" from "CMake guessed it";
+    # and targets read the variable when they are created, which is later
+    # still.
+    #
+    # That default is whatever nvcc considers oldest-supported -- 52 on CUDA
+    # 12.4. It builds Maxwell SASS and leaves every newer card to JIT our
+    # kernels from PTX at first launch, which is neither what anyone wants nor
+    # visible in the build log.
+    #
+    # "all-major" is one real architecture per generation the toolkit supports,
+    # so the result runs natively anywhere without a GPU having to be present
+    # at configure time -- "native" needs one, and so breaks CI runners that
+    # carry the toolkit but no card. It costs one nvcc pass per generation, on
+    # a single .cu file.
+    #
+    # Override for a local build with -DCMAKE_CUDA_ARCHITECTURES=native, or an
+    # explicit list such as "86".
+    if(NOT DEFINED CMAKE_CUDA_ARCHITECTURES AND CMAKE_VERSION VERSION_GREATER_EQUAL 3.23)
+        set(CMAKE_CUDA_ARCHITECTURES all-major)
+    endif()
+
     enable_language(CUDA)
     find_package(CUDAToolkit REQUIRED)
     message(STATUS "RapiDHT: CUDA backend ON (toolkit ${CUDAToolkit_VERSION})")
-
-    # Deliberately left to CMake, which derives a default from nvcc itself.
-    # Do not default this to "native": that resolves the architecture by
-    # querying an installed GPU, so it breaks on any machine that has the
-    # toolkit but no card -- build servers and CI runners included. Callers
-    # who do have a GPU can still pass -DCMAKE_CUDA_ARCHITECTURES=native, or
-    # an explicit list such as "80;86".
     message(STATUS "RapiDHT: CUDA architectures = ${CMAKE_CUDA_ARCHITECTURES}")
 else()
     message(STATUS "RapiDHT: CUDA backend OFF (Modes::GPU will throw at runtime)")
@@ -70,6 +87,30 @@ include_directories(${RAPIDHT_GENERATED_INCLUDE_DIR})
 
 if(ENABLE_PROFILING)
     add_compile_definitions(DEBUG)
+endif()
+
+# ---------------------------------------------------------------------------
+# Warnings
+# ---------------------------------------------------------------------------
+# An interface target rather than add_compile_options, which would also apply
+# to 3dparty/googletest: warnings in vendored code are not ours to fix, and
+# burying our own in that noise is how they came to be ignored in the first
+# place. Every RapiDHT target links this; nothing else does.
+#
+# Guarded by COMPILE_LANGUAGE:CXX because these flags reach nvcc otherwise,
+# which does not accept them directly -- host flags have to go through
+# -Xcompiler.
+add_library(rapidht_warnings INTERFACE)
+if(MSVC)
+    target_compile_options(rapidht_warnings INTERFACE $<$<COMPILE_LANGUAGE:CXX>:/W4>)
+    if(RAPIDHT_WARNINGS_AS_ERRORS)
+        target_compile_options(rapidht_warnings INTERFACE $<$<COMPILE_LANGUAGE:CXX>:/WX>)
+    endif()
+else()
+    target_compile_options(rapidht_warnings INTERFACE $<$<COMPILE_LANGUAGE:CXX>:-Wall;-Wextra>)
+    if(RAPIDHT_WARNINGS_AS_ERRORS)
+        target_compile_options(rapidht_warnings INTERFACE $<$<COMPILE_LANGUAGE:CXX>:-Werror>)
+    endif()
 endif()
 
 add_subdirectory(src)

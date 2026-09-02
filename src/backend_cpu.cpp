@@ -102,10 +102,15 @@ void HartleyTransform<T>::Series1D(T* data, Direction direction)
     }
 
     if (_mode == Modes::CPU) {
+        // Signed, and cast rather than made size_t: MSVC implements OpenMP 2.0,
+        // whose parallel-for index must be a signed integer. The comparison is
+        // what warned, so the bound is cast to match rather than the index
+        // changed to something MSVC would reject.
+        const int lineCount = static_cast<int>(M1);
 #pragma omp parallel for
-        for (int i = 0; i < M1; ++i) {
+        for (int i = 0; i < lineCount; ++i) {
             for (size_t j = 0; j < M2; ++j) {
-                auto index = AxisIndex(0, i, j, direction);
+                auto index = AxisIndex(0, static_cast<size_t>(i), j, direction);
                 FDHT1D(data + index, direction);
             }
         }

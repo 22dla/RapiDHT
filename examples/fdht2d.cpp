@@ -6,12 +6,10 @@ using namespace RapiDHT;
 int main(int argc, char** argv)
 {
     // ---- Обработка аргументов ----
-    // auto cfg = ParseArgs(argc, argv);
-    LoadingConfig cfg;
+    auto cfg = ParseArgs(argc, argv);
     cfg.width = 1 << 5;
     cfg.height = 1 << 10;
     // cfg.height = cfg.width;
-    cfg.mode = Modes::CPU;
 
     auto width = cfg.width;
     auto height = cfg.height;

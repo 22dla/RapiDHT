@@ -100,7 +100,6 @@ void HartleyTransform<T>::ForwardTransform(T* data)
 
     bool is1D = (Height() == 0 && Depth() == 0);
     bool is2D = (Height() > 0 && Depth() == 0);
-    bool is3D = (Depth() > 0);
 
     // Rank/size, если MPI собран и инициализирован хост-программой
     const MpiContext mpi = QueryMpi();
@@ -137,7 +136,7 @@ void HartleyTransform<T>::ForwardTransform(T* data)
     size_t depthPerProc = Depth() / size;
     size_t remainder = Depth() % size;
     size_t offset = rank * depthPerProc + std::min(static_cast<size_t>(rank), remainder);
-    depthPerProc += (rank < remainder) ? 1 : 0;
+    depthPerProc += (static_cast<size_t>(rank) < remainder) ? 1 : 0;
 
     T* localData = data + offset * Width() * Height();
 
@@ -158,7 +157,7 @@ void HartleyTransform<T>::ForwardTransform(T* data)
         std::vector<int> displs(size);
         int offs = 0;
         for (int i = 0; i < size; ++i) {
-            sendcounts[i] = static_cast<int>((Depth() / size + (i < remainder ? 1 : 0)) * Width() * Height());
+            sendcounts[i] = static_cast<int>((Depth() / size + (static_cast<size_t>(i) < remainder ? 1 : 0)) * Width() * Height());
             displs[i] = offs;
             offs += sendcounts[i];
         }
@@ -177,7 +176,6 @@ void HartleyTransform<T>::InverseTransform(T* data)
 
     bool is1D = (Height() == 0 && Depth() == 0);
     bool is2D = (Height() > 0 && Depth() == 0);
-    bool is3D = (Depth() > 0);
 
     const MpiContext mpi = QueryMpi();
     const int rank = mpi.rank;
@@ -210,7 +208,7 @@ void HartleyTransform<T>::InverseTransform(T* data)
     size_t depthPerProc = Depth() / size;
     size_t remainder = Depth() % size;
     size_t offset = rank * depthPerProc + std::min(static_cast<size_t>(rank), remainder);
-    depthPerProc += (rank < remainder) ? 1 : 0;
+    depthPerProc += (static_cast<size_t>(rank) < remainder) ? 1 : 0;
 
     size_t localSize = depthPerProc * Width() * Height();
     T* localData = data + offset * Width() * Height();

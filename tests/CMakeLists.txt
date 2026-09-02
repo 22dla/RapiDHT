@@ -19,7 +19,7 @@ set(RAPIDHT_TEST_SUITES
 
 foreach(SUITE ${RAPIDHT_TEST_SUITES})
     add_executable(${SUITE} "${SUITE}.cpp")
-    target_link_libraries(${SUITE} PRIVATE coreht gtest_main)
+    target_link_libraries(${SUITE} PRIVATE coreht gtest_main rapidht_warnings)
     gtest_discover_tests(${SUITE})
     install(TARGETS ${SUITE} DESTINATION bin)
 endforeach()

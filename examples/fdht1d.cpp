@@ -10,7 +10,6 @@ int main(int argc, char** argv)
     cfg.width = 1 << 10;
 
     auto width = cfg.width;
-    auto height = cfg.height;
     auto mode = cfg.mode;
 
     // ---- Создание данных ----

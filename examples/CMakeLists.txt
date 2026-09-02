@@ -9,6 +9,6 @@ set(RAPIDHT_EXAMPLES
 
 foreach(EXAMPLE ${RAPIDHT_EXAMPLES})
     add_executable(${EXAMPLE} "${EXAMPLE}.cpp")
-    target_link_libraries(${EXAMPLE} PRIVATE coreht)
+    target_link_libraries(${EXAMPLE} PRIVATE coreht rapidht_warnings)
     install(TARGETS ${EXAMPLE} DESTINATION bin)
 endforeach()
