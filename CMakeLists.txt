@@ -69,8 +69,48 @@ if(RAPIDHT_WITH_CUDA)
         set(CMAKE_CUDA_HOST_COMPILER "${CMAKE_CXX_COMPILER}")
     endif()
 
-    enable_language(CUDA)
+    # Ask nvcc whether it will accept that host compiler, before
+    # enable_language(CUDA) does it for us. It refuses with a clear enough
+    # message of its own, but wrapped in a CMake compiler-identification
+    # failure and a stack trace through three CMake modules, which buries what
+    # to do about it. Probing first turns that into one paragraph.
+    #
+    # CUDAToolkit is found before the language is enabled, which it supports,
+    # precisely so nvcc can be located for this.
     find_package(CUDAToolkit REQUIRED)
+
+    set(RAPIDHT_CUDA_PROBE ${CMAKE_CURRENT_BINARY_DIR}/rapidht_host_compiler_probe.cu)
+    file(WRITE ${RAPIDHT_CUDA_PROBE} "#include <cuda_runtime.h>\nint main() { return 0; }\n")
+    execute_process(
+        COMMAND ${CUDAToolkit_NVCC_EXECUTABLE}
+                -ccbin ${CMAKE_CUDA_HOST_COMPILER} -E ${RAPIDHT_CUDA_PROBE}
+        RESULT_VARIABLE RAPIDHT_CUDA_PROBE_RESULT
+        OUTPUT_QUIET
+        ERROR_VARIABLE RAPIDHT_CUDA_PROBE_ERROR
+    )
+    if(NOT RAPIDHT_CUDA_PROBE_RESULT EQUAL 0)
+        message(FATAL_ERROR
+            "CUDA ${CUDAToolkit_VERSION} will not accept the C++ compiler this "
+            "build uses.\n"
+            "  C++ compiler: ${CMAKE_CXX_COMPILER} "
+            "(${CMAKE_CXX_COMPILER_ID} ${CMAKE_CXX_COMPILER_VERSION})\n"
+            "  nvcc:         ${CUDAToolkit_NVCC_EXECUTABLE}\n"
+            "Every toolkit caps the host compiler version it supports. Letting "
+            "nvcc fall back to one it likes is not a fix: the distribution's "
+            "CUDA package ships its own compiler and puts it first on PATH, so "
+            "the device code would be built with one and every .cpp with "
+            "another, and the two ABIs linked together. That fails later, at "
+            "link time, in optimised builds only.\n"
+            "Either build everything with a compiler this toolkit accepts:\n"
+            "  cmake -S . -B build -DRAPIDHT_WITH_CUDA=ON "
+            "-DCMAKE_C_COMPILER=gcc-13 -DCMAKE_CXX_COMPILER=g++-13\n"
+            "or install a newer toolkit from NVIDIA rather than the "
+            "distribution package. Build without -DRAPIDHT_WITH_CUDA=ON to "
+            "skip the GPU backend entirely.\n"
+            "nvcc reported:\n${RAPIDHT_CUDA_PROBE_ERROR}")
+    endif()
+
+    enable_language(CUDA)
     message(STATUS "RapiDHT: CUDA backend ON (toolkit ${CUDAToolkit_VERSION})")
     message(STATUS "RapiDHT: CUDA architectures = ${CMAKE_CUDA_ARCHITECTURES}")
     message(STATUS "RapiDHT: CUDA host compiler = ${CMAKE_CUDA_HOST_COMPILER}")

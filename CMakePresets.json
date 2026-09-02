@@ -1,0 +1,63 @@
+{
+  "version": 3,
+  "cmakeMinimumRequired": { "major": 3, "minor": 19, "patch": 0 },
+  "configurePresets": [
+    {
+      "name": "base",
+      "hidden": true,
+      "binaryDir": "${sourceDir}/build-${presetName}",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Release",
+        "CMAKE_EXPORT_COMPILE_COMMANDS": "ON"
+      }
+    },
+    {
+      "name": "cpu",
+      "inherits": "base",
+      "displayName": "CPU only",
+      "description": "The default build: OpenMP, tests, no CUDA and no MPI."
+    },
+    {
+      "name": "cuda",
+      "inherits": "base",
+      "displayName": "CPU + CUDA",
+      "description": "Adds the GPU backend. Needs a toolkit that accepts your C++ compiler; if it does not, configuring says so and what to do.",
+      "cacheVariables": { "RAPIDHT_WITH_CUDA": "ON" }
+    },
+    {
+      "name": "bench",
+      "inherits": "cuda",
+      "displayName": "Benchmarks",
+      "description": "CUDA plus the benchmark harness. Fetches Google Benchmark, so this one needs network access.",
+      "cacheVariables": { "RAPIDHT_BUILD_BENCHMARKS": "ON" }
+    },
+    {
+      "name": "dev",
+      "inherits": "cuda",
+      "displayName": "Development",
+      "description": "Debug, with warnings as errors.",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Debug",
+        "RAPIDHT_WARNINGS_AS_ERRORS": "ON"
+      }
+    }
+  ],
+  "buildPresets": [
+    { "name": "cpu", "configurePreset": "cpu" },
+    { "name": "cuda", "configurePreset": "cuda" },
+    { "name": "bench", "configurePreset": "bench" },
+    { "name": "dev", "configurePreset": "dev" }
+  ],
+  "testPresets": [
+    {
+      "name": "cpu",
+      "configurePreset": "cpu",
+      "output": { "outputOnFailure": true }
+    },
+    {
+      "name": "cuda",
+      "configurePreset": "cuda",
+      "output": { "outputOnFailure": true }
+    }
+  ]
+}
