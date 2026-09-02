@@ -123,6 +123,13 @@ NVIDIA driver, or an MPI implementation.
 cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DRAPIDHT_WITH_CUDA=ON
 ```
 
+Or use a preset, which saves retyping the options every time a build directory
+is recreated — `cpu`, `cuda`, `bench` and `dev`:
+
+```bash
+cmake --preset bench && cmake --build --preset bench -j
+```
+
 `CMAKE_CUDA_ARCHITECTURES` defaults to `all-major`: one real architecture per
 generation the toolkit supports, so the binary runs natively on any of them.
 Pass `native` for a faster build targeting only the card in this machine —
@@ -149,6 +156,26 @@ default.
 >
 > or install a newer toolkit from NVIDIA's repository instead of the
 > distribution package, which is what CI does.
+>
+> To make the choice stick — an IDE picks a preset and passes no compiler of
+> its own, so it will hit this every time — put it in a `CMakeUserPresets.json`
+> next to `CMakePresets.json`. That file is per-machine and is not committed:
+>
+> ```json
+> {
+>   "version": 3,
+>   "configurePresets": [
+>     {
+>       "name": "cuda-local",
+>       "inherits": "cuda",
+>       "cacheVariables": {
+>         "CMAKE_C_COMPILER": "/usr/bin/gcc-13",
+>         "CMAKE_CXX_COMPILER": "/usr/bin/g++-13"
+>       }
+>     }
+>   ]
+> }
+> ```
 
 Which backends were compiled in is recorded in the generated
 `rapidht_config.h` and exposed as `RapiDHT::kCudaEnabled` and
@@ -163,13 +190,15 @@ At 512³ in single precision, with the volume resident on the device:
 
 | | time | vs CPU |
 | --- | ---: | ---: |
-| CPU, 6 cores | 4 156 ms | — |
-| **GPU, resident** | **58 ms** | **71×** |
-| cuFFT + conversion | 12 ms | 348× |
+| CPU, 6 cores | 3.8–4.2 s | — |
+| **GPU, resident** | **58 ms** | **66–71×** |
+| cuFFT + conversion | 12 ms | ~330× |
 
-The GPU backend is 71× the CPU one and 4.9× behind cuFFT, while needing half
-cuFFT's extra device memory. The full picture, including profiling and an
-extrapolation to datacentre hardware, is in **[docs/benchmarks.md](docs/benchmarks.md)**.
+The GPU backend is 66–71× the CPU one and 4.9× behind cuFFT, while needing half
+cuFFT's extra device memory. The device figures repeat to under 1% across runs;
+the CPU one is a range because that machine has frequency scaling on. The full
+picture, including profiling and an extrapolation to datacentre hardware, is in
+**[docs/benchmarks.md](docs/benchmarks.md)**.
 
 ---
 

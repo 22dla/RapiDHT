@@ -128,6 +128,10 @@ if(RAPIDHT_WITH_CUDA)
                 "or install a newer toolkit from NVIDIA rather than the "
                 "distribution package. Build without -DRAPIDHT_WITH_CUDA=ON to "
                 "skip the GPU backend entirely.\n"
+                "To make the choice stick -- including for IDEs, which pick a "
+                "preset and pass no compiler of their own -- put it in a "
+                "CMakeUserPresets.json inheriting from the cuda or bench preset. "
+                "That file is per-machine and is not committed.\n"
                 "nvcc reported:\n${RAPIDHT_CUDA_PROBE_ERROR}")
         endif()
     endif()

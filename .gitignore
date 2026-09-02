@@ -15,6 +15,11 @@ install/
 bench-*.json
 *.benchmark.json
 
+# Per-machine presets: which compiler this particular box needs, where its
+# toolkit lives. CMake reads it alongside CMakePresets.json and it is not meant
+# to be shared.
+CMakeUserPresets.json
+
 # FUSE leaves these behind when a file is replaced while another process still
 # holds it open -- editing the working tree across a network or WSL mount is
 # enough to produce them. They are stale copies, and five of them got committed
