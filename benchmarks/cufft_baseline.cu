@@ -87,7 +87,8 @@ struct CufftHartley::Impl {
     }
 };
 
-CufftHartley::CufftHartley(int width, int height, int depth): _impl(std::make_unique<Impl>())
+CufftHartley::CufftHartley(int width, int height, int depth):
+    _impl(std::make_unique<Impl>())
 {
     _impl->width = width;
     _impl->height = height;

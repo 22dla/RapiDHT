@@ -14,3 +14,9 @@ install/
 # Benchmark output
 bench-*.json
 *.benchmark.json
+
+# FUSE leaves these behind when a file is replaced while another process still
+# holds it open -- editing the working tree across a network or WSL mount is
+# enough to produce them. They are stale copies, and five of them got committed
+# by a `git add -A`.
+.fuse_hidden*

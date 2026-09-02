@@ -12,6 +12,34 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  format:
+    name: Formatting
+    runs-on: ubuntu-24.04
+
+    steps:
+      - name: Check out the repository
+        uses: actions/checkout@v4
+
+      # Pinned to a major version on purpose. clang-format's output shifts
+      # between releases, so an unpinned "latest" would eventually reformat the
+      # tree out from under everyone and fail on code nobody touched. Bump this
+      # deliberately, in a commit that also reformats.
+      - name: Install clang-format
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends clang-format-18
+
+      - name: Report the version
+        run: clang-format-18 --version
+
+      # Everything we own, which is everything outside 3dparty. --dry-run with
+      # -Werror reports the diff and exits non-zero rather than editing files.
+      - name: Check formatting
+        run: |
+          git ls-files -z '*.h' '*.cpp' '*.cu' \
+            | grep -zv '^3dparty/' \
+            | xargs -0 clang-format-18 --dry-run -Werror
+
   build-and-test:
     name: ${{ matrix.name }}
     runs-on: ${{ matrix.os }}

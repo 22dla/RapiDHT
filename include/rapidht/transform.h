@@ -268,7 +268,7 @@ private:
      */
     void BuildTwiddleTable(Direction direction);
 
-    std::array<size_t, static_cast<size_t>(Direction::Count)> _dims { };
+    std::array<size_t, static_cast<size_t>(Direction::Count)> _dims {};
     std::array<std::vector<size_t>, static_cast<size_t>(Direction::Count)> _bitReversedIndices;
 
     Modes _mode = Modes::CPU;
