@@ -6,7 +6,6 @@
  */
 
 #include "device_launch_parameters.h"
-#include "internal/device_array.h"
 #include "internal/kernels.h"
 
 // #ifndef TILE_DIM
@@ -21,7 +20,7 @@
 namespace RapiDHT {
 
 template <typename T>
-__global__ void transpose_YZ_kernel(const T* __restrict__ in, T* __restrict__ out, int W, int H, int D)
+__global__ void TransposeYZKernel(const T* __restrict__ in, T* __restrict__ out, int W, int H, int D)
 {
     int bx = blockIdx.x * blockDim.x;
     int by = blockIdx.y * blockDim.y;
@@ -48,7 +47,7 @@ __global__ void transpose_YZ_kernel(const T* __restrict__ in, T* __restrict__ ou
 }
 
 template <typename T>
-__global__ void MatrixMultiplicationKernelShared(const T* __restrict__ A, const T* __restrict__ B,
+__global__ void MatrixMultiplicationSharedKernel(const T* __restrict__ A, const T* __restrict__ B,
     T* __restrict__ C, int M, int K, int N)
 {
     const int BLOCK_SIZE = 16;
@@ -89,7 +88,7 @@ __global__ void MatrixMultiplicationKernelShared(const T* __restrict__ A, const 
 }
 
 template <typename T>
-__global__ void MatrixVectorMultKernel(const T* A, const T* x, T* y, int N)
+__global__ void VectorMatrixMultiplicationKernel(const T* A, const T* x, T* y, int N)
 {
     int i = blockIdx.x * blockDim.x + threadIdx.x;
     if (i < N) {
@@ -161,7 +160,7 @@ __global__ void ScaleKernel(T* data, size_t count, T factor)
  * exactly; the tests compare both backends against the same reference.
  */
 template <typename T>
-__global__ void BracewellTransform2D_Kernel(const T* __restrict__ in, T* __restrict__ out, int W, int H)
+__global__ void BracewellTransform2DKernel(const T* __restrict__ in, T* __restrict__ out, int W, int H)
 {
     int x = blockIdx.x * blockDim.x + threadIdx.x;
     int y = blockIdx.y * blockDim.y + threadIdx.y;
@@ -182,7 +181,7 @@ __global__ void BracewellTransform2D_Kernel(const T* __restrict__ in, T* __restr
 }
 
 template <typename T>
-__global__ void BracewellTransform3D_Kernel(const T* __restrict__ in, T* __restrict__ out, int W, int H, int D)
+__global__ void BracewellTransform3DKernel(const T* __restrict__ in, T* __restrict__ out, int W, int H, int D)
 {
     int x = blockIdx.x * blockDim.x + threadIdx.x;
     int y = blockIdx.y * blockDim.y + threadIdx.y;
@@ -211,8 +210,8 @@ __global__ void InitializeHartleyMatrixKernel(double* kernel, size_t height)
     size_t j = blockIdx.x * blockDim.x + threadIdx.x;
 
     if (k < height && j < height) {
-        const double m_pi = 3.14159265358979323846;
-        kernel[k * height + j] = cos(2.0 * m_pi * k * j / height) + sin(2.0 * m_pi * k * j / height);
+        const double kPi = 3.14159265358979323846;
+        kernel[k * height + j] = cos(2.0 * kPi * k * j / height) + sin(2.0 * kPi * k * j / height);
     }
 }
 
@@ -222,20 +221,20 @@ __global__ void InitializeHartleyMatrixKernel(float* kernel, size_t height)
     size_t j = blockIdx.x * blockDim.x + threadIdx.x;
 
     if (k < height && j < height) {
-        const float m_pi = 3.14159265358979323846f;
-        kernel[k * height + j] = cosf(2.0f * m_pi * k * j / height) + sinf(2.0f * m_pi * k * j / height);
+        const float kPi = 3.14159265358979323846f;
+        kernel[k * height + j] = cosf(2.0f * kPi * k * j / height) + sinf(2.0f * kPi * k * j / height);
     }
 }
 
 // ------------------------------ Host Wrappers ------------------------------
 
 template <typename T>
-void transpose_YZ_cuda(const T* d_in, T* d_out, int W, int H, int D)
+void TransposeYZ(const T* deviceIn, T* deviceOut, int W, int H, int D)
 {
     dim3 block(8, 8, 8);
     dim3 grid((W + block.x - 1) / block.x, (H + block.y - 1) / block.y, (D + block.z - 1) / block.z);
 
-    transpose_YZ_kernel<T><<<grid, block>>>(d_in, d_out, W, H, D);
+    TransposeYZKernel<T><<<grid, block>>>(deviceIn, deviceOut, W, H, D);
     cudaDeviceSynchronize();
 }
 
@@ -249,7 +248,7 @@ void MatrixMultiplication(const T* A, const T* B, T* C, int M, int K, int N)
         (M + BLOCK_SIZE - 1) / BLOCK_SIZE);
 
     // MatrixMultiplicationKernel << <blocksPerGrid, threadsPerBlock >> > (A, B, C, M, K, N);
-    MatrixMultiplicationKernelShared<<<blocksPerGrid, threadsPerBlock>>>(A, B, C, M, K, N);
+    MatrixMultiplicationSharedKernel<<<blocksPerGrid, threadsPerBlock>>>(A, B, C, M, K, N);
 
     cudaDeviceSynchronize();
 }
@@ -260,7 +259,7 @@ void VectorMatrixMultiplication(const T* A, const T* x, T* y, int N)
     int threadsPerBlock = (N > 512) ? 512 : N;
     int blocksPerGrid = (N + threadsPerBlock - 1) / threadsPerBlock;
 
-    MatrixVectorMultKernel<<<blocksPerGrid, threadsPerBlock>>>(A, x, y, N);
+    VectorMatrixMultiplicationKernel<<<blocksPerGrid, threadsPerBlock>>>(A, x, y, N);
     cudaDeviceSynchronize();
 }
 
@@ -278,17 +277,17 @@ void MatrixTranspose(const T* A, T* B, int rows, int cols)
 }
 
 template <typename T>
-void ScaleOnDevice(T* d_data, size_t count, T factor)
+void ScaleOnDevice(T* deviceData, size_t count, T factor)
 {
     const int threads = 256;
     const size_t blocks = (count + threads - 1) / threads;
 
-    ScaleKernel<<<static_cast<unsigned int>(blocks), threads>>>(d_data, count, factor);
+    ScaleKernel<<<static_cast<unsigned int>(blocks), threads>>>(deviceData, count, factor);
     cudaDeviceSynchronize();
 }
 
 template <typename T>
-void MatrixTransposeBatched(const T* d_in, T* d_out, int rows, int cols, int batch)
+void MatrixTransposeBatched(const T* deviceIn, T* deviceOut, int rows, int cols, int batch)
 {
     const int BLOCK_SIZE = 16;
     dim3 threadsPerBlock(BLOCK_SIZE, BLOCK_SIZE);
@@ -296,53 +295,53 @@ void MatrixTransposeBatched(const T* d_in, T* d_out, int rows, int cols, int bat
         (rows + BLOCK_SIZE - 1) / BLOCK_SIZE,
         batch);
 
-    MatrixTransposeBatchedKernel<<<blocksPerGrid, threadsPerBlock>>>(d_in, d_out, rows, cols, batch);
+    MatrixTransposeBatchedKernel<<<blocksPerGrid, threadsPerBlock>>>(deviceIn, deviceOut, rows, cols, batch);
     cudaDeviceSynchronize();
 }
 
 template <typename T>
-void BracewellTransform2D(const T* d_in, T* d_out, int W, int H)
+void BracewellTransform2D(const T* deviceIn, T* deviceOut, int W, int H)
 {
     dim3 blockDim(16, 16);
     dim3 gridDim((W + blockDim.x - 1) / blockDim.x,
         (H + blockDim.y - 1) / blockDim.y);
 
-    BracewellTransform2D_Kernel<<<gridDim, blockDim>>>(d_in, d_out, W, H);
+    BracewellTransform2DKernel<<<gridDim, blockDim>>>(deviceIn, deviceOut, W, H);
     cudaDeviceSynchronize();
 }
 
 template <typename T>
-void BracewellTransform3D(const T* d_in, T* d_out, int W, int H, int D)
+void BracewellTransform3D(const T* deviceIn, T* deviceOut, int W, int H, int D)
 {
     dim3 blockDim(8, 8, 8); // можно подбирать под вашу карту
     dim3 gridDim((W + blockDim.x - 1) / blockDim.x,
         (H + blockDim.y - 1) / blockDim.y,
         (D + blockDim.z - 1) / blockDim.z);
 
-    BracewellTransform3D_Kernel<<<gridDim, blockDim>>>(d_in, d_out, W, H, D);
+    BracewellTransform3DKernel<<<gridDim, blockDim>>>(deviceIn, deviceOut, W, H, D);
     cudaDeviceSynchronize();
 }
 
-void InitializeHartleyMatrix(double* dKernel, size_t height)
+void InitializeHartleyMatrix(double* deviceMatrix, size_t height)
 {
     dim3 block(16, 16);
     dim3 grid((height + block.x - 1) / block.x, (height + block.y - 1) / block.y);
 
-    InitializeHartleyMatrixKernel<<<grid, block>>>(dKernel, height);
+    InitializeHartleyMatrixKernel<<<grid, block>>>(deviceMatrix, height);
     cudaDeviceSynchronize();
 }
 
-void InitializeHartleyMatrix(float* dKernel, size_t height)
+void InitializeHartleyMatrix(float* deviceMatrix, size_t height)
 {
     dim3 block(16, 16);
     dim3 grid((height + block.x - 1) / block.x, (height + block.y - 1) / block.y);
 
-    InitializeHartleyMatrixKernel<<<grid, block>>>(dKernel, height);
+    InitializeHartleyMatrixKernel<<<grid, block>>>(deviceMatrix, height);
     cudaDeviceSynchronize();
 }
 
-template void transpose_YZ_cuda<float>(const float* d_in, float* d_out, int W, int H, int D);
-template void transpose_YZ_cuda<double>(const double* d_in, double* d_out, int W, int H, int D);
+template void TransposeYZ<float>(const float* deviceIn, float* deviceOut, int W, int H, int D);
+template void TransposeYZ<double>(const double* deviceIn, double* deviceOut, int W, int H, int D);
 
 // Общая матричная операция
 template void MatrixMultiplication<float>(const float* A, const float* B, float* C, int M, int K, int N);
@@ -352,21 +351,21 @@ template void MatrixMultiplication<double>(const double* A, const double* B, dou
 template void MatrixTranspose<float>(const float* A, float* B, int rows, int cols);
 template void MatrixTranspose<double>(const double* A, double* B, int rows, int cols);
 
-template void MatrixTransposeBatched<float>(const float* d_in, float* d_out, int rows, int cols, int batch);
-template void MatrixTransposeBatched<double>(const double* d_in, double* d_out, int rows, int cols, int batch);
+template void MatrixTransposeBatched<float>(const float* deviceIn, float* deviceOut, int rows, int cols, int batch);
+template void MatrixTransposeBatched<double>(const double* deviceIn, double* deviceOut, int rows, int cols, int batch);
 
-template void ScaleOnDevice<float>(float* d_data, size_t count, float factor);
-template void ScaleOnDevice<double>(double* d_data, size_t count, double factor);
+template void ScaleOnDevice<float>(float* deviceData, size_t count, float factor);
+template void ScaleOnDevice<double>(double* deviceData, size_t count, double factor);
 
 // Умножение вектор-матрица
 template void VectorMatrixMultiplication<float>(const float* A, const float* x, float* y, int N);
 template void VectorMatrixMultiplication<double>(const double* A, const double* x, double* y, int N);
 
 // 3D преобразование Брэсвелла
-template void BracewellTransform2D<float>(const float* d_in, float* d_out, int W, int H);
-template void BracewellTransform2D<double>(const double* d_in, double* d_out, int W, int H);
+template void BracewellTransform2D<float>(const float* deviceIn, float* deviceOut, int W, int H);
+template void BracewellTransform2D<double>(const double* deviceIn, double* deviceOut, int W, int H);
 
-template void BracewellTransform3D<float>(const float* d_in, float* d_out, int W, int H, int D);
-template void BracewellTransform3D<double>(const double* d_in, double* d_out, int W, int H, int D);
+template void BracewellTransform3D<float>(const float* deviceIn, float* deviceOut, int W, int H, int D);
+template void BracewellTransform3D<double>(const double* deviceIn, double* deviceOut, int W, int H, int D);
 
 } // namespace RapiDHT

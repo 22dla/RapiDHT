@@ -18,15 +18,15 @@
 namespace RapiDHT {
 
 template <typename T>
-void HartleyTransform<T>::DHT1DCuda(T* h_x)
+void HartleyTransform<T>::DHT1DCuda(T* hostData)
 {
     PROFILE_FUNCTION();
 
     // Buffers live in Impl and are allocated once with the object, not on
     // every call.
-    _impl->scratchA.set(h_x, Width());
-    DHT1DOnDevice(_impl->scratchA.getData(), _impl->scratchB.getData());
-    _impl->scratchA.get(h_x, Width());
+    _impl->scratchA.Upload(hostData, Width());
+    DHT1DOnDevice(_impl->scratchA.Data(), _impl->scratchB.Data());
+    _impl->scratchA.Download(hostData, Width());
 }
 
 template <typename T>
@@ -34,24 +34,24 @@ void HartleyTransform<T>::DHT1DOnDevice(T* deviceInOut, T* deviceScratch)
 {
     PROFILE_FUNCTION();
 
-    VectorMatrixMultiplication(_impl->transformMatrices[static_cast<size_t>(Direction::Y)].getData(),
+    VectorMatrixMultiplication(_impl->transformMatrices[static_cast<size_t>(Direction::Y)].Data(),
         deviceInOut, deviceScratch, Width());
 
     // The multiply cannot write in place, so the answer lands in the scratch
     // buffer and has to come back to satisfy this method's contract.
-    CUDA_CHECK(cudaMemcpy(deviceInOut, deviceScratch, Width() * sizeof(T), cudaMemcpyDeviceToDevice));
+    RAPIDHT_CUDA_CHECK(cudaMemcpy(deviceInOut, deviceScratch, Width() * sizeof(T), cudaMemcpyDeviceToDevice));
 }
 
 template <typename T>
-void HartleyTransform<T>::DHT2DCuda(T* h_X)
+void HartleyTransform<T>::DHT2DCuda(T* hostData)
 {
     PROFILE_FUNCTION();
 
     const size_t sliceSize = Width() * Height();
 
-    _impl->scratchA.set(h_X, sliceSize);
-    DHT2DOnDevice(_impl->scratchA.getData(), _impl->scratchB.getData());
-    _impl->scratchA.get(h_X, sliceSize);
+    _impl->scratchA.Upload(hostData, sliceSize);
+    DHT2DOnDevice(_impl->scratchA.Data(), _impl->scratchB.Data());
+    _impl->scratchA.Download(hostData, sliceSize);
 }
 
 template <typename T>
@@ -60,8 +60,6 @@ void HartleyTransform<T>::DHT2DOnDevice(T* deviceInOut, T* deviceScratch)
     PROFILE_FUNCTION();
 
     const size_t sliceSize = Width() * Height();
-    T* d_X = deviceInOut;
-    T* d_Y = deviceScratch;
 
     // The slice is Height() rows of Width() elements, so the first pass runs
     // along the fast axis and must use the Width()-sized matrix -- that is
@@ -71,22 +69,22 @@ void HartleyTransform<T>::DHT2DOnDevice(T* deviceInOut, T* deviceScratch)
     // the multiply disagree with the size of the matrix: on any non-square
     // extent the kernel read past the end of the transform matrix, which is
     // why 8x4 and 16x8 produced stable garbage while 4x4 happened to work.
-    MatrixMultiplication(d_X, _impl->transformMatrices[static_cast<size_t>(Direction::Y)].getData(),
-        d_Y, Height(), Width(), Width());
-    MatrixTranspose(d_Y, d_X, Height(), Width());
+    MatrixMultiplication(deviceInOut, _impl->transformMatrices[static_cast<size_t>(Direction::Y)].Data(),
+        deviceScratch, Height(), Width(), Width());
+    MatrixTranspose(deviceScratch, deviceInOut, Height(), Width());
 
-    MatrixMultiplication(d_X, _impl->transformMatrices[static_cast<size_t>(Direction::X)].getData(),
-        d_Y, Width(), Height(), Height());
-    MatrixTranspose(d_Y, d_X, Width(), Height());
+    MatrixMultiplication(deviceInOut, _impl->transformMatrices[static_cast<size_t>(Direction::X)].Data(),
+        deviceScratch, Width(), Height(), Height());
+    MatrixTranspose(deviceScratch, deviceInOut, Width(), Height());
 
     // Without this the GPU produced the separable transform while the CPU
     // produced the true multidimensional one: the two backends computed
     // different functions for every extent except 1D.
-    BracewellTransform2D(d_X, d_Y, static_cast<int>(Width()), static_cast<int>(Height()));
+    BracewellTransform2D(deviceInOut, deviceScratch, static_cast<int>(Width()), static_cast<int>(Height()));
 
     // The correction reads mirrored points and so cannot write in place; bring
     // the answer back to satisfy this method's contract.
-    CUDA_CHECK(cudaMemcpy(d_X, d_Y, sliceSize * sizeof(T), cudaMemcpyDeviceToDevice));
+    RAPIDHT_CUDA_CHECK(cudaMemcpy(deviceInOut, deviceScratch, sliceSize * sizeof(T), cudaMemcpyDeviceToDevice));
 }
 
 namespace {
@@ -120,15 +118,15 @@ struct CublasGemmStridedBatched<double> {
 } // namespace
 
 template <typename T>
-void HartleyTransform<T>::DHT3DCuda(T* h_X)
+void HartleyTransform<T>::DHT3DCuda(T* hostData)
 {
     PROFILE_FUNCTION();
 
     const size_t totalSize = Width() * Height() * Depth();
 
-    _impl->scratchA.set(h_X, totalSize);
-    DHT3DOnDevice(_impl->scratchA.getData(), _impl->scratchB.getData());
-    _impl->scratchA.get(h_X, totalSize);
+    _impl->scratchA.Upload(hostData, totalSize);
+    DHT3DOnDevice(_impl->scratchA.Data(), _impl->scratchB.Data());
+    _impl->scratchA.Download(hostData, totalSize);
 }
 
 template <typename T>
@@ -140,8 +138,6 @@ void HartleyTransform<T>::DHT3DOnDevice(T* deviceInOut, T* deviceScratch)
     auto H = Height();
     auto D = Depth();
 
-    T* d_X = deviceInOut;
-    T* d_Y = deviceScratch;
 
     cublasHandle_t handle;
     cublasCreate(&handle);
@@ -154,7 +150,7 @@ void HartleyTransform<T>::DHT3DOnDevice(T* deviceInOut, T* deviceScratch)
     // One launch instead of one per slice. Profiling 512^3 showed 1024 geam
     // launches per transform against 3 GEMMs, with the device idle for 83% of
     // the wall time waiting between them.
-    MatrixTransposeBatched(d_X, d_Y, static_cast<int>(H), static_cast<int>(W),
+    MatrixTransposeBatched(deviceInOut, deviceScratch, static_cast<int>(H), static_cast<int>(W),
         static_cast<int>(D));
 
     // -------------------------------
@@ -174,13 +170,13 @@ void HartleyTransform<T>::DHT3DOnDevice(T* deviceInOut, T* deviceScratch)
 
         int batchCount = D;
 
-        CublasGemmStridedBatched<T>::call(handle, CUBLAS_OP_N, CUBLAS_OP_N, m, n, k, &alpha, d_Y, lda,
-            strideA, _impl->transformMatrices[(size_t)Direction::Y].getData(), ldb, strideB,
-            &beta, d_X, ldc, strideC, batchCount);
+        CublasGemmStridedBatched<T>::call(handle, CUBLAS_OP_N, CUBLAS_OP_N, m, n, k, &alpha, deviceScratch, lda,
+            strideA, _impl->transformMatrices[(size_t)Direction::Y].Data(), ldb, strideB,
+            &beta, deviceInOut, ldc, strideC, batchCount);
     }
 
     // Транспонируем
-    MatrixTransposeBatched(d_X, d_Y, static_cast<int>(W), static_cast<int>(H),
+    MatrixTransposeBatched(deviceInOut, deviceScratch, static_cast<int>(W), static_cast<int>(H),
         static_cast<int>(D));
 
     // -------------------------------
@@ -200,9 +196,9 @@ void HartleyTransform<T>::DHT3DOnDevice(T* deviceInOut, T* deviceScratch)
 
         int batchCount = D;
 
-        CublasGemmStridedBatched<T>::call(handle, CUBLAS_OP_N, CUBLAS_OP_N, m, n, k, &alpha, d_Y, lda,
-            strideA, _impl->transformMatrices[(size_t)Direction::X].getData(), ldb, strideB,
-            &beta, d_X, ldc, strideC, batchCount);
+        CublasGemmStridedBatched<T>::call(handle, CUBLAS_OP_N, CUBLAS_OP_N, m, n, k, &alpha, deviceScratch, lda,
+            strideA, _impl->transformMatrices[(size_t)Direction::X].Data(), ldb, strideB,
+            &beta, deviceInOut, ldc, strideC, batchCount);
     }
 
     // Swap the Y and Z axes, rather than transposing each slice.
@@ -217,9 +213,9 @@ void HartleyTransform<T>::DHT3DOnDevice(T* deviceInOut, T* deviceScratch)
     // permutation entirely -- and one that happens to coincide only when the
     // extents are equal, which is why even the cubic case came out wrong.
     //
-    // transpose_YZ_cuda does exactly this and was already written, instantiated
+    // TransposeYZ does exactly this and was already written, instantiated
     // and never called.
-    transpose_YZ_cuda(d_X, d_Y, static_cast<int>(W), static_cast<int>(H),
+    TransposeYZ(deviceInOut, deviceScratch, static_cast<int>(W), static_cast<int>(H),
         static_cast<int>(D));
 
     {
@@ -236,16 +232,16 @@ void HartleyTransform<T>::DHT3DOnDevice(T* deviceInOut, T* deviceScratch)
 
         int batchCount = H;
 
-        CublasGemmStridedBatched<T>::call(handle, CUBLAS_OP_N, CUBLAS_OP_N, m, n, k, &alpha, d_Y, lda,
-            strideA, _impl->transformMatrices[(size_t)Direction::Z].getData(), ldb, strideB,
-            &beta, d_X, ldc, strideC, batchCount);
+        CublasGemmStridedBatched<T>::call(handle, CUBLAS_OP_N, CUBLAS_OP_N, m, n, k, &alpha, deviceScratch, lda,
+            strideA, _impl->transformMatrices[(size_t)Direction::Z].Data(), ldb, strideB,
+            &beta, deviceInOut, ldc, strideC, batchCount);
     }
 
     // Swap Y and Z back, restoring the natural layout. The volume is currently
     // (x, z, y), so it is the same operation applied with D and H exchanged.
     // permute_ZXY_simple used to be called here; it produces a third layout
     // again, which neither the correction below nor the copy back expects.
-    transpose_YZ_cuda(d_X, d_Y, static_cast<int>(W), static_cast<int>(D),
+    TransposeYZ(deviceInOut, deviceScratch, static_cast<int>(W), static_cast<int>(D),
         static_cast<int>(H));
 
     // -------------------------------
@@ -253,12 +249,12 @@ void HartleyTransform<T>::DHT3DOnDevice(T* deviceInOut, T* deviceScratch)
     // -------------------------------
     // This call used to be commented out, which left the GPU computing the
     // separable transform while the CPU computed the true multidimensional
-    // one. Writes into d_X because the correction reads mirrored points and
+    // one. Writes into deviceInOut because the correction reads mirrored points and
     // cannot share its input and output buffer.
-    BracewellTransform3D(d_Y, d_X, static_cast<int>(W), static_cast<int>(H),
+    BracewellTransform3D(deviceScratch, deviceInOut, static_cast<int>(W), static_cast<int>(H),
         static_cast<int>(D));
 
-    // The result is in d_X, which is deviceInOut, as this method promises.
+    // The result is in deviceInOut, which is deviceInOut, as this method promises.
 
     cublasDestroy(handle);
     cudaDeviceSynchronize();

@@ -28,7 +28,7 @@ namespace RapiDHT {
 template <typename T>
 struct DeviceVolume<T>::Impl {
 #ifdef RAPIDHT_WITH_CUDA
-    dev_array<T> storage;
+    internal::DeviceArray<T> storage;
     size_t count = 0;
 #endif
 };
@@ -36,7 +36,7 @@ struct DeviceVolume<T>::Impl {
 template <typename T>
 struct HartleyTransform<T>::Impl {
 #ifdef RAPIDHT_WITH_CUDA
-    std::array<dev_array<T>, static_cast<size_t>(Direction::Count)> transformMatrices;
+    std::array<internal::DeviceArray<T>, static_cast<size_t>(Direction::Count)> transformMatrices;
 
     /*
      * Working buffers, allocated once with the object rather than on every
@@ -47,8 +47,8 @@ struct HartleyTransform<T>::Impl {
      * Holding them costs twice the volume in device memory for the lifetime of
      * the object, which is the usual bargain for a transform plan.
      */
-    dev_array<T> scratchA;
-    dev_array<T> scratchB;
+    internal::DeviceArray<T> scratchA;
+    internal::DeviceArray<T> scratchB;
 #endif
 };
 

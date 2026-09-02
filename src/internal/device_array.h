@@ -1,8 +1,9 @@
 /*
  * Project: RapiDHT
  * File: src/internal/device_array.h
- * Brief: RAII-обёртка над памятью GPU (CUDA) для одномерных массивов.
- * Author: Волков Евгений Александрович, volkov22dla@yandex.ru
+ * Brief: An RAII owner for a one-dimensional buffer in CUDA device memory.
+ *
+ * Internal header: not installed and not part of the public API.
  */
 
 #ifndef RAPIDHT_INTERNAL_DEVICE_ARRAY_H
@@ -13,13 +14,16 @@
 #include <stdexcept>
 #include <string>
 
+namespace RapiDHT {
+namespace internal {
+
 /*
  * Reports a failed CUDA call by throwing. This used to call exit(code):
  * a library has no business terminating its host process, which denied the
  * caller any chance to recover, run its own cleanup, or even report what
  * happened.
  */
-inline void CudaCheckImpl(cudaError_t code, const char* expression, const char* file, int line)
+inline void CudaCheck(cudaError_t code, const char* expression, const char* file, int line)
 {
     if (code != cudaSuccess) {
         throw std::runtime_error(std::string("CUDA error: ") + cudaGetErrorString(code)
@@ -28,98 +32,122 @@ inline void CudaCheckImpl(cudaError_t code, const char* expression, const char* 
     }
 }
 
-#define CUDA_CHECK(err) ::CudaCheckImpl((err), #err, __FILE__, __LINE__)
+} // namespace internal
+} // namespace RapiDHT
 
+/*
+ * Prefixed, because a macro obeys no namespace: the old name CUDA_CHECK is
+ * common enough that a consumer including this alongside another CUDA library
+ * could well have collided with it.
+ */
+#define RAPIDHT_CUDA_CHECK(err) ::RapiDHT::internal::CudaCheck((err), #err, __FILE__, __LINE__)
+
+namespace RapiDHT {
+namespace internal {
+
+/**
+ * @brief Owns a device allocation and the stream its transfers run on.
+ *
+ * Move-only rather than copyable: device memory cannot be duplicated by an
+ * implicit copy, and a copy that shared the pointer would double-free.
+ */
 template <class T>
-class dev_array {
+class DeviceArray {
 public:
-    explicit dev_array(): start_(nullptr), end_(nullptr), stream_(0)
+    DeviceArray()
     {
-        CUDA_CHECK(cudaStreamCreate(&stream_));
+        RAPIDHT_CUDA_CHECK(cudaStreamCreate(&_stream));
     }
 
-    explicit dev_array(size_t size): start_(nullptr), end_(nullptr), stream_(0)
+    explicit DeviceArray(size_t size)
     {
-        CUDA_CHECK(cudaStreamCreate(&stream_));
-        allocate(size);
+        RAPIDHT_CUDA_CHECK(cudaStreamCreate(&_stream));
+        Allocate(size);
     }
 
-    // Owns device memory, so copying would double-free.
-    dev_array(const dev_array&) = delete;
-    dev_array& operator=(const dev_array&) = delete;
+    DeviceArray(const DeviceArray&) = delete;
+    DeviceArray& operator=(const DeviceArray&) = delete;
 
-    ~dev_array()
+    ~DeviceArray()
     {
-        // Destructors must not propagate exceptions: free() used to throw,
-        // which turns any failure during unwinding into std::terminate.
-        // Nothing useful can be done about a failed release here anyway.
-        if (start_ != nullptr) {
-            cudaFreeAsync(start_, stream_);
-            cudaStreamSynchronize(stream_);
-            start_ = end_ = nullptr;
+        // Destructors must not propagate exceptions: Free() throws, and a throw
+        // during unwinding turns into std::terminate. Nothing useful can be
+        // done about a failed release here anyway.
+        if (_begin != nullptr) {
+            cudaFreeAsync(_begin, _stream);
+            cudaStreamSynchronize(_stream);
+            _begin = _end = nullptr;
         }
-        cudaStreamDestroy(stream_);
+        cudaStreamDestroy(_stream);
     }
 
-    // resize с использованием cudaMallocAsync
-    void resize(size_t size)
+    /// Releases the current allocation and takes a new one of `size` elements.
+    void Resize(size_t size)
     {
-        free();
-        allocate(size);
+        Free();
+        Allocate(size);
     }
 
-    size_t getSize() const
+    /// Number of elements the array holds.
+    size_t Size() const
     {
-        return end_ - start_;
+        return static_cast<size_t>(_end - _begin);
     }
 
-    const T* getData() const
+    const T* Data() const
     {
-        return start_;
+        return _begin;
     }
 
-    T* getData()
+    T* Data()
     {
-        return start_;
+        return _begin;
     }
 
-    void set(const T* src, size_t size)
+    /// Host to device. Copies min(size, Size()) elements and blocks until done.
+    void Upload(const T* source, size_t size)
     {
-        const size_t count = std::min(size, getSize());
-        CUDA_CHECK(cudaMemcpyAsync(start_, src, count * sizeof(T), cudaMemcpyHostToDevice, stream_));
-        CUDA_CHECK(cudaStreamSynchronize(stream_));
+        const size_t count = std::min(size, Size());
+        RAPIDHT_CUDA_CHECK(
+            cudaMemcpyAsync(_begin, source, count * sizeof(T), cudaMemcpyHostToDevice, _stream));
+        RAPIDHT_CUDA_CHECK(cudaStreamSynchronize(_stream));
     }
 
-    void get(T* dest, size_t size) const
+    /// Device to host, with the same truncating rule as Upload.
+    void Download(T* destination, size_t size) const
     {
-        const size_t count = std::min(size, getSize());
-        CUDA_CHECK(cudaMemcpyAsync(dest, start_, count * sizeof(T), cudaMemcpyDeviceToHost, stream_));
-        CUDA_CHECK(cudaStreamSynchronize(stream_));
+        const size_t count = std::min(size, Size());
+        RAPIDHT_CUDA_CHECK(
+            cudaMemcpyAsync(destination, _begin, count * sizeof(T), cudaMemcpyDeviceToHost, _stream));
+        RAPIDHT_CUDA_CHECK(cudaStreamSynchronize(_stream));
     }
 
 private:
-    void allocate(size_t size)
+    void Allocate(size_t size)
     {
-        const cudaError_t result = cudaMallocAsync((void**)&start_, size * sizeof(T), stream_);
+        const cudaError_t result = cudaMallocAsync((void**)&_begin, size * sizeof(T), _stream);
         if (result != cudaSuccess) {
-            start_ = end_ = nullptr;
+            _begin = _end = nullptr;
         }
-        CUDA_CHECK(result);
-        end_ = start_ + size;
+        RAPIDHT_CUDA_CHECK(result);
+        _end = _begin + size;
     }
 
-    void free()
+    void Free()
     {
-        if (start_ != nullptr) {
-            CUDA_CHECK(cudaFreeAsync(start_, stream_));
-            start_ = end_ = nullptr;
-            CUDA_CHECK(cudaStreamSynchronize(stream_));
+        if (_begin != nullptr) {
+            RAPIDHT_CUDA_CHECK(cudaFreeAsync(_begin, _stream));
+            _begin = _end = nullptr;
+            RAPIDHT_CUDA_CHECK(cudaStreamSynchronize(_stream));
         }
     }
 
-    T* start_;
-    T* end_;
-    cudaStream_t stream_;
+    T* _begin = nullptr;
+    T* _end = nullptr;
+    cudaStream_t _stream = nullptr;
 };
+
+} // namespace internal
+} // namespace RapiDHT
 
 #endif // RAPIDHT_INTERNAL_DEVICE_ARRAY_H

@@ -35,7 +35,7 @@ DeviceVolume<T>::DeviceVolume(size_t count)
         throw std::invalid_argument("DeviceVolume: size must be positive.");
     }
     _impl = std::make_unique<Impl>();
-    _impl->storage.resize(count);
+    _impl->storage.Resize(count);
     _impl->count = count;
 #else
     (void)count;
@@ -61,7 +61,7 @@ void DeviceVolume<T>::Upload(const T* host)
     if (host == nullptr) {
         throw std::invalid_argument("DeviceVolume::Upload: host pointer is null.");
     }
-    _impl->storage.set(host, _impl->count);
+    _impl->storage.Upload(host, _impl->count);
 #else
     (void)host;
 #endif
@@ -74,7 +74,7 @@ void DeviceVolume<T>::Download(T* host) const
     if (host == nullptr) {
         throw std::invalid_argument("DeviceVolume::Download: host pointer is null.");
     }
-    _impl->storage.get(host, _impl->count);
+    _impl->storage.Download(host, _impl->count);
 #else
     (void)host;
 #endif
@@ -94,7 +94,7 @@ template <typename T>
 void* DeviceVolume<T>::DeviceData() const noexcept
 {
 #ifdef RAPIDHT_WITH_CUDA
-    return _impl ? static_cast<void*>(const_cast<T*>(_impl->storage.getData())) : nullptr;
+    return _impl ? static_cast<void*>(const_cast<T*>(_impl->storage.Data())) : nullptr;
 #else
     return nullptr;
 #endif

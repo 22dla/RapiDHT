@@ -36,12 +36,12 @@ void MatrixTranspose(const T* A, T* B, int rows, int cols);
 /// The same transpose applied to each of `batch` consecutive rows x cols
 /// slices, in a single launch.
 template <typename T>
-void MatrixTransposeBatched(const T* d_in, T* d_out, int rows, int cols, int batch);
+void MatrixTransposeBatched(const T* deviceIn, T* deviceOut, int rows, int cols, int batch);
 
 /// Scales a device buffer in place, for the 1/N of an inverse transform that
 /// never leaves the device.
 template <typename T>
-void ScaleOnDevice(T* d_data, size_t count, T factor);
+void ScaleOnDevice(T* deviceData, size_t count, T factor);
 
 /// y = A * x, for a square A of order N.
 template <typename T>
@@ -49,20 +49,20 @@ void VectorMatrixMultiplication(const T* A, const T* x, T* y, int N);
 
 /// Swaps the Y and Z axes of a W x H x D volume.
 template <typename T>
-void transpose_YZ_cuda(const T* d_in, T* d_out, int W, int H, int D);
+void TransposeYZ(const T* deviceIn, T* deviceOut, int W, int H, int D);
 
 /// Bracewell correction turning the separable per-axis result into the true
 /// multidimensional Hartley transform. Out of place: each output reads
 /// mirrored inputs, so sharing one buffer would race.
 template <typename T>
-void BracewellTransform2D(const T* d_in, T* d_out, int W, int H);
+void BracewellTransform2D(const T* deviceIn, T* deviceOut, int W, int H);
 
 template <typename T>
-void BracewellTransform3D(const T* d_in, T* d_out, int W, int H, int D);
+void BracewellTransform3D(const T* deviceIn, T* deviceOut, int W, int H, int D);
 
 /// Fills a square device matrix with cas(2*pi*k*j/height).
-void InitializeHartleyMatrix(double* dKernel, size_t height);
-void InitializeHartleyMatrix(float* dKernel, size_t height);
+void InitializeHartleyMatrix(double* deviceMatrix, size_t height);
+void InitializeHartleyMatrix(float* deviceMatrix, size_t height);
 
 } // namespace RapiDHT
 

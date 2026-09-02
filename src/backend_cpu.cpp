@@ -28,16 +28,16 @@ void HartleyTransform<T>::BitReverse(std::vector<size_t>& indices)
     }
 
     const size_t n = indices.size();
-    const int kLog2n = static_cast<int>(std::log2(n));
+    const int log2N = static_cast<int>(std::log2(n));
 
     indices[0] = 0;
     for (size_t j = 1; j < n; ++j) {
         size_t reversed = 0;
         size_t temp = j;
-        for (int i = 0; i < kLog2n; ++i) {
+        for (int i = 0; i < log2N; ++i) {
             if (temp & 1) {
                 // size_t{1}, not 1: shifting an int is undefined past 31 bits.
-                reversed |= size_t { 1 } << (kLog2n - 1 - i);
+                reversed |= size_t { 1 } << (log2N - 1 - i);
             }
             temp >>= 1;
         }
@@ -212,11 +212,11 @@ void HartleyTransform<T>::FDHT1D(T* data, Direction direction)
     }
 
     // FHT for 1rd axis
-    const auto kLog2n = static_cast<size_t>(std::log2(n));
+    const auto log2N = static_cast<size_t>(std::log2(n));
     const Twiddle* twiddles = _twiddles[static_cast<size_t>(direction)].data();
 
     // Main cicle
-    for (size_t s = 1; s <= kLog2n; ++s) {
+    for (size_t s = 1; s <= log2N; ++s) {
         const auto m = size_t(1) << s;
         const auto m2 = m / 2;
         const auto m4 = m / 4;

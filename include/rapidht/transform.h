@@ -2,7 +2,7 @@
  * Project: RapiDHT
  * File: include/rapidht/transform.h
  * Brief: Публичный API дискретного преобразования Хартли (1D/2D/3D), CPU/GPU режимы.
- * Author: Волков Евгений Александрович, volков22dla@yandex.ru
+ * Author: Волков Евгений Александрович, volkov22dla@yandex.ru
  */
 
 #ifndef RAPIDHT_TRANSFORM_H
@@ -156,10 +156,9 @@ private:
 
     /**
      * @brief Performs a 1D Hartley Transform using CUDA matrix-vector multiplication.
-     * @param hX Pointer to the input data vector.
-     * @param length Length of the vector.
+     * @param hostData Pointer to the input/output data vector, Width() elements long.
      */
-    void DHT1DCuda(T* hX);
+    void DHT1DCuda(T* hostData);
 
     /**
      * @brief Performs a 2D Hartley Transform using CUDA matrix-matrix multiplication.
@@ -254,7 +253,7 @@ private:
     /*
      * Device-side state lives behind an opaque pointer so that this header
      * never names a CUDA type. Without it, <cuda_runtime.h> reached every
-     * consumer of the library through dev_array.h, forcing them to have a
+     * consumer of the library through device_array.h, forcing them to have a
      * CUDA toolkit installed even to use the CPU backend.
      *
      * The member is present in every configuration, keeping the class layout
