@@ -51,10 +51,29 @@ if(RAPIDHT_WITH_CUDA)
         set(CMAKE_CUDA_ARCHITECTURES all-major)
     endif()
 
+    # Compile the device code with the same host compiler as everything else.
+    #
+    # Left alone, nvcc picks its own: Ubuntu's nvidia-cuda-toolkit package ships
+    # a g++ of the newest version that toolkit accepts and puts it first on
+    # PATH. On a machine whose default compiler is newer -- CUDA 12.4 caps at
+    # GCC 13, Ubuntu 25.10 ships GCC 15 -- that quietly builds kernels.cu with
+    # one GCC and every .cpp with another, and links the two ABIs together.
+    #
+    # The result is not a configure error but an undefined reference at 90% of
+    # the build, in the cold sections that only appear at -O2, so a Debug build
+    # says nothing is wrong. `__cxa_call_terminate' was the symbol here.
+    #
+    # Pointing nvcc at CMAKE_CXX_COMPILER makes it refuse an unsupported
+    # version up front, with a message that names the problem.
+    if(NOT DEFINED CMAKE_CUDA_HOST_COMPILER)
+        set(CMAKE_CUDA_HOST_COMPILER "${CMAKE_CXX_COMPILER}")
+    endif()
+
     enable_language(CUDA)
     find_package(CUDAToolkit REQUIRED)
     message(STATUS "RapiDHT: CUDA backend ON (toolkit ${CUDAToolkit_VERSION})")
     message(STATUS "RapiDHT: CUDA architectures = ${CMAKE_CUDA_ARCHITECTURES}")
+    message(STATUS "RapiDHT: CUDA host compiler = ${CMAKE_CUDA_HOST_COMPILER}")
 else()
     message(STATUS "RapiDHT: CUDA backend OFF (Modes::GPU will throw at runtime)")
 endif()

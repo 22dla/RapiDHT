@@ -123,9 +123,32 @@ NVIDIA driver, or an MPI implementation.
 cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DRAPIDHT_WITH_CUDA=ON
 ```
 
-`CMAKE_CUDA_ARCHITECTURES` is left to CMake, which derives a default from
-`nvcc`. Pass `native` to target the card in the build machine — but note that
-`native` needs a GPU present at configure time, so it cannot be the default.
+`CMAKE_CUDA_ARCHITECTURES` defaults to `all-major`: one real architecture per
+generation the toolkit supports, so the binary runs natively on any of them.
+Pass `native` for a faster build targeting only the card in this machine —
+that needs a GPU present at configure time, which is why it cannot be the
+default.
+
+> **Your host compiler has to be one `nvcc` accepts.** Each CUDA release caps
+> the GCC version it will take: 12.4 stops at GCC 13, and Ubuntu's
+> `nvidia-cuda-toolkit` package quietly ships its own `g++` of that version.
+> Left alone, `nvcc` uses it, so `kernels.cu` gets built by one GCC and every
+> `.cpp` by another — two ABIs in one binary. The build then fails at link with
+> an undefined `__cxa_call_terminate`, and only in Release, since the reference
+> lives in a cold section that `-O2` creates and `-O0` does not.
+>
+> This project therefore points `nvcc` at `CMAKE_CXX_COMPILER`, so a mismatch
+> is a configure error naming the versions rather than a link error two minutes
+> in. If you hit it, either build everything with a compiler the toolkit
+> accepts:
+>
+> ```bash
+> cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DRAPIDHT_WITH_CUDA=ON \
+>       -DCMAKE_C_COMPILER=gcc-13 -DCMAKE_CXX_COMPILER=g++-13
+> ```
+>
+> or install a newer toolkit from NVIDIA's repository instead of the
+> distribution package, which is what CI does.
 
 Which backends were compiled in is recorded in the generated
 `rapidht_config.h` and exposed as `RapiDHT::kCudaEnabled` and
