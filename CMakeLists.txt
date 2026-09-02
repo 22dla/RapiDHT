@@ -132,6 +132,11 @@ if(RAPIDHT_WITH_CUDA)
                 "preset and pass no compiler of their own -- put it in a "
                 "CMakeUserPresets.json inheriting from the cuda or bench preset. "
                 "That file is per-machine and is not committed.\n"
+                "If one already exists, the wrong preset is selected: this "
+                "configure ran in\n"
+                "  ${CMAKE_BINARY_DIR}\n"
+                "and each preset builds in a directory named after itself, so "
+                "that name says which one the IDE actually chose.\n"
                 "nvcc reported:\n${RAPIDHT_CUDA_PROBE_ERROR}")
         endif()
     endif()
