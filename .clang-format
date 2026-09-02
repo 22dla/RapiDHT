@@ -28,6 +28,32 @@ BraceWrapping:
 BreakInheritanceList: AfterColon
 BreakConstructorInitializers: AfterColon
 FixNamespaceComments: true
+
+# Without these, every angle-bracket include is one category and sorts
+# alphabetically, so <rapidht/transform.h> lands between <random> and
+# <sstream>. Blank lines are then the only thing holding the groups apart,
+# which is a rule nobody remembers and clang-format will not enforce.
+#
+# Preserve rather than Merge: clang-format can order the groups but cannot put
+# a blank line between them, so merging everything into one run orders it
+# correctly and makes it unreadable. Preserving keeps the blank lines a person
+# wrote and sorts by category inside each -- which is what fixes the original
+# problem, since a project header sharing a block with <random> and <sstream>
+# now sorts above them instead of between them.
+IncludeBlocks: Preserve
+IncludeCategories:
+  - Regex: '^<rapidht/'      # our public headers
+    Priority: 2
+  - Regex: '^"internal/'     # our internal headers
+    Priority: 3
+  - Regex: '^<(cuda|cublas|cufft|device_launch)' # toolkit
+    Priority: 4
+  - Regex: '^<(mpi|omp|gtest|benchmark|fftw)'    # other third party
+    Priority: 5
+  - Regex: '^<'              # standard library
+    Priority: 6
+  - Regex: '.*'
+    Priority: 7
 IndentCaseLabels: true
 NamespaceIndentation: None
 SpaceBeforeCtorInitializerColon: false
