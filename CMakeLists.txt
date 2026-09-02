@@ -62,8 +62,9 @@ configure_file(
 )
 
 # Public headers are included as <rapidht/...>, so the search path is the
-# directory above them. Anything under src/internal is reached by relative
-# quoted include from within src/ and is deliberately not on this path.
+# directory above them. The internal headers are not here: src/ is added to the
+# library target's own include path instead, so nothing outside it can reach
+# them.
 include_directories(include)
 include_directories(${RAPIDHT_GENERATED_INCLUDE_DIR})
 

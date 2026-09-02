@@ -17,6 +17,14 @@ endif()
 
 add_library(coreht ${RAPIDHT_SOURCES})
 
+# PRIVATE: makes the internal headers reachable as "internal/..." from every
+# file in the library, wherever it sits. Relying on quoted includes resolving
+# relative to the including file instead only works one directory level deep:
+# it holds for src/transform.cpp but not for src/internal/impl.h, which sees
+# its own directory first and would need "device_array.h". Private, so nothing
+# outside the library can reach these headers at all.
+target_include_directories(coreht PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+
 # PUBLIC: the OpenMP pragmas are in the headers as well as the sources.
 target_link_libraries(coreht PUBLIC OpenMP::OpenMP_CXX)
 
