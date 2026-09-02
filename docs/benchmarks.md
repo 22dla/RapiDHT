@@ -18,24 +18,34 @@ card through `DeviceVolume`.
 
 | | CPU | GPU | Resident | vs CPU |
 | --- | ---: | ---: | ---: | ---: |
-| f32 128³ | 15 025 µs | 2 595 µs | **806 µs** | 18.6× |
-| f32 256³ | 412 630 µs | 19 858 µs | **5 047 µs** | **81.8×** |
-| f32 512³ | 3 815 926 µs | 177 130 µs | **58 117 µs** | **65.7×** |
-| f64 128³ | 26 856 µs | 11 117 µs | 7 292 µs | 3.7× |
-| f64 256³ | 476 088 µs | 136 434 µs | 107 829 µs | 4.4× |
-| f64 512³ | 4 422 303 µs | 1 903 826 µs | 1 673 060 µs | 2.6× |
+| f32 128³ | 14 989 µs | 2 525 µs | **800 µs** | 18.7× |
+| f32 256³ | 416 096 µs | 19 440 µs | **5 026 µs** | **82.8×** |
+| f32 512³ | 4 155 799 µs | 173 064 µs | **58 202 µs** | **71.4×** |
+| f64 128³ | 25 446 µs | 11 002 µs | 7 419 µs | 3.4× |
+| f64 256³ | 479 546 µs | 138 278 µs | 108 717 µs | 4.4× |
+| f64 512³ | 4 959 353 µs | 1 921 911 µs | 1 693 163 µs | 2.9× |
+
+These are a second, independent run, taken after the build was moved from
+`CMAKE_CUDA_ARCHITECTURES=52` -- CMake's silent default, which left every kernel
+to be JIT-compiled from Maxwell PTX -- to `all-major`. The device figures moved
+by at most 1.7%, which is the answer to whether that mattered: it did not,
+because cuBLAS supplies its own kernels for the card and the GEMMs are the work.
+The CPU figures moved up to 12%, on a machine whose frequency scaling the
+harness warns about.
 
 ### The bus was hiding the transform
 
-At 512³ the resident figure of 58.1 ms matches the 58.1 ms a profiler attributes
-to the kernels, so nothing but the transform is being measured. Through the
-copying interface the same work reads as 8.9× the CPU backend; resident, it is
-65.7×.
+At 512³ the resident figure of 58.2 ms matches what a profiler attributes to the
+kernels, so nothing but the transform is being measured. Through the copying
+interface the same work reads as 24× the CPU backend; resident, it is 71×. The
+difference is the bus: 116 ms of it per call, measured separately as the `PCIe`
+case, and 58.2 + 116.0 accounts for the 173 ms the copying path takes.
 
 The dense `cas` matrix is only `W × W` per axis and is reused once per line,
 which turns the work into a batched GEMM — the case GPUs are built for — rather
 than the memory-bound matrix-vector product that a single long 1D transform
-degenerates into. The GEMMs reach 10.5 TFLOP/s against a 16.2 TFLOP/s peak.
+degenerates into. The whole transform sustains 7.1 TFLOP/s against a 16.2 TFLOP/s peak, counting
+the transposes and the Bracewell pass as well as the GEMMs.
 
 ### Precision decides the outcome on consumer hardware
 
@@ -64,14 +74,16 @@ measured in the same run:
 
 | | time | arithmetic | achieved | extra device memory |
 | --- | ---: | ---: | ---: | ---: |
-| RapiDHT, matrix | 57.4 ms | 412 GFLOP | 7.2 TFLOP/s | **515 MiB** |
+| RapiDHT, matrix | 58.2 ms | 412 GFLOP | 7.1 TFLOP/s | **515 MiB** |
 | cuFFT + conversion | **11.9 ms** | ~9 GFLOP | 0.76 TFLOP/s | 1 028 MiB |
 
-**cuFFT is 4.8× faster on the transform.** That is the number to quote.
+**cuFFT is 4.9× faster on the transform.** That is the number to quote. The gap
+narrows at smaller volumes -- 4.1× at 128³ and 3.4× at 256³ -- because an FFT's
+advantage grows with the size of the problem, not shrinks.
 
 Two measured facts sit alongside it:
 
-- The matrix path performs about **46× more arithmetic** yet finishes only 4.8×
+- The matrix path performs about **46× more arithmetic** yet finishes only 4.9×
   behind, because it is compute-bound and reaches 44% of the card while an FFT
   is bandwidth-bound and reaches around 5%.
 - It needs **half the extra device memory** — 515 MiB of scratch and matrices
@@ -96,7 +108,7 @@ Spec-sheet arithmetic, not measurement, and it points somewhere uncomfortable.
 | H100 | 67 T | 495 T | 3 350 GB/s | 20 |
 
 A datacentre card adds bandwidth first, and bandwidth is what an FFT runs on.
-Without tensor cores the gap at 512³ would widen from 4.8× to roughly 14×; with
+Without tensor cores the gap at 512³ would widen from 4.9× to roughly 14×; with
 TF32 tensor cores it would invert to roughly 2× in our favour. **Tensor cores are
 not one optimisation among several — they are the condition for the approach
 staying viable on newer hardware**, and they are something a GEMM can use and an
@@ -106,8 +118,9 @@ FFT fundamentally cannot.
 
 ## FFTW, for reference
 
-`FFTW_DHT` in double takes 11 316 / 127 101 / 1 386 526 µs on the same volumes,
-about 3× faster than this CPU backend.
+`FFTW_DHT` in double takes 11 506 / 142 809 / 1 600 990 µs on the same volumes,
+2.2× to 3.4× faster than this CPU backend. Note the 13% run-to-run variation at
+512³, by far the noisiest figure here.
 
 Three caveats: FFTW here is single-threaded, it is in double against our float,
 and in 2D/3D it computes the *separable* transform while RapiDHT computes the
@@ -124,6 +137,10 @@ reading is that a GPU beats a single CPU core, not that this beats FFTW.
   where the volume stops fitting in the 18 MiB L3.
 - 1024³ does not fit on an 8 GiB card in any precision: two buffers of 4 GiB
   each in `float`. Volumes beyond ~997³ need slab decomposition.
+- `profile_gpu3d` used to loop over the host-pointer overload, so it reported
+  175.7 ms and 2.35 TFLOP/s at 512³ where the transform takes 58.2 ms and
+  reaches 7.1. It now runs on a `DeviceVolume`. Worth remembering that the
+  measurement error and the thing being measured were the same mistake.
 
 ---
 

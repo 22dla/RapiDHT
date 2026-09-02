@@ -163,11 +163,11 @@ At 512³ in single precision, with the volume resident on the device:
 
 | | time | vs CPU |
 | --- | ---: | ---: |
-| CPU, 6 cores | 3 816 ms | — |
-| **GPU, resident** | **58 ms** | **65.7×** |
-| cuFFT + conversion | 12 ms | 320× |
+| CPU, 6 cores | 4 156 ms | — |
+| **GPU, resident** | **58 ms** | **71×** |
+| cuFFT + conversion | 12 ms | 348× |
 
-The GPU backend is 65× the CPU one and 4.8× behind cuFFT, while needing half
+The GPU backend is 71× the CPU one and 4.9× behind cuFFT, while needing half
 cuFFT's extra device memory. The full picture, including profiling and an
 extrapolation to datacentre hardware, is in **[docs/benchmarks.md](docs/benchmarks.md)**.
 

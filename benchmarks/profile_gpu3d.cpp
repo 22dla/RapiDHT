@@ -3,9 +3,9 @@
  * File: benchmarks/profile_gpu3d.cpp
  * Brief: Minimal driver for profiling the 3D GPU path.
  *
- * Deliberately does one thing: construct a transform once, then run the forward
- * transform in a loop. Nothing else runs, so a profiler attributes every kernel
- * to the transform rather than to harness machinery.
+ * Deliberately does one thing: upload a volume once, then run the forward
+ * transform on it in a loop. Nothing else runs, so a profiler attributes every
+ * kernel to the transform rather than to harness machinery.
  *
  *   nsys profile --stats=true ./profile_gpu3d 512 20 f32
  *
@@ -13,6 +13,13 @@
  * matrix formulation is only worth defending if the GEMMs dominate it; time
  * spent in transposes, permutations and the Bracewell pass is overhead that the
  * FFT-based alternatives do not pay.
+ *
+ * The loop runs on a DeviceVolume rather than a host pointer. It did not used to
+ * -- this file predates the resident API and was never updated -- so every
+ * iteration carried two 512 MiB copies across the bus. At 512^3 that reported
+ * 175.7 ms against the 58.2 ms the transform actually takes, and a rate three
+ * times below the truth: exactly the measurement error the resident API was
+ * added to remove.
  */
 
 #include <rapidht/transform.h>
@@ -44,13 +51,16 @@ int Run(size_t width, int iterations, const char* label)
     try {
         RapiDHT::HartleyTransform<T> transform(width, width, width, RapiDHT::Modes::GPU);
 
+        RapiDHT::DeviceVolume<T> volume(count);
+        volume.Upload(data.data());
+
         // Untimed warm-up: the first call pays for context creation and for
         // cuBLAS picking its kernels.
-        transform.ForwardTransform(data.data());
+        transform.ForwardTransform(volume);
 
         const auto start = std::chrono::high_resolution_clock::now();
         for (int i = 0; i < iterations; ++i) {
-            transform.ForwardTransform(data.data());
+            transform.ForwardTransform(volume);
         }
         const auto finish = std::chrono::high_resolution_clock::now();
 
@@ -76,6 +86,12 @@ int main(int argc, char** argv)
     if (!RapiDHT::kCudaEnabled) {
         std::fprintf(stderr,
             "Built without CUDA support. Reconfigure with -DRAPIDHT_WITH_CUDA=ON.\n");
+        return 1;
+    }
+    // Compiled in is not the same as present, and a DeviceVolume on a machine
+    // with no card throws rather than profiling anything.
+    if (!RapiDHT::IsGpuAvailable()) {
+        std::fprintf(stderr, "No usable CUDA device is present.\n");
         return 1;
     }
 
