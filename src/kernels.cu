@@ -14,33 +14,6 @@
 namespace RapiDHT {
 
 template <typename T>
-__global__ void TransposeYZKernel(const T* __restrict__ in, T* __restrict__ out, int W, int H, int D)
-{
-    int bx = blockIdx.x * blockDim.x;
-    int by = blockIdx.y * blockDim.y;
-    int bz = blockIdx.z * blockDim.z;
-
-    int tx = threadIdx.x;
-    int ty = threadIdx.y;
-    int tz = threadIdx.z;
-
-    int x = bx + tx;
-    int y = by + ty;
-    int z = bz + tz;
-
-    if (x >= W || y >= H || z >= D)
-        return;
-
-    // Source index, row-major with x fastest.
-    size_t sourceIndex = (size_t)z * (W * (size_t)H) + (size_t)y * W + x;
-    // Destination after swapping Y and Z: the output is W x D x H, so the
-    // point (x, y, z) lands at (x, z, y).
-    size_t destIndex = (size_t)y * (W * (size_t)D) + (size_t)z * W + x;
-
-    out[destIndex] = in[sourceIndex];
-}
-
-template <typename T>
 __global__ void MatrixMultiplicationSharedKernel(const T* __restrict__ A, const T* __restrict__ B,
     T* __restrict__ C, int M, int K, int N)
 {
@@ -103,32 +76,6 @@ __global__ void MatrixTransposeKernel(const T* A, T* B, int rows, int cols)
     if (col < cols && row < rows) {
         B[col * rows + row] = A[row * cols + col];
     }
-}
-
-/*
- * The same transpose applied to every slice of a volume, in one launch.
- *
- * The 3D path used to call cublas<t>geam once per slice, in a host-side loop.
- * Profiling a 512^3 transform showed 1024 such launches against 3 GEMMs: the
- * kernels themselves cost 5.8 ms of the 54.8 ms spent on the device, but the
- * device sat idle for most of the 313 ms of wall time waiting between them.
- * One launch with the slice on blockIdx.z removes that entirely.
- */
-template <typename T>
-__global__ void MatrixTransposeBatchedKernel(const T* __restrict__ in, T* __restrict__ out,
-    int rows, int cols, int batch)
-{
-    const int col = blockIdx.x * blockDim.x + threadIdx.x;
-    const int row = blockIdx.y * blockDim.y + threadIdx.y;
-    const int slice = blockIdx.z;
-
-    if (col >= cols || row >= rows || slice >= batch) {
-        return;
-    }
-
-    const size_t offset = static_cast<size_t>(slice) * rows * cols;
-    out[offset + static_cast<size_t>(col) * rows + row]
-        = in[offset + static_cast<size_t>(row) * cols + col];
 }
 
 /// Multiplies every element by a constant, for the 1/N of an inverse transform
@@ -223,16 +170,6 @@ __global__ void InitializeHartleyMatrixKernel(float* kernel, size_t height)
 // ------------------------------ Host Wrappers ------------------------------
 
 template <typename T>
-void TransposeYZ(const T* deviceIn, T* deviceOut, int W, int H, int D)
-{
-    dim3 block(8, 8, 8);
-    dim3 grid((W + block.x - 1) / block.x, (H + block.y - 1) / block.y, (D + block.z - 1) / block.z);
-
-    TransposeYZKernel<T><<<grid, block>>>(deviceIn, deviceOut, W, H, D);
-    cudaDeviceSynchronize();
-}
-
-template <typename T>
 void MatrixMultiplication(const T* A, const T* B, T* C, int M, int K, int N)
 {
     const int BLOCK_SIZE = 16;
@@ -280,19 +217,6 @@ void ScaleOnDevice(T* deviceData, size_t count, T factor)
 }
 
 template <typename T>
-void MatrixTransposeBatched(const T* deviceIn, T* deviceOut, int rows, int cols, int batch)
-{
-    const int BLOCK_SIZE = 16;
-    dim3 threadsPerBlock(BLOCK_SIZE, BLOCK_SIZE);
-    dim3 blocksPerGrid((cols + BLOCK_SIZE - 1) / BLOCK_SIZE,
-        (rows + BLOCK_SIZE - 1) / BLOCK_SIZE,
-        batch);
-
-    MatrixTransposeBatchedKernel<<<blocksPerGrid, threadsPerBlock>>>(deviceIn, deviceOut, rows, cols, batch);
-    cudaDeviceSynchronize();
-}
-
-template <typename T>
 void BracewellTransform2D(const T* deviceIn, T* deviceOut, int W, int H)
 {
     dim3 blockDim(16, 16);
@@ -306,7 +230,10 @@ void BracewellTransform2D(const T* deviceIn, T* deviceOut, int W, int H)
 template <typename T>
 void BracewellTransform3D(const T* deviceIn, T* deviceOut, int W, int H, int D)
 {
-    dim3 blockDim(8, 8, 8); // 512 threads; worth retuning per architecture.
+    // A full warp along x, so every one of the four reads is a 128-byte row.
+    // The 8 x 8 x 8 block this replaces gave each warp four 32-byte pieces
+    // and took 6.5 ms at 512^3 in f32, against 4.9 ms for this shape.
+    dim3 blockDim(32, 8, 1);
     dim3 gridDim((W + blockDim.x - 1) / blockDim.x,
         (H + blockDim.y - 1) / blockDim.y,
         (D + blockDim.z - 1) / blockDim.z);
@@ -333,9 +260,6 @@ void InitializeHartleyMatrix(float* deviceMatrix, size_t height)
     cudaDeviceSynchronize();
 }
 
-template void TransposeYZ<float>(const float* deviceIn, float* deviceOut, int W, int H, int D);
-template void TransposeYZ<double>(const double* deviceIn, double* deviceOut, int W, int H, int D);
-
 // Matrix operations
 template void MatrixMultiplication<float>(const float* A, const float* B, float* C, int M, int K, int N);
 template void MatrixMultiplication<double>(const double* A, const double* B, double* C, int M, int K, int N);
@@ -343,9 +267,6 @@ template void MatrixMultiplication<double>(const double* A, const double* B, dou
 // Transposition
 template void MatrixTranspose<float>(const float* A, float* B, int rows, int cols);
 template void MatrixTranspose<double>(const double* A, double* B, int rows, int cols);
-
-template void MatrixTransposeBatched<float>(const float* deviceIn, float* deviceOut, int rows, int cols, int batch);
-template void MatrixTransposeBatched<double>(const double* deviceIn, double* deviceOut, int rows, int cols, int batch);
 
 template void ScaleOnDevice<float>(float* deviceData, size_t count, float factor);
 template void ScaleOnDevice<double>(double* deviceData, size_t count, double factor);

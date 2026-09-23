@@ -33,11 +33,6 @@ void MatrixMultiplication(const T* A, const T* B, T* C, int M, int K, int N);
 template <typename T>
 void MatrixTranspose(const T* A, T* B, int rows, int cols);
 
-/// The same transpose applied to each of `batch` consecutive rows x cols
-/// slices, in a single launch.
-template <typename T>
-void MatrixTransposeBatched(const T* deviceIn, T* deviceOut, int rows, int cols, int batch);
-
 /// Scales a device buffer in place, for the 1/N of an inverse transform that
 /// never leaves the device.
 template <typename T>
@@ -46,10 +41,6 @@ void ScaleOnDevice(T* deviceData, size_t count, T factor);
 /// y = A * x, for a square A of order N.
 template <typename T>
 void VectorMatrixMultiplication(const T* A, const T* x, T* y, int N);
-
-/// Swaps the Y and Z axes of a W x H x D volume.
-template <typename T>
-void TransposeYZ(const T* deviceIn, T* deviceOut, int W, int H, int D);
 
 /// Bracewell correction turning the separable per-axis result into the true
 /// multidimensional Hartley transform. Out of place: each output reads

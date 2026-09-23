@@ -134,129 +134,51 @@ void HartleyTransform<T>::DHT3DOnDevice(T* deviceInOut, T* deviceScratch)
 {
     PROFILE_FUNCTION();
 
-    auto W = Width();
-    auto H = Height();
-    auto D = Depth();
+    const int W = static_cast<int>(Width());
+    const int H = static_cast<int>(Height());
+    const int D = static_cast<int>(Depth());
+    const long long plane = static_cast<long long>(W) * H;
 
-    cublasHandle_t handle;
-    cublasCreate(&handle);
+    cublasHandle_t handle = _impl->cublas.Get();
     const T alpha = 1.0;
     const T beta = 0.0;
 
-    // -------------------------------
-    // Into column-major order, which is what cuBLAS reads.
-    // -------------------------------
-    // One launch instead of one per slice. Profiling 512^3 showed 1024 geam
-    // launches per transform against 3 GEMMs, with the device idle for 83% of
-    // the wall time waiting between them.
-    MatrixTransposeBatched(deviceInOut, deviceScratch, static_cast<int>(H), static_cast<int>(W),
-        static_cast<int>(D));
+    /*
+     * No transposes. The volume is stored x fastest, idx = x + W*(y + H*z),
+     * which cuBLAS already reads as column-major, and each cas matrix is
+     * symmetric, so every axis is one multiply on the data as it lies:
+     *
+     *   X:  C_W * [W x HD]              one GEMM
+     *   Y:  [W x H] * C_H, per z-slice  D batches, stride W*H
+     *   Z:  [WH x D] * C_D              one GEMM
+     *
+     * This used to transpose the volume around each multiply -- four
+     * transposes and two Y/Z swaps, each a full pass over memory. At 512^3
+     * they took about 10 of the 58 ms, which went on data movement alone.
+     *
+     * Direction::Y holds the Width()-sized matrix and Direction::X the
+     * Height()-sized one, per the constructor.
+     */
 
-    // -------------------------------
-    // 1D Hartley along Y (batched GEMM)
-    // -------------------------------
-    {
-        int m = H;
-        int n = W;
-        int k = W;
-        int lda = H;
-        int ldb = W;
-        int ldc = H;
+    // Along X: deviceInOut -> deviceScratch.
+    RAPIDHT_CUBLAS_CHECK(CublasGemmStridedBatched<T>::call(handle, CUBLAS_OP_N, CUBLAS_OP_N, W, H * D, W,
+        &alpha, _impl->transformMatrices[(size_t)Direction::Y].Data(), W, 0, deviceInOut, W, 0, &beta,
+        deviceScratch, W, 0, 1));
 
-        long long int strideA = H * W;
-        long long int strideB = 0;
-        long long int strideC = H * W;
+    // Along Y: deviceScratch -> deviceInOut, one W x H slice per batch.
+    RAPIDHT_CUBLAS_CHECK(CublasGemmStridedBatched<T>::call(handle, CUBLAS_OP_N, CUBLAS_OP_N, W, H, H, &alpha,
+        deviceScratch, W, plane, _impl->transformMatrices[(size_t)Direction::X].Data(), H, 0, &beta,
+        deviceInOut, W, plane, D));
 
-        int batchCount = D;
+    // Along Z: deviceInOut -> deviceScratch.
+    RAPIDHT_CUBLAS_CHECK(CublasGemmStridedBatched<T>::call(handle, CUBLAS_OP_N, CUBLAS_OP_N, W * H, D, D,
+        &alpha, deviceInOut, W * H, 0, _impl->transformMatrices[(size_t)Direction::Z].Data(), D, 0, &beta,
+        deviceScratch, W * H, 0, 1));
 
-        CublasGemmStridedBatched<T>::call(handle, CUBLAS_OP_N, CUBLAS_OP_N, m, n, k, &alpha, deviceScratch, lda,
-            strideA, _impl->transformMatrices[(size_t)Direction::Y].Data(), ldb, strideB,
-            &beta, deviceInOut, ldc, strideC, batchCount);
-    }
-
-    // Back, ready for the next axis.
-    MatrixTransposeBatched(deviceInOut, deviceScratch, static_cast<int>(W), static_cast<int>(H),
-        static_cast<int>(D));
-
-    // -------------------------------
-    // 1D Hartley along X (batched GEMM)
-    // -------------------------------
-    {
-        int m = W;
-        int n = H;
-        int k = H;
-        int lda = W;
-        int ldb = H;
-        int ldc = W;
-
-        long long int strideA = H * W;
-        long long int strideB = 0;
-        long long int strideC = H * W;
-
-        int batchCount = D;
-
-        CublasGemmStridedBatched<T>::call(handle, CUBLAS_OP_N, CUBLAS_OP_N, m, n, k, &alpha, deviceScratch, lda,
-            strideA, _impl->transformMatrices[(size_t)Direction::X].Data(), ldb, strideB,
-            &beta, deviceInOut, ldc, strideC, batchCount);
-    }
-
-    // Swap the Y and Z axes, rather than transposing each slice.
-    //
-    // At this point the volume is back in its natural layout, x fastest:
-    //   idx = x + W*y + W*H*z
-    // but the batched multiply below asks for H batches of a W x D matrix with
-    // leading dimension W, that is
-    //   idx = x + W*z + W*D*y
-    // so Y and Z have to change places. The per-slice geam that used to sit
-    // here transposed within each slice instead, which is a different
-    // permutation entirely -- and one that happens to coincide only when the
-    // extents are equal, which is why even the cubic case came out wrong.
-    //
-    // TransposeYZ does exactly this and was already written, instantiated
-    // and never called.
-    TransposeYZ(deviceInOut, deviceScratch, static_cast<int>(W), static_cast<int>(H),
-        static_cast<int>(D));
-
-    {
-        int m = W;
-        int n = D;
-        int k = D;
-        int lda = W;
-        int ldb = D;
-        int ldc = W;
-
-        long long int strideA = D * W;
-        long long int strideB = 0;
-        long long int strideC = D * W;
-
-        int batchCount = H;
-
-        CublasGemmStridedBatched<T>::call(handle, CUBLAS_OP_N, CUBLAS_OP_N, m, n, k, &alpha, deviceScratch, lda,
-            strideA, _impl->transformMatrices[(size_t)Direction::Z].Data(), ldb, strideB,
-            &beta, deviceInOut, ldc, strideC, batchCount);
-    }
-
-    // Swap Y and Z back, restoring the natural layout. The volume is currently
-    // (x, z, y), so it is the same operation applied with D and H exchanged.
-    // permute_ZXY_simple used to be called here; it produces a third layout
-    // again, which neither the correction below nor the copy back expects.
-    TransposeYZ(deviceInOut, deviceScratch, static_cast<int>(W), static_cast<int>(D),
-        static_cast<int>(H));
-
-    // -------------------------------
-    // Bracewell 3D
-    // -------------------------------
-    // This call used to be commented out, which left the GPU computing the
-    // separable transform while the CPU computed the true multidimensional
-    // one. Writes into deviceInOut because the correction reads mirrored points and
-    // cannot share its input and output buffer.
-    BracewellTransform3D(deviceScratch, deviceInOut, static_cast<int>(W), static_cast<int>(H),
-        static_cast<int>(D));
-
-    // The result is in deviceInOut, which is deviceInOut, as this method promises.
-
-    cublasDestroy(handle);
-    cudaDeviceSynchronize();
+    // The correction reads mirrored points and cannot share its input and
+    // output buffer, which conveniently lands the result in deviceInOut, as
+    // this method promises. It synchronises the device on return.
+    BracewellTransform3D(deviceScratch, deviceInOut, W, H, D);
 }
 
 // Explicit instantiation is per translation unit: it only reaches members

@@ -18,12 +18,63 @@
 
 #ifdef RAPIDHT_WITH_CUDA
 #include "internal/device_array.h"
+
+#include <cublas_v2.h>
 #endif
 
 #include <array>
 #include <cstddef>
 
 namespace RapiDHT {
+
+#ifdef RAPIDHT_WITH_CUDA
+namespace internal {
+
+/// Reports a failed cuBLAS call by throwing, as CudaCheck does for the runtime.
+inline void CublasCheck(cublasStatus_t status, const char* expression, const char* file, int line)
+{
+    if (status != CUBLAS_STATUS_SUCCESS) {
+        throw std::runtime_error(std::string("cuBLAS error ") + std::to_string(static_cast<int>(status))
+                                 + " while evaluating '" + expression + "' at " + file + ":"
+                                 + std::to_string(line));
+    }
+}
+
+} // namespace internal
+} // namespace RapiDHT
+
+#define RAPIDHT_CUBLAS_CHECK(status) ::RapiDHT::internal::CublasCheck((status), #status, __FILE__, __LINE__)
+
+namespace RapiDHT {
+namespace internal {
+
+/// Owns a cuBLAS handle. Move-only for the same reason as DeviceArray.
+class CublasHandle {
+public:
+    CublasHandle()
+    {
+        RAPIDHT_CUBLAS_CHECK(cublasCreate(&_handle));
+    }
+
+    CublasHandle(const CublasHandle&) = delete;
+    CublasHandle& operator=(const CublasHandle&) = delete;
+
+    ~CublasHandle()
+    {
+        cublasDestroy(_handle);
+    }
+
+    cublasHandle_t Get() const
+    {
+        return _handle;
+    }
+
+private:
+    cublasHandle_t _handle = nullptr;
+};
+
+} // namespace internal
+#endif
 
 template <typename T>
 struct DeviceVolume<T>::Impl {
@@ -49,6 +100,10 @@ struct HartleyTransform<T>::Impl {
      */
     internal::DeviceArray<T> scratchA;
     internal::DeviceArray<T> scratchB;
+
+    // Created once with the object: the 3D path used to create and destroy a
+    // handle on every call.
+    internal::CublasHandle cublas;
 #endif
 };
 
