@@ -53,8 +53,8 @@ ht.InverseTransform(gpu);      // still no transfer
 gpu.Download(volume.data());   // once
 ```
 
-At 512³ the round trip across the bus costs about three times the transform, so
-this is not a micro-optimisation.
+At 512³ the round trip across the bus costs about two and a half times the
+transform, so this is not a micro-optimisation.
 
 ---
 
@@ -82,7 +82,7 @@ single long 1D transform degenerates into.
 ```
 ForwardTransform
 ├── CPU   ─ per-axis FDHT1D (precomputed twiddles) ─ Bracewell correction
-├── GPU   ─ per-axis batched GEMM (cuBLAS) ─ transposes ─ Bracewell correction
+├── GPU   ─ per-axis GEMM (cuBLAS) ─ Bracewell correction
 └── RFFT  ─ real FFT, then Re(X) − Im(X)                       [1D only]
 ```
 
@@ -191,10 +191,10 @@ At 512³ in single precision, with the volume resident on the device:
 | | time | vs CPU |
 | --- | ---: | ---: |
 | CPU, 6 cores | 3.8–4.2 s | — |
-| **GPU, resident** | **58 ms** | **66–71×** |
+| **GPU, resident** | **45 ms** | **85–94×** |
 | cuFFT + conversion | 12 ms | ~330× |
 
-The GPU backend is 66–71× the CPU one and 4.9× behind cuFFT, while needing half
+The GPU backend is 85–94× the CPU one and 3.7× behind cuFFT, while needing half
 cuFFT's extra device memory. The device figures repeat to under 1% across runs;
 the CPU one is a range because that machine has frequency scaling on. The full
 picture, including profiling and an extrapolation to datacentre hardware, is in
