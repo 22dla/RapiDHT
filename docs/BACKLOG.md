@@ -30,7 +30,8 @@
 - [~] **B-001** ⚙ Сборка и `ctest` зелёные на обеих машинах; записать версии компиляторов/CUDA в этот файл.
   *Готово, когда:* `cmake --preset cpu` (💻) и `--preset cuda` (🖥) проходят все тесты.
   - [x] Linux CPU (Linux-среда ноутбука, GCC 11.4, CMake 4.4, `-Werror`): 48/48, 12 GPU-тестов пропущены; ASan+UBSan чисто.
-  - [ ] Windows 11, MSVC (💻) — проверить вручную: `cmake --preset cpu && cmake --build --preset cpu && ctest --preset cpu`.
+  - [x] Windows 11, MSVC (💻): все тесты прошли (2026-10-08). Сборка через пресет `cpu-msvc` из `CMakeUserPresets.json` (генератор Visual Studio 17 2022, Release, папка `build-cpu-msvc`).
+    Грабли: базовый пресет `cpu` не задаёт генератор, и VS Code (CMake Tools) подставляет «Unix Makefiles» — на Windows это падает. Лечится генератором в пользовательском пресете или `"cmake.generator"` в `.vscode/settings.json`. Кандидат в задачу: добавить в `CMakePresets.json` пресет для Windows с условием `hostSystemName == Windows`.
   - [ ] Ubuntu + CUDA (🖥): `cmake --preset cuda && cmake --build --preset cuda && ctest --preset cuda`; записать версии nvcc/драйвера.
 - [~] **B-002** ⚙ MPI-путь 3D некорректен: каждый ранг вызывает `FDHT3D(localData)` с полными размерами, при `size>1` выход за границы, нет транспонирования. Шаг 1: явная ошибка при `size>1` + пометка «experimental» в README. Шаг 2 (P2, позже): слэб-разбиение + `MPI_Alltoall`.
   - [x] Шаг 1: `ForwardTransform` бросает `std::runtime_error` при `size>1`; разбиение на слэбы и `Allgatherv` удалены; README и описание опции CMake обновлены. Сборка с `RAPIDHT_WITH_MPI=ON` не проверялась (нет MPI в среде).
@@ -99,5 +100,5 @@
 ## Журнал
 
 - 2026-10-08 — бэклог создан по итогам разбора диссертации, статей и кода.
-- 2026-10-08 — B-001 (Linux CPU), B-002 шаг 1, B-101. Ветка `fix/b002-mpi-guard`, изменения не закоммичены.
+- 2026-10-08 — B-001 (Linux CPU и Windows MSVC), B-002 шаг 1, B-101. Ветка `fix/b002-mpi-guard`.
   Главный исследовательский трек — R-1 (3D HNO); обоснование — в проекте claude.ai, документ `claude/research-directions.md`.
