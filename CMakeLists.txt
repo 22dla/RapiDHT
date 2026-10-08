@@ -13,7 +13,7 @@ set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 # Options
 # ---------------------------------------------------------------------------
 option(RAPIDHT_WITH_CUDA "Build the CUDA/cuBLAS GPU backend (Modes::GPU)" OFF)
-option(RAPIDHT_WITH_MPI  "Build the MPI-distributed 3D backend" OFF)
+option(RAPIDHT_WITH_MPI  "Link MPI (experimental: the distributed 3D transform is not implemented; >1 process throws)" OFF)
 option(RAPIDHT_BUILD_TESTS "Build the test executables" ON)
 # Off by default: enabling it makes the configure step fetch Google Benchmark,
 # so the default build stays buildable without network access.
