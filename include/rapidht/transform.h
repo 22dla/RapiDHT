@@ -107,6 +107,28 @@ public:
     void InverseTransform(T* data);
 
     /**
+     * @brief The separable Hartley transform: a 1D DHT along each axis in
+     *        turn, with no Bracewell correction. In place, unnormalised.
+     *
+     * This is a different function from ForwardTransform in 2D and 3D (they
+     * coincide in 1D). It is still its own inverse up to a factor of N, and it
+     * is what convolution with an even kernel needs: if g is even along every
+     * axis, g(i,j,k) = g(-i,j,k) = g(i,-j,k) = g(i,j,-k) (indices mod the
+     * extent), then
+     *
+     *     S(f * g) = S(f) . S(g)       (circular convolution, pointwise product)
+     *
+     * so the correction pass and its extra buffer can be skipped entirely.
+     * See EvenKernelConvolution in <rapidht/convolution.h>.
+     *
+     * Implemented for Modes::CPU and Modes::RFFT (1D); Modes::GPU throws
+     * std::runtime_error until the device path lands.
+     *
+     * @param data Input/output, Width()*Height()*Depth() elements, row-major.
+     */
+    void ForwardSeparable(T* data);
+
+    /**
      * @brief Transforms a volume already resident on the device, in place.
      *
      * No host/device copying takes place, so a pipeline that applies several

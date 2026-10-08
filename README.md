@@ -113,7 +113,7 @@ NVIDIA driver, or an MPI implementation.
 | Option | Default | What it does |
 | --- | --- | --- |
 | `RAPIDHT_WITH_CUDA` | `OFF` | Builds the GPU backend. With it off, `Modes::GPU` throws |
-| `RAPIDHT_WITH_MPI` | `OFF` | Builds the MPI-distributed 3D backend |
+| `RAPIDHT_WITH_MPI` | `OFF` | Experimental. Links MPI, but the distributed 3D transform is not implemented yet: running under more than one process throws |
 | `RAPIDHT_BUILD_TESTS` | `ON` | Builds the test executables |
 | `RAPIDHT_BUILD_BENCHMARKS` | `OFF` | Fetches Google Benchmark and builds the harness |
 | `ENABLE_PROFILING` | `OFF` | Enables the `PROFILE_FUNCTION()` timer |

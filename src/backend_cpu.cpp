@@ -288,6 +288,40 @@ void HartleyTransform<T>::FDHT3D(T* volume)
 }
 
 template <typename T>
+void HartleyTransform<T>::ForwardSeparable(T* data)
+{
+    PROFILE_FUNCTION();
+
+    if (data == nullptr) {
+        throw std::invalid_argument("ForwardSeparable: the pointer to data is null.");
+    }
+    if (_mode == Modes::GPU) {
+        throw std::runtime_error(
+            "ForwardSeparable is not implemented for Modes::GPU yet; use Modes::CPU.");
+    }
+
+    const bool is1D = (Height() == 0 && Depth() == 0);
+    const bool is2D = (Height() > 0 && Depth() == 0);
+
+    if (is1D) {
+        // In 1D the separable and the true transform are the same function.
+        if (_mode == Modes::RFFT) {
+            RealFFT1D(data);
+        } else {
+            FDHT1D(data);
+        }
+        return;
+    }
+
+    // The constructor rejects Modes::RFFT beyond 1D, so this is Modes::CPU.
+    Series1D(data, Direction::Y);
+    Series1D(data, Direction::X);
+    if (!is2D) {
+        Series1D(data, Direction::Z);
+    }
+}
+
+template <typename T>
 void HartleyTransform<T>::RealFFT1D(T* vec, Direction direction)
 {
     PROFILE_FUNCTION();
@@ -367,6 +401,8 @@ template void HartleyTransform<float>::FDHT2D(float*);
 template void HartleyTransform<double>::FDHT2D(double*);
 template void HartleyTransform<float>::FDHT3D(float*);
 template void HartleyTransform<double>::FDHT3D(double*);
+template void HartleyTransform<float>::ForwardSeparable(float*);
+template void HartleyTransform<double>::ForwardSeparable(double*);
 template void HartleyTransform<float>::RealFFT1D(float*, Direction);
 template void HartleyTransform<double>::RealFFT1D(double*, Direction);
 

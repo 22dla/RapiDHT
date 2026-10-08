@@ -4,6 +4,7 @@ find_package(OpenMP REQUIRED)
 # the GPU backend is requested, which file(GLOB) cannot express.
 set(RAPIDHT_SOURCES
     transform.cpp
+    convolution.cpp
     backend_cpu.cpp
     device_volume.cpp
     utilities.cpp

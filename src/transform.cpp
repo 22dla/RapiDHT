@@ -19,8 +19,6 @@
 
 namespace RapiDHT {
 
-using internal::IsPowerOfTwo;
-using internal::MpiBarrier;
 using internal::MpiContext;
 using internal::QueryMpi;
 using internal::ThrowGpuUnavailable;
@@ -93,94 +91,69 @@ HartleyTransform<T>::HartleyTransform(size_t width, size_t height, size_t depth,
     }
 }
 
+namespace {
+
+/*
+ * The 3D path used to split the volume along Z and run FDHT3D/DHT3DCuda on
+ * each rank's slab, then Allgatherv the slabs. That cannot work: a 3D
+ * transform couples every Z-plane to every other, so it needs a global
+ * transpose (all-to-all) between the per-axis passes, and the per-rank call
+ * still used the full extents, reading past the end of the slab on every rank
+ * but the last. Until a real distributed transform exists, refuse to run under
+ * more than one process rather than return a wrong answer.
+ */
+void RejectMultiProcess(const MpiContext& mpi)
+{
+    if (mpi.size > 1) {
+        throw std::runtime_error(
+            "RapiDHT: running under " + std::to_string(mpi.size)
+            + " MPI processes is not supported yet; the distributed 3D transform "
+              "is not implemented. Run with a single process.");
+    }
+}
+
+} // namespace
+
 template <typename T>
 void HartleyTransform<T>::ForwardTransform(T* data)
 {
     PROFILE_FUNCTION();
 
-    bool is1D = (Height() == 0 && Depth() == 0);
-    bool is2D = (Height() > 0 && Depth() == 0);
+    RejectMultiProcess(QueryMpi());
 
-    // Rank and size, or 0 and 1 when MPI is absent or the host program never
-    // initialised it.
-    const MpiContext mpi = QueryMpi();
-    const int rank = mpi.rank;
-    const int size = mpi.size;
-
-    if (is1D || is2D) {
-        // Nothing to distribute for 1D and 2D.
-        switch (_mode) {
-            case Modes::CPU:
-                if (is1D) {
-                    FDHT1D(data);
-                } else {
-                    FDHT2D(data);
-                }
-                break;
-            case Modes::GPU:
-                if (is1D) {
-                    DHT1DCuda(data);
-                } else {
-                    DHT2DCuda(data);
-                }
-                break;
-            case Modes::RFFT:
-                // The constructor rejects RFFT for anything but 1D.
-                RealFFT1D(data);
-                break;
-        }
-        MpiBarrier(mpi);
-        return;
-    }
-
-    // 3D: split along Z across the ranks.
-    size_t depthPerProc = Depth() / size;
-    size_t remainder = Depth() % size;
-    size_t offset = rank * depthPerProc + std::min(static_cast<size_t>(rank), remainder);
-    depthPerProc += (static_cast<size_t>(rank) < remainder) ? 1 : 0;
-
-    T* localData = data + offset * Width() * Height();
+    const bool is1D = (Height() == 0 && Depth() == 0);
+    const bool is2D = (Height() > 0 && Depth() == 0);
 
     switch (_mode) {
         case Modes::CPU:
-        case Modes::RFFT: // rejected for 3D by the constructor; kept for the warning
-            FDHT3D(localData);
+            if (is1D) {
+                FDHT1D(data);
+            } else if (is2D) {
+                FDHT2D(data);
+            } else {
+                FDHT3D(data);
+            }
             break;
         case Modes::GPU:
-            DHT3DCuda(localData);
+            if (is1D) {
+                DHT1DCuda(data);
+            } else if (is2D) {
+                DHT2DCuda(data);
+            } else {
+                DHT3DCuda(data);
+            }
+            break;
+        case Modes::RFFT:
+            // The constructor rejects RFFT for anything but 1D.
+            RealFFT1D(data);
             break;
     }
-
-#ifdef RAPIDHT_WITH_MPI
-    // Collect the slabs back only when MPI is actually running.
-    if (mpi.active) {
-        std::vector<int> sendcounts(size);
-        std::vector<int> displs(size);
-        int offs = 0;
-        for (int i = 0; i < size; ++i) {
-            sendcounts[i] = static_cast<int>((Depth() / size + (static_cast<size_t>(i) < remainder ? 1 : 0)) * Width() * Height());
-            displs[i] = offs;
-            offs += sendcounts[i];
-        }
-        const MPI_Datatype elementType = MpiDatatype<T>::value();
-        MPI_Allgatherv(localData, sendcounts[rank], elementType,
-            data, sendcounts.data(), displs.data(), elementType,
-            MPI_COMM_WORLD);
-    }
-#endif
 }
 
 template <typename T>
 void HartleyTransform<T>::InverseTransform(T* data)
 {
     PROFILE_FUNCTION();
-
-    bool is1D = (Height() == 0 && Depth() == 0);
-    bool is2D = (Height() > 0 && Depth() == 0);
-
-    const MpiContext mpi = QueryMpi();
-    const int rank = mpi.rank;
-    const int size = mpi.size;
 
     // The Hartley transform is its own inverse up to the 1/N below.
     ForwardTransform(data);
@@ -193,30 +166,10 @@ void HartleyTransform<T>::InverseTransform(T* data)
         totalSize *= Depth();
     }
 
-    auto denominator = 1.0 / static_cast<double>(totalSize);
-
-    if (is1D || is2D) {
-        for (size_t i = 0; i < totalSize; ++i) {
-            data[i] *= denominator;
-        }
-        MpiBarrier(mpi);
-        return;
+    const T scale = static_cast<T>(1.0 / static_cast<double>(totalSize));
+    for (size_t i = 0; i < totalSize; ++i) {
+        data[i] *= scale;
     }
-
-    // 3D: each rank scales only its own slab.
-    size_t depthPerProc = Depth() / size;
-    size_t remainder = Depth() % size;
-    size_t offset = rank * depthPerProc + std::min(static_cast<size_t>(rank), remainder);
-    depthPerProc += (static_cast<size_t>(rank) < remainder) ? 1 : 0;
-
-    size_t localSize = depthPerProc * Width() * Height();
-    T* localData = data + offset * Width() * Height();
-
-    for (size_t i = 0; i < localSize; ++i) {
-        localData[i] *= denominator;
-    }
-
-    MpiBarrier(mpi);
 }
 
 #ifndef RAPIDHT_WITH_CUDA
