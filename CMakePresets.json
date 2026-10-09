@@ -6,6 +6,7 @@
       "name": "base",
       "hidden": true,
       "binaryDir": "${sourceDir}/build-${presetName}",
+      "condition": { "type": "notEquals", "lhs": "${hostSystemName}", "rhs": "Windows" },
       "cacheVariables": {
         "CMAKE_BUILD_TYPE": "Release",
         "CMAKE_EXPORT_COMPILE_COMMANDS": "ON"
@@ -16,6 +17,17 @@
       "inherits": "base",
       "displayName": "CPU only",
       "description": "The default build: OpenMP, tests, no CUDA and no MPI."
+    },
+    {
+      "name": "windows-cpu",
+      "inherits": "base",
+      "displayName": "Windows (MSVC) — CPU only",
+      "description": "MSVC through Ninja, so compile_commands.json exists for clangd. VS Code's CMake Tools loads the Visual Studio environment itself; from a terminal, use the Developer PowerShell for VS 2022. Needs ninja on PATH (winget install Ninja-build.Ninja).",
+      "condition": { "type": "equals", "lhs": "${hostSystemName}", "rhs": "Windows" },
+      "generator": "Ninja",
+      "architecture": { "value": "x64", "strategy": "external" },
+      "toolset": { "value": "host=x64", "strategy": "external" },
+      "cacheVariables": { "CMAKE_C_COMPILER": "cl", "CMAKE_CXX_COMPILER": "cl" }
     },
     {
       "name": "cuda",
@@ -43,21 +55,27 @@
     }
   ],
   "buildPresets": [
-    { "name": "cpu", "configurePreset": "cpu" },
-    { "name": "cuda", "configurePreset": "cuda" },
-    { "name": "bench", "configurePreset": "bench" },
-    { "name": "dev", "configurePreset": "dev" }
+    { "name": "linux-only", "hidden": true, "condition": { "type": "notEquals", "lhs": "${hostSystemName}", "rhs": "Windows" } },
+    { "name": "cpu", "inherits": "linux-only", "configurePreset": "cpu" },
+    { "name": "windows-cpu", "configurePreset": "windows-cpu", "condition": { "type": "equals", "lhs": "${hostSystemName}", "rhs": "Windows" } },
+    { "name": "cuda", "inherits": "linux-only", "configurePreset": "cuda" },
+    { "name": "bench", "inherits": "linux-only", "configurePreset": "bench" },
+    { "name": "dev", "inherits": "linux-only", "configurePreset": "dev" }
   ],
   "testPresets": [
     {
-      "name": "cpu",
-      "configurePreset": "cpu",
+      "name": "linux-only",
+      "hidden": true,
+      "condition": { "type": "notEquals", "lhs": "${hostSystemName}", "rhs": "Windows" },
       "output": { "outputOnFailure": true }
     },
+    { "name": "cpu", "inherits": "linux-only", "configurePreset": "cpu" },
     {
-      "name": "cuda",
-      "configurePreset": "cuda",
+      "name": "windows-cpu",
+      "configurePreset": "windows-cpu",
+      "condition": { "type": "equals", "lhs": "${hostSystemName}", "rhs": "Windows" },
       "output": { "outputOnFailure": true }
-    }
+    },
+    { "name": "cuda", "inherits": "linux-only", "configurePreset": "cuda" }
   ]
 }

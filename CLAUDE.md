@@ -12,11 +12,12 @@
 |---|---|---|
 | Железо | i7-1360P, 16 ГБ, без дискретной GPU | i5-12400, 32 ГБ, RTX 3060 Ti 8 ГБ (sm_86) |
 | ОС | Windows 11, Visual Studio 2022 | Ubuntu; CUDA 12.4, системный GCC новее 13 |
-| Пресет | `cpu-msvc` | `cuda-local`, `bench-local`, `dev-local` |
+| Пресет | `windows-cpu` | `cuda-local`, `bench-local`, `dev-local` |
 
-Пресеты `cpu-msvc` и `*-local` живут в `CMakeUserPresets.json` (не в git, на каждой машине свой):
-- `cpu-msvc` задаёт генератор «Visual Studio 17 2022». Базовый `cpu` генератор не задаёт, и VS Code тогда подставляет «Unix Makefiles», что на Windows падает.
-- `*-local` задают `gcc-13`/`g++-13`: CUDA 12.4 не принимает более новый GCC, а смешение двух GCC даёт ошибку линковки `__cxa_call_terminate` только в Release.
+Пресеты в `CMakePresets.json` разделены условием по ОС: `windows-cpu` виден только на Windows, `cpu`/`cuda`/`bench`/`dev` — только на Linux.
+- `windows-cpu` — MSVC через Ninja: генератор Visual Studio не пишет `compile_commands.json`, без которого clangd не видит include-пути. Нужен `ninja` в PATH (`winget install Ninja-build.Ninja`); из терминала — только Developer PowerShell for VS 2022, VS Code поднимает окружение сам. VS Code копирует базу в корень (`"cmake.copyCompileCommands"` в `.vscode/settings.json`).
+- На Linux конфигурация сама кладёт в корень симлинк на `compile_commands.json` активной сборки.
+- `*-local` в `CMakeUserPresets.json` десктопа (не в git) задают `gcc-13`/`g++-13`: CUDA 12.4 не принимает GCC 15, а смешение двух GCC даёт ошибку линковки `__cxa_call_terminate` только в Release. Уйдут после перехода на CUDA 13.2, которая принимает GCC 15.
 
 ## Сборка и тесты
 ```bash
@@ -27,7 +28,7 @@ cmake --preset cpu && cmake --build --preset cpu -j && ctest --preset cpu
 ```
 ```powershell
 # ноутбук (Windows)
-cmake --preset cpu-msvc; cmake --build --preset cpu-msvc; ctest --preset cpu-msvc
+cmake --preset windows-cpu; cmake --build --preset windows-cpu; ctest --preset windows-cpu
 ```
 Ожидается 48 тестов; без GPU 12 из них пропускаются (`SKIP_IF_NO_GPU()`), на десктопе должны выполняться все.
 
@@ -48,5 +49,7 @@ cmake --preset cpu-msvc; cmake --build --preset cpu-msvc; ctest --preset cpu-msv
 - Работаем в `master`, по коммиту на задачу бэклога; ветка — только для рискованных переделок, и об этом нужно предупредить заранее.
 - Сообщения коммитов — по-английски, в повелительном наклонении, как в истории (`Add …`, `Fix …`, `Refuse …`); в теле — зачем, и строка `Backlog: B-xxx`.
 - Не включай в свой коммит чужие незакоммиченные изменения; добавляй файлы поимённо, не `git add -A`.
+- Автор коммитит и удаляет файлы сам: Claude правит файлы и даёт команды, но не выполняет `git commit`/`git push` и не удаляет файлы, если об этом прямо не попросили.
+- Не запускай `cmake` в рабочей папке из чужой среды (например, Linux-среды поверх Windows-папки): это создаёт `build-*` с чужим кешем и подменяет `compile_commands.json`. Для проверок — отдельная папка сборки вне репозитория.
 - Remote по SSH (`git@github.com:22dla/RapiDHT.git`); пушит автор, если не попросил иначе.
 - Из Linux-окружения поверх Windows-папки нужен `core.autocrlf=true` (прописан в `.git/config`), иначе git видит ложные изменения CRLF во всех файлах.
