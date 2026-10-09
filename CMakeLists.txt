@@ -204,6 +204,26 @@ else()
     endif()
 endif()
 
+# clangd reads compile_commands.json from the source root (see .clangd), but
+# CMake writes it into the build directory, whose name changes with the preset.
+# Link the root copy to this build's database, so the editor always sees the
+# preset configured last -- without each machine having to set up its IDE.
+#
+# A symlink rather than a copy: the database is written after this runs and
+# rewritten on every reconfigure. Skipped on Windows, where symlinks need extra
+# privileges and the Visual Studio generators write no database anyway, and
+# when RapiDHT is a subproject of someone else's build.
+if(CMAKE_EXPORT_COMPILE_COMMANDS AND NOT WIN32
+   AND CMAKE_SOURCE_DIR STREQUAL PROJECT_SOURCE_DIR
+   AND NOT CMAKE_SOURCE_DIR STREQUAL CMAKE_BINARY_DIR)
+    file(CREATE_LINK "${CMAKE_BINARY_DIR}/compile_commands.json"
+        "${CMAKE_SOURCE_DIR}/compile_commands.json"
+        RESULT rapidht_link_result SYMBOLIC)
+    if(NOT rapidht_link_result EQUAL 0)
+        message(STATUS "compile_commands.json not linked into the source tree: ${rapidht_link_result}")
+    endif()
+endif()
+
 add_subdirectory(src)
 
 enable_testing()

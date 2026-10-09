@@ -6,12 +6,14 @@
 # build-bench. Pointing this at a fixed one goes stale the moment the preset
 # changes, which is how every file came to be underlined red.
 #
-# So it points at the source root, and the build is asked to put a copy there:
-# in VS Code through "cmake.copyCompileCommands", or by hand with
+# So it points at the source root, and configuring links the root copy to the
+# active build's database (see CMakeLists.txt), so the last preset configured
+# is the one clangd sees. On Windows the link is skipped; there, set
+# "cmake.copyCompileCommands" in VS Code, or link by hand:
 #
 #   ln -sf build-<preset>/compile_commands.json compile_commands.json
 #
-# The copy is gitignored.
+# The link is gitignored.
 CompileFlags:
   CompilationDatabase: .
 
