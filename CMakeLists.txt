@@ -1,5 +1,11 @@
 cmake_minimum_required(VERSION 3.18 FATAL_ERROR)
 
+# A CUDA build needs a C++ compiler nvcc accepts, and project() below is where
+# the compiler gets fixed for good. If the default one is too new for the
+# installed toolkit, this picks an installed g++-N that is not -- unless the
+# user, a preset or a toolchain file has already chosen. See the file itself.
+include(${CMAKE_CURRENT_LIST_DIR}/cmake/CudaHostCompiler.cmake)
+
 # Project. CUDA is enabled later, on demand -- see RAPIDHT_WITH_CUDA.
 project(RapiDHT LANGUAGES CXX)
 
@@ -70,7 +76,9 @@ if(RAPIDHT_WITH_CUDA)
     endif()
 
     # Ask nvcc whether it will accept that host compiler, before
-    # enable_language(CUDA) does it for us. It refuses with a clear enough
+    # enable_language(CUDA) does it for us. When the compiler was left to
+    # cmake/CudaHostCompiler.cmake, getting here with a refusal means no
+    # installed GCC suits this toolkit. It refuses with a clear enough
     # message of its own, but wrapped in a CMake compiler-identification
     # failure and a stack trace through three CMake modules, which buries what
     # to do about it. Probing first turns that into one paragraph.
@@ -110,6 +118,11 @@ if(RAPIDHT_WITH_CUDA)
             ERROR_VARIABLE RAPIDHT_CUDA_PROBE_ERROR
         )
         if(NOT RAPIDHT_CUDA_PROBE_RESULT EQUAL 0)
+            set(RAPIDHT_TRIED_NOTE "")
+            if(RAPIDHT_HOST_COMPILERS_TRIED)
+                set(RAPIDHT_TRIED_NOTE
+                    "Compilers tried: ${RAPIDHT_HOST_COMPILERS_TRIED}\n")
+            endif()
             message(FATAL_ERROR
                 "This CUDA toolkit will not accept the C++ compiler this build "
                 "uses.\n"
@@ -122,21 +135,21 @@ if(RAPIDHT_WITH_CUDA)
                 "the device code would be built with one and every .cpp with "
                 "another, and the two ABIs linked together. That fails later, at "
                 "link time, in optimised builds only.\n"
-                "Either build everything with a compiler this toolkit accepts:\n"
-                "  cmake -S . -B build -DRAPIDHT_WITH_CUDA=ON "
-                "-DCMAKE_C_COMPILER=gcc-13 -DCMAKE_CXX_COMPILER=g++-13\n"
-                "or install a newer toolkit from NVIDIA rather than the "
-                "distribution package. Build without -DRAPIDHT_WITH_CUDA=ON to "
-                "skip the GPU backend entirely.\n"
-                "To make the choice stick -- including for IDEs, which pick a "
-                "preset and pass no compiler of their own -- put it in a "
-                "CMakeUserPresets.json inheriting from the cuda or bench preset. "
-                "That file is per-machine and is not committed.\n"
-                "If one already exists, the wrong preset is selected: this "
-                "configure ran in\n"
+                "${RAPIDHT_TRIED_NOTE}"
+                "If the compiler was not named explicitly, none of the installed "
+                "GCC versions suits this toolkit. Install one it accepts -- for "
+                "CUDA 12.4 that is GCC 13 or older:\n"
+                "  sudo apt install g++-13\n"
+                "and configure again from an empty build directory; it is then "
+                "picked up by itself. Or install a newer toolkit from NVIDIA "
+                "rather than the distribution package. Build without "
+                "-DRAPIDHT_WITH_CUDA=ON to skip the GPU backend entirely.\n"
+                "If the compiler was named explicitly (-DCMAKE_CXX_COMPILER, the "
+                "CXX environment variable, a preset or CMakeUserPresets.json), "
+                "that choice is the one being refused. This configure ran in\n"
                 "  ${CMAKE_BINARY_DIR}\n"
                 "and each preset builds in a directory named after itself, so "
-                "that name says which one the IDE actually chose.\n"
+                "that name says which preset the IDE actually chose.\n"
                 "nvcc reported:\n${RAPIDHT_CUDA_PROBE_ERROR}")
         endif()
     endif()

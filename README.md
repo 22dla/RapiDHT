@@ -144,38 +144,25 @@ default.
 > an undefined `__cxa_call_terminate`, and only in Release, since the reference
 > lives in a cold section that `-O2` creates and `-O0` does not.
 >
-> This project therefore points `nvcc` at `CMAKE_CXX_COMPILER`, so a mismatch
-> is a configure error naming the versions rather than a link error two minutes
-> in. If you hit it, either build everything with a compiler the toolkit
-> accepts:
+> This project therefore points `nvcc` at `CMAKE_CXX_COMPILER`, and builds
+> everything with one compiler that `nvcc` accepts. If you name none, it finds
+> one itself: when the default `c++` is too new for the toolkit, configuring
+> tries the installed `g++-N` from newest down and uses the first `nvcc` takes,
+> together with the matching `gcc-N`. The configure log says so:
 >
-> ```bash
-> cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DRAPIDHT_WITH_CUDA=ON \
->       -DCMAKE_C_COMPILER=gcc-13 -DCMAKE_CXX_COMPILER=g++-13
+> ```text
+> -- RapiDHT: /usr/bin/nvcc rejects the default compiler /usr/bin/c++; building everything with /usr/bin/g++-13 instead
 > ```
 >
-> or install a newer toolkit from NVIDIA's repository instead of the
-> distribution package, which is what CI does.
+> So the plain `cuda`, `bench` and `dev` presets work as they are, in an IDE
+> too. A compiler you name — `-DCMAKE_CXX_COMPILER`, the `CXX` environment
+> variable, a preset, a toolchain file — is always used as given.
 >
-> To make the choice stick — an IDE picks a preset and passes no compiler of
-> its own, so it will hit this every time — put it in a `CMakeUserPresets.json`
-> next to `CMakePresets.json`. That file is per-machine and is not committed:
->
-> ```json
-> {
->   "version": 3,
->   "configurePresets": [
->     {
->       "name": "cuda-local",
->       "inherits": "cuda",
->       "cacheVariables": {
->         "CMAKE_C_COMPILER": "/usr/bin/gcc-13",
->         "CMAKE_CXX_COMPILER": "/usr/bin/g++-13"
->       }
->     }
->   ]
-> }
-> ```
+> If no installed GCC suits the toolkit, configuring stops and lists what it
+> tried. Install one it accepts (`sudo apt install g++-13` for CUDA 12.4) and
+> configure again from an empty build directory, or install a newer toolkit
+> from NVIDIA's repository instead of the distribution package, which is what
+> CI does.
 
 Which backends were compiled in is recorded in the generated
 `rapidht_config.h` and exposed as `RapiDHT::kCudaEnabled` and
