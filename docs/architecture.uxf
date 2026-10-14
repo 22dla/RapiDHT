@@ -1,0 +1,602 @@
+<?xml version="1.0" encoding="UTF-8" standalone="no"?>
+<diagram program="umlet" version="15.1">
+  <zoom_level>10</zoom_level>
+  <help_text>RapiDHT architecture. Regenerate or edit in UMLet.</help_text>
+  <element>
+    <id>UMLPackage</id>
+    <coordinates>
+      <x>20</x>
+      <y>1260</y>
+      <w>1320</w>
+      <h>390</h>
+    </coordinates>
+    <panel_attributes>src — library target coreht
+bg=#EAF6EA</panel_attributes>
+    <additional_attributes/>
+  </element>
+  <element>
+    <id>UMLPackage</id>
+    <coordinates>
+      <x>20</x>
+      <y>770</y>
+      <w>1320</w>
+      <h>430</h>
+    </coordinates>
+    <panel_attributes>src/internal — private, not installed
+bg=#FDF3E1</panel_attributes>
+    <additional_attributes/>
+  </element>
+  <element>
+    <id>UMLPackage</id>
+    <coordinates>
+      <x>20</x>
+      <y>20</y>
+      <w>1320</w>
+      <h>720</h>
+    </coordinates>
+    <panel_attributes>include/rapidht — public API, namespace RapiDHT
+bg=#E8F1FB</panel_attributes>
+    <additional_attributes/>
+  </element>
+  <element>
+    <id>UMLClass</id>
+    <coordinates>
+      <x>40</x>
+      <y>70</y>
+      <w>440</w>
+      <h>430</h>
+    </coordinates>
+    <panel_attributes>*HartleyTransform&lt;T&gt;*
+«T = float | double, move-only»
+--
+-dims: array&lt;size_t, 3&gt;  — Width, Height, Depth
+-mode: Modes
+-bitReversedIndices[3], twiddles[3]  — CPU tables
+-impl: unique_ptr&lt;Impl&gt;  — GPU state (pimpl)
+--
++HartleyTransform(width, height, depth, mode)
++ForwardTransform(data: T*)  — unnormalised
++InverseTransform(data: T*)  — forward, then × 1÷N
++ForwardSeparable(data: T*)  — no Bracewell pass, CPU
++ForwardTransform(volume: DeviceVolume&lt;T&gt;&amp;)
++InverseTransform(volume: DeviceVolume&lt;T&gt;&amp;)
++Width(), Height(), Depth(), Length(dir)
++LinearIndex(i, j, k), AxisIndex(...)
+--
+«private, defined in backend_cpu.cpp»
+-FDHT1D, FDHT2D, FDHT3D, Series1D, RealFFT1D
+-BracewellTransform2DCPU, BracewellTransform3DCPU
+-BitReverse, BuildTwiddleTable
+«private, defined in backend_cuda.cpp»
+-DHT1DCuda, DHT2DCuda, DHT3DCuda  — host data
+-DHT1DOnDevice, DHT2DOnDevice, DHT3DOnDevice
+-TransformOnDevice(inOut, scratch)
+bg=#FFFFFF</panel_attributes>
+    <additional_attributes/>
+  </element>
+  <element>
+    <id>UMLClass</id>
+    <coordinates>
+      <x>520</x>
+      <y>70</y>
+      <w>340</w>
+      <h>130</h>
+    </coordinates>
+    <panel_attributes>«enumeration»
+*Modes*
+--
+CPU   — OpenMP, radix-2 fast Hartley
+GPU   — CUDA, cas matrices × cuBLAS GEMM
+RFFT  — real FFT, 1D only, for comparison
+bg=#FFFFFF</panel_attributes>
+    <additional_attributes/>
+  </element>
+  <element>
+    <id>UMLClass</id>
+    <coordinates>
+      <x>520</x>
+      <y>220</y>
+      <w>340</w>
+      <h>130</h>
+    </coordinates>
+    <panel_attributes>«enumeration»
+*Direction*
+--
+Y = 0  — width, fastest in memory
+X = 1  — height
+Z = 2  — depth
+bg=#FFFFFF</panel_attributes>
+    <additional_attributes/>
+  </element>
+  <element>
+    <id>UMLClass</id>
+    <coordinates>
+      <x>900</x>
+      <y>70</y>
+      <w>390</w>
+      <h>180</h>
+    </coordinates>
+    <panel_attributes>*DeviceVolume&lt;T&gt;*
+«a volume kept in GPU memory»
+--
+-impl: unique_ptr&lt;Impl&gt;
+--
++DeviceVolume(count)
++Upload(host: const T*)
++Download(host: T*) const
++Size(): size_t
+-DeviceData(): void*  — friend HartleyTransform
+bg=#FFFFFF</panel_attributes>
+    <additional_attributes/>
+  </element>
+  <element>
+    <id>UMLClass</id>
+    <coordinates>
+      <x>900</x>
+      <y>290</y>
+      <w>410</w>
+      <h>230</h>
+    </coordinates>
+    <panel_attributes>*EvenKernelConvolution&lt;T&gt;*
+«convolution.h — kernel even along every axis»
+--
+-width, height, depth, size
+-transform: HartleyTransform&lt;T&gt;
+-spectrum: vector&lt;T&gt;  — S(g) × 1÷N
+--
++EvenKernelConvolution(w, h, d, mode = CPU)
++SetKernel(kernel, tol = 1e-6)  — checks evenness
++Apply(data: T*)  — f ← S( S(f) · S(g) ÷ N )
+--
+«free function»
++IsEvenPerAxis(kernel, w, h, d, tol): bool
+bg=#FFFFFF</panel_attributes>
+    <additional_attributes/>
+  </element>
+  <element>
+    <id>UMLClass</id>
+    <coordinates>
+      <x>520</x>
+      <y>390</y>
+      <w>340</w>
+      <h>150</h>
+    </coordinates>
+    <panel_attributes>«header» config_flags.h
+--
++kCudaEnabled: constexpr bool
++kMpiEnabled: constexpr bool
++IsGpuAvailable(): bool  — asks the driver
+--
+includes generated config.h:
+RAPIDHT_WITH_CUDA, RAPIDHT_WITH_MPI
+bg=#FFFFFF</panel_attributes>
+    <additional_attributes/>
+  </element>
+  <element>
+    <id>UMLClass</id>
+    <coordinates>
+      <x>520</x>
+      <y>560</y>
+      <w>340</w>
+      <h>160</h>
+    </coordinates>
+    <panel_attributes>«header» utilities.h
+«helpers for tests, benchmarks, examples»
+--
+Profiler, PROFILE_FUNCTION()
+LoadingConfig, FillMode
+MakeData&lt;T&gt;(sizes, mode)
+PrintData1d, PrintData2d, PrintData3d
+WriteMatrixToCsv, ParseDims("WxHxD")
+bg=#FFFFFF</panel_attributes>
+    <additional_attributes/>
+  </element>
+  <element>
+    <id>UMLClass</id>
+    <coordinates>
+      <x>40</x>
+      <y>820</y>
+      <w>380</w>
+      <h>160</h>
+    </coordinates>
+    <panel_attributes>*HartleyTransform&lt;T&gt;::Impl*
+«exists only for Modes::GPU»
+--
++transformMatrices[3]: DeviceArray&lt;T&gt;
+    — cas(2πkn÷N), one N×N matrix per axis
++scratchA: DeviceArray&lt;T&gt;  — host-pointer path
++scratchB: DeviceArray&lt;T&gt;  — GEMM ping-pong
++cublas: CublasHandle
+bg=#FFFFFF</panel_attributes>
+    <additional_attributes/>
+  </element>
+  <element>
+    <id>UMLClass</id>
+    <coordinates>
+      <x>40</x>
+      <y>1020</y>
+      <w>380</w>
+      <h>160</h>
+    </coordinates>
+    <panel_attributes>«header» kernels.h
+«launchers, defined in kernels.cu»
+--
+InitializeHartleyMatrix(m, n)
+MatrixMultiplication, MatrixTranspose
+VectorMatrixMultiplication
+BracewellTransform2D, BracewellTransform3D
+ScaleOnDevice(data, count, factor)
+bg=#FFFFFF</panel_attributes>
+    <additional_attributes/>
+  </element>
+  <element>
+    <id>UMLClass</id>
+    <coordinates>
+      <x>500</x>
+      <y>820</y>
+      <w>360</w>
+      <h>170</h>
+    </coordinates>
+    <panel_attributes>*internal::DeviceArray&lt;T&gt;*
+«RAII over cudaMallocAsync on own stream»
+--
+-begin, end: T*
+-stream: cudaStream_t
+--
++Resize(n), Size(), Data()
++Upload(src, n), Download(dst, n)
+--
+errors → RAPIDHT_CUDA_CHECK → runtime_error
+bg=#FFFFFF</panel_attributes>
+    <additional_attributes/>
+  </element>
+  <element>
+    <id>UMLClass</id>
+    <coordinates>
+      <x>500</x>
+      <y>1030</y>
+      <w>360</w>
+      <h>110</h>
+    </coordinates>
+    <panel_attributes>*internal::CublasHandle*
+«RAII: cublasCreate ↔ cublasDestroy»
+--
++Get(): cublasHandle_t
+errors → RAPIDHT_CUBLAS_CHECK
+bg=#FFFFFF</panel_attributes>
+    <additional_attributes/>
+  </element>
+  <element>
+    <id>UMLClass</id>
+    <coordinates>
+      <x>900</x>
+      <y>820</y>
+      <w>390</w>
+      <h>90</h>
+    </coordinates>
+    <panel_attributes>*DeviceVolume&lt;T&gt;::Impl*
+--
++storage: DeviceArray&lt;T&gt;
++count: size_t
+bg=#FFFFFF</panel_attributes>
+    <additional_attributes/>
+  </element>
+  <element>
+    <id>UMLClass</id>
+    <coordinates>
+      <x>900</x>
+      <y>950</y>
+      <w>390</w>
+      <h>140</h>
+    </coordinates>
+    <panel_attributes>«header» support.h
+--
+IsPowerOfTwo(n)
+ThrowGpuUnavailable()
+MpiContext { rank, size, active }
+QueryMpi(), MpiBarrier(ctx)
+MpiDatatype&lt;T&gt;
+bg=#FFFFFF</panel_attributes>
+    <additional_attributes/>
+  </element>
+  <element>
+    <id>UMLClass</id>
+    <coordinates>
+      <x>40</x>
+      <y>1310</y>
+      <w>410</w>
+      <h>140</h>
+    </coordinates>
+    <panel_attributes>«source» transform.cpp
+--
+constructor: CPU tables, or GPU matrices + scratch
+ForwardTransform: dispatch by Modes and 1D, 2D, 3D
+InverseTransform: forward, then × 1÷N
+RejectMultiProcess: more than one MPI rank throws
+resident overloads → TransformOnDevice
+bg=#FFFFFF</panel_attributes>
+    <additional_attributes/>
+  </element>
+  <element>
+    <id>UMLClass</id>
+    <coordinates>
+      <x>40</x>
+      <y>1480</y>
+      <w>410</w>
+      <h>140</h>
+    </coordinates>
+    <panel_attributes>«source» backend_cpu.cpp  [OpenMP]
+--
+FDHT1D: radix-2 FHT along one axis
+Series1D: FDHT1D over every line of an axis
+FDHT2D, FDHT3D: Series1D per axis + Bracewell
+ForwardSeparable: Series1D per axis only
+RealFFT1D: reference path for Modes::RFFT
+bg=#FFFFFF</panel_attributes>
+    <additional_attributes/>
+  </element>
+  <element>
+    <id>UMLClass</id>
+    <coordinates>
+      <x>510</x>
+      <y>1310</y>
+      <w>370</w>
+      <h>180</h>
+    </coordinates>
+    <panel_attributes>«source» backend_cuda.cpp  [cuBLAS]
+«compiled only with RAPIDHT_WITH_CUDA»
+--
+DHTnDCuda: upload → DHTnDOnDevice → download
+DHT3DOnDevice, no transposes:
+  X:  C_W · [W × HD]          one GEMM
+  Y:  [W × H] · C_H           D batches
+  Z:  [WH × D] · C_D          one GEMM
+  then BracewellTransform3D kernel
+bg=#FFFFFF</panel_attributes>
+    <additional_attributes/>
+  </element>
+  <element>
+    <id>UMLClass</id>
+    <coordinates>
+      <x>510</x>
+      <y>1520</y>
+      <w>370</w>
+      <h>110</h>
+    </coordinates>
+    <panel_attributes>«source» kernels.cu  [CUDA]
+--
+__global__ kernels behind kernels.h:
+cas matrix init, Bracewell 2D and 3D,
+scale, tiled matmul, transpose
+bg=#FFFFFF</panel_attributes>
+    <additional_attributes/>
+  </element>
+  <element>
+    <id>UMLClass</id>
+    <coordinates>
+      <x>920</x>
+      <y>1310</y>
+      <w>400</w>
+      <h>110</h>
+    </coordinates>
+    <panel_attributes>«sources» other
+--
+convolution.cpp — EvenKernelConvolution
+device_volume.cpp — DeviceVolume, IsGpuAvailable
+utilities.cpp — ParseDims
+bg=#FFFFFF</panel_attributes>
+    <additional_attributes/>
+  </element>
+  <element>
+    <id>UMLNote</id>
+    <coordinates>
+      <x>1400</x>
+      <y>40</y>
+      <w>400</w>
+      <h>190</h>
+    </coordinates>
+    <panel_attributes>Conventions
+--
+Storage: idx = i + W·(j + H·k), x fastest
+Sizes: powers of two; height = 0 → 1D,
+depth = 0 → 2D
+Forward is unnormalised, inverse = forward × 1÷N
+True ND DHT = separable passes + Bracewell
+correction; ForwardSeparable skips it
+(valid for convolution with even kernels)
+GPU: compute in float (FP64 is 1:64 on GeForce)
+bg=#FFFFE0</panel_attributes>
+    <additional_attributes/>
+  </element>
+  <element>
+    <id>UMLClass</id>
+    <coordinates>
+      <x>1400</x>
+      <y>270</y>
+      <w>400</w>
+      <h>130</h>
+    </coordinates>
+    <panel_attributes>«external»
+--
+OpenMP — required
+CUDA runtime + cuBLAS — RAPIDHT_WITH_CUDA=ON
+MPI — RAPIDHT_WITH_MPI=ON, experimental:
+  more than one process throws (B-002)
+bg=#FFFFFF</panel_attributes>
+    <additional_attributes/>
+  </element>
+  <element>
+    <id>UMLClass</id>
+    <coordinates>
+      <x>1400</x>
+      <y>440</y>
+      <w>400</w>
+      <h>140</h>
+    </coordinates>
+    <panel_attributes>«consumers, link coreht»
+--
+tests — GoogleTest; checked against the
+  O(N²) definition and analytic pairs
+benchmarks — Google Benchmark; cuFFT and
+  FFTW baselines; profile_gpu3d for Nsight
+examples — fdht1d, fdht2d, fdht3d
+bg=#FFFFFF</panel_attributes>
+    <additional_attributes/>
+  </element>
+  <element>
+    <id>UMLNote</id>
+    <coordinates>
+      <x>1400</x>
+      <y>620</y>
+      <w>400</w>
+      <h>140</h>
+    </coordinates>
+    <panel_attributes>Build
+--
+Library target: coreht (static unless BUILD_SHARED_LIBS)
+backend_cuda.cpp and kernels.cu are compiled in
+only with RAPIDHT_WITH_CUDA=ON. Without them the
+GPU members are stubs, and the constructor
+rejects Modes::GPU at runtime
+bg=#FFFFE0</panel_attributes>
+    <additional_attributes/>
+  </element>
+  <element>
+    <id>Relation</id>
+    <coordinates>
+      <x>470</x>
+      <y>360</y>
+      <w>440</w>
+      <h>42</h>
+    </coordinates>
+    <panel_attributes>lt=&lt;&lt;&lt;&lt;&lt;-</panel_attributes>
+    <additional_attributes>430.0;10.0;30.0;10.0;30.0;32.5;10.0;32.5</additional_attributes>
+  </element>
+  <element>
+    <id>Relation</id>
+    <coordinates>
+      <x>382</x>
+      <y>35</y>
+      <w>723</w>
+      <h>45</h>
+    </coordinates>
+    <panel_attributes>lt=.&gt;
+resident overloads</panel_attributes>
+    <additional_attributes>10.0;35.0;10.0;10.0;713.0;10.0;713.0;35.0</additional_attributes>
+  </element>
+  <element>
+    <id>Relation</id>
+    <coordinates>
+      <x>470</x>
+      <y>85</y>
+      <w>60</w>
+      <h>20</h>
+    </coordinates>
+    <panel_attributes>lt=-&gt;</panel_attributes>
+    <additional_attributes>10.0;10.0;50.0;10.0</additional_attributes>
+  </element>
+  <element>
+    <id>Relation</id>
+    <coordinates>
+      <x>162</x>
+      <y>490</y>
+      <w>20</w>
+      <h>340</h>
+    </coordinates>
+    <panel_attributes>lt=&lt;&lt;&lt;&lt;&lt;-
+pimpl</panel_attributes>
+    <additional_attributes>10.0;10.0;10.0;330.0</additional_attributes>
+  </element>
+  <element>
+    <id>Relation</id>
+    <coordinates>
+      <x>1280</x>
+      <y>150</y>
+      <w>62</w>
+      <h>725</h>
+    </coordinates>
+    <panel_attributes>lt=&lt;&lt;&lt;&lt;&lt;-
+pimpl</panel_attributes>
+    <additional_attributes>10.0;10.0;52.0;10.0;52.0;715.0;10.0;715.0</additional_attributes>
+  </element>
+  <element>
+    <id>Relation</id>
+    <coordinates>
+      <x>410</x>
+      <y>858</y>
+      <w>100</w>
+      <h>20</h>
+    </coordinates>
+    <panel_attributes>lt=&lt;&lt;&lt;&lt;&lt;-
+m2=5</panel_attributes>
+    <additional_attributes>10.0;10.0;90.0;10.0</additional_attributes>
+  </element>
+  <element>
+    <id>Relation</id>
+    <coordinates>
+      <x>850</x>
+      <y>855</y>
+      <w>60</w>
+      <h>20</h>
+    </coordinates>
+    <panel_attributes>lt=&lt;&lt;&lt;&lt;&lt;-</panel_attributes>
+    <additional_attributes>50.0;10.0;10.0;10.0</additional_attributes>
+  </element>
+  <element>
+    <id>Relation</id>
+    <coordinates>
+      <x>410</x>
+      <y>946</y>
+      <w>100</w>
+      <h>138</h>
+    </coordinates>
+    <panel_attributes>lt=&lt;&lt;&lt;&lt;&lt;-</panel_attributes>
+    <additional_attributes>10.0;10.0;50.0;10.0;50.0;128.0;90.0;128.0</additional_attributes>
+  </element>
+  <element>
+    <id>Relation</id>
+    <coordinates>
+      <x>334</x>
+      <y>1170</y>
+      <w>260</w>
+      <h>150</h>
+    </coordinates>
+    <panel_attributes>lt=.&gt;
+launches</panel_attributes>
+    <additional_attributes>250.0;140.0;250.0;56.0;10.0;56.0;10.0;10.0</additional_attributes>
+  </element>
+  <element>
+    <id>Relation</id>
+    <coordinates>
+      <x>410</x>
+      <y>906</y>
+      <w>110</w>
+      <h>441</h>
+    </coordinates>
+    <panel_attributes>lt=.&gt;</panel_attributes>
+    <additional_attributes>100.0;431.0;70.0;431.0;70.0;10.0;10.0;10.0</additional_attributes>
+  </element>
+  <element>
+    <id>Relation</id>
+    <coordinates>
+      <x>235</x>
+      <y>1010</y>
+      <w>675</w>
+      <h>310</h>
+    </coordinates>
+    <panel_attributes>lt=.&gt;</panel_attributes>
+    <additional_attributes>10.0;300.0;10.0;234.0;645.0;234.0;645.0;10.0;665.0;10.0</additional_attributes>
+  </element>
+  <element>
+    <id>Relation</id>
+    <coordinates>
+      <x>18</x>
+      <y>1090</y>
+      <w>502</w>
+      <h>555</h>
+    </coordinates>
+    <panel_attributes>lt=&lt;&lt;.
+implements</panel_attributes>
+    <additional_attributes>22.0;10.0;10.0;10.0;10.0;545.0;467.0;545.0;467.0;485.0;492.0;485.0</additional_attributes>
+  </element>
+</diagram>

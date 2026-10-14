@@ -93,8 +93,12 @@ src/                implementation
 tests/              GoogleTest suites, registered individually with CTest
 examples/           standalone demo programs
 benchmarks/         Google Benchmark harness, FFTW and cuFFT baselines
-docs/               benchmark report and figures
+docs/               benchmark report, figures, architecture diagram
 ```
+
+The class and file structure is drawn in
+[docs/architecture.uxf](docs/architecture.uxf) — open it in
+[UMLet](https://www.umlet.com) or the UMLet extension for VS Code.
 
 ---
 
