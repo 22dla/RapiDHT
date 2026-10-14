@@ -76,6 +76,7 @@
       "condition": { "type": "equals", "lhs": "${hostSystemName}", "rhs": "Windows" },
       "output": { "outputOnFailure": true }
     },
-    { "name": "cuda", "inherits": "linux-only", "configurePreset": "cuda" }
+    { "name": "cuda", "inherits": "linux-only", "configurePreset": "cuda" },
+    { "name": "dev", "inherits": "linux-only", "configurePreset": "dev" }
   ]
 }
