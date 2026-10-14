@@ -27,6 +27,8 @@ CompileFlags:
     - -Xcompiler=*
     - --expt-*
     - -gencode*
+    - -ccbin*
+    - -arch=*
 
   Add:
     # clang ships its own list of CUDA releases it recognises and refuses newer
