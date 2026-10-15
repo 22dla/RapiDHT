@@ -76,7 +76,28 @@ jobs:
 
       - name: Test
         run: ctest --test-dir build -C Release --output-on-failure
+  
+  python:
+    name: Python bindings
+    runs-on: ubuntu-latest
 
+    steps:
+      - name: Check out the repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      # pip fetches scikit-build-core and nanobind for the build, then CMake builds
+      # the CPU library and the module.
+      - name: Build and install
+        run: pip install ".[test]"
+
+      - name: Test
+        run: pytest -v
+  
   cuda-compile:
     name: Linux / CUDA compile
     runs-on: ubuntu-22.04

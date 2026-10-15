@@ -1,0 +1,42 @@
+# The Python package: `pip install .` (or `uv pip install -e .`) builds the CPU library
+# and the nanobind module through CMake. The C++ build itself does not need this file.
+
+[build-system]
+requires = ["scikit-build-core>=0.10", "nanobind>=2.4"]
+build-backend = "scikit_build_core.build"
+
+[project]
+name = "rapidht"
+version = "0.1.0"
+description = "Multidimensional discrete Hartley transform and Minkowski functional fields"
+readme = "README.md"
+license = { file = "LICENSE" }
+authors = [{ name = "Evgeny A. Volkov", email = "volkov22dla@yandex.ru" }]
+requires-python = ">=3.9"
+dependencies = ["numpy>=1.23"]
+
+[project.optional-dependencies]
+test = ["pytest>=7"]
+
+[tool.scikit-build]
+minimum-version = "build-system.requires"
+cmake.version = ">=3.18"
+cmake.build-type = "Release"
+# Under build-*/, which .gitignore already covers; per Python/platform tag so builds coexist.
+build-dir = "build-python/{wheel_tag}"
+wheel.packages = ["python/rapidht"]
+# Only the module: not coreht, the headers or anything else the C++ install rules list.
+install.components = ["python"]
+
+[tool.scikit-build.cmake.define]
+RAPIDHT_BUILD_PYTHON = "ON"
+RAPIDHT_BUILD_TESTS = "OFF"
+RAPIDHT_WITH_CUDA = "OFF"
+RAPIDHT_WITH_MPI = "OFF"
+
+[tool.ruff]
+line-length = 120
+src = ["python"]
+
+[tool.pytest.ini_options]
+testpaths = ["python/tests"]

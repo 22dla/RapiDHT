@@ -95,7 +95,9 @@
 
 ## E6. Воспроизводимость (P1, параллельно)
 
-- [ ] **B-601** ⚙ Python-биндинги (nanobind/pybind11), `pip install -e .`; обмен с PyTorch через DLPack без копирования.
+- [~] **B-601** ⚙ Python-биндинги (nanobind/pybind11), `pip install -e .`; обмен с PyTorch через DLPack без копирования.
+  - [x] Часть 1 (2026-10-15): `pyproject.toml` (scikit-build-core + nanobind, сборка в `build-python/`, в колесо идёт только модуль — компонент `python`), `python/rapidht_ext.cpp`, пакет `python/rapidht` — `minkowski_functionals`, `minkowski_densities`, `make_window`, `MinkowskiFields`, `configuration_weights`; numpy, CPU, GIL отпускается на время расчёта. Ошибки C++ → `ValueError`. 23 теста pytest против оракулов на numpy (подсчёт клеток через `np.roll`, свёртка через `np.fft`). Сборка через pip не перенаправляет `compile_commands.json` в корне. Задание CI `Python`.
+  - [ ] Часть 2: преобразование и свёртки в Python; DLPack (torch-тензоры без копирования); GPU после B-102/B-203.
 - [ ] **B-602** ⚙ CI: Windows (MSVC) + Ubuntu CPU; CUDA — сборка без запуска тестов.
 - [ ] **B-603** ⚙ Конфиги экспериментов + сиды + скрипт загрузки открытых данных.
 
@@ -113,6 +115,7 @@
 - 2026-10-08 — B-001 (Linux CPU и Windows MSVC), B-002 шаг 1, B-101. Ветка `fix/b002-mpi-guard`.
   Главный исследовательский трек — R-1 (3D HNO); обоснование — в проекте claude.ai, документ `claude/research-directions.md`.
 - 2026-10-09 — B-001 закрыт: десктоп (CUDA 12.4 + gcc-13) 48/48; пресет `windows-cpu` для ноутбука; `CLAUDE.md` в корне. Ветка `fix/b002-mpi-guard` влита (PR #4).
+- 2026-10-15 — B-601, часть 1: пакет `rapidht` для Python (функционалы и поля Минковского на numpy).
 - 2026-10-15 — B-202: банк окон и поля ФМ; найден B-007 (размер не степени двойки роняет процесс в 2D/3D).
 - 2026-10-15 — B-201: функционалы и плотности Минковского на CPU; табл. 2 диссертации подтверждена выводом из подсчёта клеток. Первый потребитель — hno-porous (H-111: поля ФМ как входные каналы).
 - 2026-10-14 — B-006: автоподбор хост-компилятора для CUDA, пресеты `*-local` больше не нужны. Диаграмма архитектуры `docs/architecture.uxf` (UMLet).

@@ -31,7 +31,13 @@ cmake --preset cpu && cmake --build --preset cpu -j && ctest --preset cpu
 # ноутбук (Windows)
 cmake --preset windows-cpu; cmake --build --preset windows-cpu; ctest --preset windows-cpu
 ```
-Ожидается 48 тестов; без GPU 12 из них пропускаются (`SKIP_IF_NO_GPU()`), на десктопе должны выполняться все.
+Ожидается 73 теста; без GPU 12 из них пропускаются (`SKIP_IF_NO_GPU()`), на десктопе должны выполняться все.
+
+Python-пакет (`pyproject.toml`, scikit-build-core + nanobind; собирается в `build-python/`):
+```bash
+pip install ".[test]" && pytest          # 23 теста; в окружении hno-porous: uv pip install ~/projects/RapiDHT
+```
+После правок C++ пакет пересобрать той же командой.
 
 ## Правила кода
 - Форматирование — `clang-format-18` по `.clang-format`; CI падает на любом расхождении. Перед коммитом: `clang-format-18 -i` на изменённых `.h/.cpp/.cu` (кроме `3dparty/`).

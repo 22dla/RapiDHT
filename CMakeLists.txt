@@ -26,6 +26,8 @@ option(RAPIDHT_BUILD_TESTS "Build the test executables" ON)
 option(RAPIDHT_BUILD_BENCHMARKS "Build the benchmark executable" OFF)
 option(ENABLE_PROFILING "Enable function profiling" OFF)
 option(RAPIDHT_WARNINGS_AS_ERRORS "Turn compiler warnings into errors" OFF)
+# Set by pyproject.toml (scikit-build-core); needs nanobind, so off for plain C++ builds.
+option(RAPIDHT_BUILD_PYTHON "Build the Python module (python/)" OFF)
 
 # Set folder to installing
 set(CMAKE_INSTALL_PREFIX ${CMAKE_CURRENT_SOURCE_DIR}/install)
@@ -226,7 +228,10 @@ endif()
 # rewritten on every reconfigure. Skipped on Windows, where symlinks need extra
 # privileges and the Visual Studio generators write no database anyway, and
 # when RapiDHT is a subproject of someone else's build.
-if(CMAKE_EXPORT_COMPILE_COMMANDS AND NOT WIN32
+#
+# Not for a pip build either: its build directory is scikit-build-core's, and
+# relinking would point the editor at it.
+if(CMAKE_EXPORT_COMPILE_COMMANDS AND NOT WIN32 AND NOT SKBUILD
    AND CMAKE_SOURCE_DIR STREQUAL PROJECT_SOURCE_DIR
    AND NOT CMAKE_SOURCE_DIR STREQUAL CMAKE_BINARY_DIR)
     file(CREATE_LINK "${CMAKE_BINARY_DIR}/compile_commands.json"
@@ -237,7 +242,16 @@ if(CMAKE_EXPORT_COMPILE_COMMANDS AND NOT WIN32
     endif()
 endif()
 
+# The Python module is a shared library and coreht is linked into it.
+if(RAPIDHT_BUILD_PYTHON)
+    set(CMAKE_POSITION_INDEPENDENT_CODE ON)
+endif()
+
 add_subdirectory(src)
+
+if(RAPIDHT_BUILD_PYTHON)
+    add_subdirectory(python)
+endif()
 
 enable_testing()
 

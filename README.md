@@ -122,6 +122,7 @@ NVIDIA driver, or an MPI implementation.
 | `RAPIDHT_BUILD_TESTS` | `ON` | Builds the test executables |
 | `RAPIDHT_BUILD_BENCHMARKS` | `OFF` | Fetches Google Benchmark and builds the harness |
 | `ENABLE_PROFILING` | `OFF` | Enables the `PROFILE_FUNCTION()` timer |
+| `RAPIDHT_BUILD_PYTHON` | `OFF` | Builds the Python module; set by `pyproject.toml`, needs nanobind |
 
 ```bash
 # with the GPU backend
@@ -173,6 +174,29 @@ Which backends were compiled in is recorded in the generated
 `rapidht_config.h` and exposed as `RapiDHT::kCudaEnabled` and
 `RapiDHT::kMpiEnabled`. Whether a device is actually *present* is a separate
 question, answered by `RapiDHT::IsGpuAvailable()`.
+
+### Python
+
+The Minkowski functional routines are also a Python package, CPU only for now,
+taking and returning numpy arrays. `pip` builds it through CMake
+(scikit-build-core and nanobind are fetched automatically):
+
+```bash
+pip install .            # or, inside a uv project: uv pip install /path/to/RapiDHT
+pip install ".[test]" && pytest
+```
+
+```python
+import numpy as np, rapidht
+
+solid = np.random.rand(64, 64, 64) < 0.4
+rapidht.minkowski_functionals(solid)        # {'volume': ..., 'surface': ..., 'mean_curvature': ..., 'euler': ...}
+fields = rapidht.MinkowskiFields(solid.shape, radii=(2, 4, 8))(solid)   # (4, 3, 64, 64, 64)
+```
+
+A numpy array of shape `(n0, n1, n2)` is the C++ volume with width `n2`,
+height `n1`, depth `n0`. The Python tests check the bindings against oracles
+written in numpy alone (cell counting with array rolls, FFT convolution).
 
 ---
 

@@ -29,3 +29,9 @@ CMakeUserPresets.json
 # enough to produce them. They are stale copies, and five of them got committed
 # by a `git add -A`.
 .fuse_hidden*
+
+# Python: bytecode and packaging leftovers. The extension builds under build-python/.
+__pycache__/
+*.egg-info/
+*.so
+.pytest_cache/
