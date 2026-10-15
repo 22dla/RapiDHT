@@ -321,3 +321,52 @@ TEST(EvenConvolution, RejectsGpuModeForNow)
 {
     EXPECT_THROW(EvenKernelConvolution<double>(8, 8, 8, Modes::GPU), std::exception);
 }
+
+// ---------------------------------------------------------------------------
+// A bank of even kernels
+// ---------------------------------------------------------------------------
+
+TEST(EvenKernelBank, MatchesDirectConvolutionForEveryKernel)
+{
+    for (const auto& e : kExtents) {
+        SCOPED_TRACE(Describe(e));
+        const Dims d = Dims::Of(e.width, e.height, e.depth);
+        const auto f = MakeSignal(d.Total());
+        std::vector<double> delta(d.Total(), 0.0);
+        delta[0] = 1.0;
+        const std::vector<std::vector<double>> kernels = { MakeEvenKernel(d), MakeRoughEvenKernel(d), delta };
+
+        EvenKernelBank<double> bank(e.width, e.height, e.depth);
+        for (size_t k = 0; k < kernels.size(); ++k) {
+            EXPECT_EQ(bank.AddKernel(kernels[k].data()), k);
+        }
+        std::vector<double> out(kernels.size() * d.Total());
+        const auto input = f;
+        bank.Apply(f.data(), out.data());
+        EXPECT_EQ(f, input); // the field is left alone
+
+        for (size_t k = 0; k < kernels.size(); ++k) {
+            const std::vector<double> got(out.begin() + k * d.Total(), out.begin() + (k + 1) * d.Total());
+            ExpectClose(got, ReferenceCircularConvolution(f, kernels[k], d), 1e-12);
+        }
+    }
+}
+
+TEST(EvenKernelBank, RejectsOddKernelAndEmptyBank)
+{
+    const Dims d = Dims::Of(8, 4, 2);
+    EvenKernelBank<double> bank(8, 4, 2);
+    std::vector<double> f(d.Total(), 1.0), out(d.Total());
+    EXPECT_THROW(bank.Apply(f.data(), out.data()), std::logic_error);
+    std::vector<double> shifted(d.Total(), 0.0);
+    shifted[1] = 1.0;
+    EXPECT_THROW(bank.AddKernel(shifted.data()), std::invalid_argument);
+    EXPECT_EQ(bank.KernelCount(), 0u);
+}
+
+TEST(EvenKernelBank, RejectsNonPowerOfTwoExtentUpFront)
+{
+    // Would otherwise throw inside an OpenMP region and terminate the process.
+    EXPECT_THROW(EvenKernelBank<double>(12, 16, 16), std::invalid_argument);
+    EXPECT_THROW(EvenKernelConvolution<double>(16, 6, 0), std::invalid_argument);
+}

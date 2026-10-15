@@ -6,6 +6,7 @@
  *        cells of the cubical complex -- and against bodies with known values.
  */
 
+#include <rapidht/convolution.h>
 #include <rapidht/minkowski.h>
 
 #include <gtest/gtest.h>
@@ -460,4 +461,196 @@ TEST(MinkowskiDensities, VoxelCentringCommutesWithGridSymmetries)
             }
         }
     }
+}
+
+// ---------------------------------------------------------------------------
+// Windows and local functionals (B-202)
+// ---------------------------------------------------------------------------
+
+namespace {
+
+size_t WrappedIndex(long i, size_t n) { return static_cast<size_t>(((i % long(n)) + long(n)) % long(n)); }
+
+/// Brute force: the voxel-centred densities summed over the voxels of a ball around each voxel.
+std::vector<double> BallSumReference(const Volume& vol, double radius)
+{
+    const size_t plane = vol.v.size();
+    std::vector<double> dens(4 * plane), out(4 * plane, 0.0);
+    MinkowskiDensities(vol.v.data(), vol.w, vol.h, vol.d, dens.data(), DensityCentring::Voxel);
+    const long R = static_cast<long>(std::ceil(radius));
+    for (size_t k = 0; k < vol.d; ++k) {
+        for (size_t j = 0; j < vol.h; ++j) {
+            for (size_t i = 0; i < vol.w; ++i) {
+                for (long c = -R; c <= R; ++c) {
+                    for (long b = -R; b <= R; ++b) {
+                        for (long a = -R; a <= R; ++a) {
+                            if (double(a * a + b * b + c * c) > radius * radius) {
+                                continue;
+                            }
+                            const size_t m = WrappedIndex(long(i) + a, vol.w)
+                                           + vol.w * (WrappedIndex(long(j) + b, vol.h) + vol.h * WrappedIndex(long(k) + c, vol.d));
+                            for (int p = 0; p < 4; ++p) {
+                                out[p * plane + i + vol.w * (j + vol.h * k)] += dens[p * plane + m];
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    return out;
+}
+
+} // namespace
+
+TEST(MinkowskiWindows, BallIsEvenAndHasTheRightVoxelCount)
+{
+    const auto w = MakeWindow<double>(16, 8, 8, WindowShape::Ball, 3.2);
+    EXPECT_TRUE(IsEvenPerAxis(w.data(), 16, 8, 8));
+    size_t count = 0;
+    for (long c = -3; c <= 3; ++c) {
+        for (long b = -3; b <= 3; ++b) {
+            for (long a = -3; a <= 3; ++a) {
+                count += a * a + b * b + c * c <= 3.2 * 3.2;
+            }
+        }
+    }
+    double sum = 0.0;
+    for (double v : w) {
+        sum += v;
+    }
+    EXPECT_EQ(sum, double(count));
+}
+
+TEST(MinkowskiWindows, RejectsBadRadius)
+{
+    EXPECT_THROW(MakeWindow<double>(16, 8, 8, WindowShape::Ball, 4.0), std::invalid_argument); // not < 8/2
+    EXPECT_NO_THROW(MakeWindow<double>(16, 8, 8, WindowShape::Ball, 3.99));
+    EXPECT_THROW(MakeWindow<double>(16, 8, 8, WindowShape::Ball, 0.0), std::invalid_argument);
+    EXPECT_THROW(MakeWindow<double>(16, 8, 8, WindowShape::Gaussian, -1.0), std::invalid_argument);
+    EXPECT_NO_THROW(MakeWindow<double>(16, 8, 8, WindowShape::Gaussian, 20.0)); // periodic images summed
+}
+
+TEST(MinkowskiWindows, GaussianIsThePeriodicSumOfImages)
+{
+    const double r = 5.0; // wider than a quarter period: the images matter
+    const auto w = MakeWindow<double>(16, 8, 8, WindowShape::Gaussian, r);
+    EXPECT_TRUE(IsEvenPerAxis(w.data(), 16, 8, 8, 1e-14));
+    // Total weight of the periodised window = the integral-free lattice sum of one Gaussian,
+    // which for r >> 1 is (sqrt(2 pi) r)^3 to many digits (Poisson summation).
+    double sum = 0.0;
+    for (double v : w) {
+        sum += v;
+    }
+    EXPECT_NEAR(sum / std::pow(std::sqrt(2 * kPi) * r, 3), 1.0, 1e-12);
+    // One value against a direct sum over images.
+    double direct = 0.0;
+    for (long a = -20; a <= 20; ++a) {
+        for (long b = -20; b <= 20; ++b) {
+            for (long c = -20; c <= 20; ++c) {
+                const double x = 3 + 16.0 * a, y = 6 + 8.0 * b, z = 1 + 8.0 * c;
+                direct += std::exp(-(x * x + y * y + z * z) / (2 * r * r));
+            }
+        }
+    }
+    EXPECT_NEAR(w[3 + 16 * (6 + 8 * 1)], direct, 1e-12);
+}
+
+TEST(MinkowskiFields, BallSumMatchesBruteForce)
+{
+    const Volume vol = RandomVolume(16, 8, 8, 21);
+    const size_t plane = vol.v.size();
+    const std::vector<double> radii = { 1.5, 2.5, 3.2 };
+    MinkowskiFields<double> mf(16, 8, 8, WindowShape::Ball, radii, WindowNormalisation::Sum);
+    ASSERT_EQ(mf.FieldCount(), 12u);
+    std::vector<double> out(mf.FieldCount() * plane);
+    mf.Compute(vol.v.data(), out.data());
+
+    MinkowskiFields<float> mff(16, 8, 8, WindowShape::Ball, radii, WindowNormalisation::Sum);
+    std::vector<float> outf(mff.FieldCount() * plane);
+    mff.Compute(vol.v.data(), outf.data());
+
+    for (size_t s = 0; s < radii.size(); ++s) {
+        const auto ref = BallSumReference(vol, radii[s]);
+        for (size_t f = 0; f < 4; ++f) {
+            for (size_t n = 0; n < plane; ++n) {
+                const size_t at = (f * radii.size() + s) * plane + n;
+                ASSERT_NEAR(out[at], ref[f * plane + n], 1e-9) << "functional " << f << ", radius " << radii[s];
+                ASSERT_NEAR(outf[at], ref[f * plane + n], 2e-3) << "float, functional " << f;
+            }
+        }
+    }
+}
+
+TEST(MinkowskiFields, MeanOfFullVolumeIsUnitVolumeFraction)
+{
+    Volume full(8, 8, 8);
+    std::fill(full.v.begin(), full.v.end(), uint8_t { 1 });
+    for (auto shape : { WindowShape::Ball, WindowShape::Gaussian }) {
+        MinkowskiFields<double> mf(8, 8, 8, shape, { 1.0, 2.5 });
+        std::vector<double> out(mf.FieldCount() * mf.Size());
+        mf.Compute(full.v.data(), out.data());
+        for (size_t f = 0; f < 4; ++f) {
+            for (size_t n = 0; n < 2 * mf.Size(); ++n) {
+                ASSERT_NEAR(out[f * 2 * mf.Size() + n], f == 0 ? 1.0 : 0.0, 1e-12);
+            }
+        }
+    }
+}
+
+TEST(MinkowskiFields, SpatialSumIsWindowWeightTimesGlobalFunctional)
+{
+    const Volume vol = RandomVolume(8, 16, 8, 4);
+    const MinkowskiValues g = Global(vol, MinkowskiBoundary::Periodic);
+    const double globals[4] = { g.volume, g.surface, g.meanCurvature, g.euler };
+    MinkowskiFields<double> mf(8, 16, 8, WindowShape::Gaussian, { 1.0, 3.0, 9.0 }, WindowNormalisation::Sum);
+    std::vector<double> out(mf.FieldCount() * mf.Size());
+    mf.Compute(vol.v.data(), out.data());
+    for (size_t f = 0; f < 4; ++f) {
+        for (size_t s = 0; s < 3; ++s) {
+            double sum = 0.0;
+            for (size_t n = 0; n < mf.Size(); ++n) {
+                sum += out[(f * 3 + s) * mf.Size() + n];
+            }
+            EXPECT_NEAR(sum, mf.WindowWeight(s) * globals[f], 1e-8 * mf.WindowWeight(s) * (1 + std::fabs(globals[f])));
+        }
+    }
+}
+
+TEST(MinkowskiFields, CommuteWithCentralInversion)
+{
+    const size_t n = 16;
+    const Volume vol = RandomVolume(n, n, n, 9);
+    Volume inv(n, n, n);
+    for (size_t k = 0; k < n; ++k) {
+        for (size_t j = 0; j < n; ++j) {
+            for (size_t i = 0; i < n; ++i) {
+                inv.at(n - 1 - i, n - 1 - j, n - 1 - k) = vol.at(i, j, k);
+            }
+        }
+    }
+    for (auto shape : { WindowShape::Ball, WindowShape::Gaussian }) {
+        MinkowskiFields<double> mf(n, n, n, shape, { 2.0, 4.0 });
+        std::vector<double> a(mf.FieldCount() * mf.Size()), b(a.size());
+        mf.Compute(vol.v.data(), a.data());
+        mf.Compute(inv.v.data(), b.data());
+        for (size_t c = 0; c < mf.FieldCount(); ++c) {
+            for (size_t k = 0; k < n; ++k) {
+                for (size_t j = 0; j < n; ++j) {
+                    for (size_t i = 0; i < n; ++i) {
+                        const size_t p = c * mf.Size() + i + n * (j + n * k);
+                        const size_t q = c * mf.Size() + (n - 1 - i) + n * ((n - 1 - j) + n * (n - 1 - k));
+                        ASSERT_NEAR(b[q], a[p], 1e-10) << "field " << c;
+                    }
+                }
+            }
+        }
+    }
+}
+
+TEST(MinkowskiFields, RejectsBadSetup)
+{
+    EXPECT_THROW(MinkowskiFields<double>(16, 16, 16, WindowShape::Ball, {}), std::invalid_argument);
+    EXPECT_THROW(MinkowskiFields<double>(16, 16, 16, WindowShape::Ball, { 8.0 }), std::invalid_argument);
+    EXPECT_THROW(MinkowskiFields<double>(12, 16, 16, WindowShape::Ball, { 2.0 }), std::invalid_argument); // not a power of two
 }

@@ -7,9 +7,13 @@
 #include <rapidht/convolution.h>
 #include <rapidht/utilities.h>
 
+#include "internal/support.h"
+
 #include <algorithm>
 #include <cmath>
 #include <stdexcept>
+#include <string>
+#include <utility>
 
 namespace RapiDHT {
 
@@ -18,6 +22,18 @@ namespace {
 size_t Mirror(size_t i, size_t n) { return i == 0 ? 0 : n - i; }
 
 size_t Extent(size_t n) { return n == 0 ? size_t { 1 } : n; }
+
+/// The 2D/3D transforms would reject such extents only inside an OpenMP region,
+/// which terminates the process instead of throwing; check up front.
+void CheckPowersOfTwo(size_t width, size_t height, size_t depth, const char* caller)
+{
+    for (size_t n : { width, height, depth }) {
+        if (n != 0 && !internal::IsPowerOfTwo(n)) {
+            throw std::invalid_argument(std::string(caller) + ": every extent must be a power of two, got "
+                                        + std::to_string(n) + ".");
+        }
+    }
+}
 
 } // namespace
 
@@ -69,6 +85,7 @@ EvenKernelConvolution<T>::EvenKernelConvolution(size_t width, size_t height, siz
         throw std::invalid_argument(
             "EvenKernelConvolution: only Modes::CPU is supported for now.");
     }
+    CheckPowersOfTwo(width, height, depth, "EvenKernelConvolution");
 }
 
 template <typename T>
@@ -117,10 +134,74 @@ void EvenKernelConvolution<T>::Apply(T* data)
     _transform.ForwardSeparable(data);
 }
 
+template <typename T>
+EvenKernelBank<T>::EvenKernelBank(size_t width, size_t height, size_t depth, Modes mode):
+    _width(width),
+    _height(height),
+    _depth(depth),
+    _size(width * Extent(height) * Extent(depth)),
+    _transform(width, height, depth, mode)
+{
+    if (mode != Modes::CPU) {
+        throw std::invalid_argument("EvenKernelBank: only Modes::CPU is supported for now.");
+    }
+    CheckPowersOfTwo(width, height, depth, "EvenKernelBank");
+}
+
+template <typename T>
+size_t EvenKernelBank<T>::AddKernel(const T* kernel, double relativeTolerance)
+{
+    PROFILE_FUNCTION();
+
+    if (!IsEvenPerAxis(kernel, _width, _height, _depth, relativeTolerance)) {
+        throw std::invalid_argument(
+            "EvenKernelBank: the kernel is not even along every axis "
+            "(g(i) != g(-i) mod the extent). Store it with its centre at index 0.");
+    }
+    std::vector<T> spectrum(kernel, kernel + _size);
+    _transform.ForwardSeparable(spectrum.data());
+    const T scale = static_cast<T>(1.0 / static_cast<double>(_size));
+    for (auto& v : spectrum) {
+        v *= scale;
+    }
+    _spectra.push_back(std::move(spectrum));
+    return _spectra.size() - 1;
+}
+
+template <typename T>
+void EvenKernelBank<T>::Apply(const T* field, T* out)
+{
+    PROFILE_FUNCTION();
+
+    if (field == nullptr || out == nullptr) {
+        throw std::invalid_argument("EvenKernelBank::Apply: null pointer.");
+    }
+    if (_spectra.empty()) {
+        throw std::logic_error("EvenKernelBank::Apply: add a kernel first.");
+    }
+
+    _scratch.assign(field, field + _size);
+    _transform.ForwardSeparable(_scratch.data());
+
+    const long long count = static_cast<long long>(_size);
+    const T* f = _scratch.data();
+    for (size_t k = 0; k < _spectra.size(); ++k) {
+        T* o = out + k * _size;
+        const T* s = _spectra[k].data();
+#pragma omp parallel for
+        for (long long n = 0; n < count; ++n) {
+            o[n] = f[n] * s[n];
+        }
+        _transform.ForwardSeparable(o);
+    }
+}
+
 template bool IsEvenPerAxis<float>(const float*, size_t, size_t, size_t, double);
 template bool IsEvenPerAxis<double>(const double*, size_t, size_t, size_t, double);
 
 template class EvenKernelConvolution<float>;
 template class EvenKernelConvolution<double>;
+template class EvenKernelBank<float>;
+template class EvenKernelBank<double>;
 
 } // namespace RapiDHT

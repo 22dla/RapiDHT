@@ -7,6 +7,7 @@
 #include <rapidht/minkowski.h>
 #include <rapidht/utilities.h>
 
+#include <algorithm>
 #include <array>
 #include <cmath>
 #include <stdexcept>
@@ -242,5 +243,132 @@ void MinkowskiDensities(const uint8_t* volume, size_t width, size_t height, size
 
 template void MinkowskiDensities<float>(const uint8_t*, size_t, size_t, size_t, float*, DensityCentring);
 template void MinkowskiDensities<double>(const uint8_t*, size_t, size_t, size_t, double*, DensityCentring);
+
+namespace {
+
+size_t AtLeastOne(size_t n) { return n == 0 ? size_t { 1 } : n; }
+
+/// Wrapped displacement of index i on a period of n: min(i, n - i).
+double Wrapped(size_t i, size_t n) { return static_cast<double>(std::min(i, n - i)); }
+
+/// exp(-x^2 / (2 r^2)) summed over the periodic images x + m n, as a function of the index.
+/// Computed for i <= n/2 and mirrored, so the table is exactly even.
+std::vector<double> PeriodicGaussian(size_t n, double r)
+{
+    std::vector<double> g(n, 0.0);
+    const long images = static_cast<long>(std::ceil(12.0 * r / static_cast<double>(n))) + 1;
+    for (size_t i = 0; i <= n / 2; ++i) {
+        double sum = 0.0;
+        for (long m = -images; m <= images; ++m) {
+            const double x = static_cast<double>(i) + static_cast<double>(m) * static_cast<double>(n);
+            sum += std::exp(-x * x / (2.0 * r * r));
+        }
+        g[i] = sum;
+        g[(n - i) % n] = sum;
+    }
+    return g;
+}
+
+} // namespace
+
+template <typename T>
+std::vector<T> MakeWindow(size_t width, size_t height, size_t depth, WindowShape shape, double radius)
+{
+    if (!(radius > 0.0)) {
+        throw std::invalid_argument("MakeWindow: the radius must be positive.");
+    }
+    const size_t W = width;
+    const size_t H = AtLeastOne(height);
+    const size_t D = AtLeastOne(depth);
+    std::vector<T> window(W * H * D);
+
+    if (shape == WindowShape::Ball) {
+        for (size_t n : { W, H, D }) {
+            if (n > 1 && !(radius < static_cast<double>(n) / 2.0)) {
+                throw std::invalid_argument("MakeWindow: a Ball window needs a radius below half of every extent; "
+                                            "use a Gaussian window or a larger volume.");
+            }
+        }
+        for (size_t k = 0; k < D; ++k) {
+            const double z = Wrapped(k, D);
+            for (size_t j = 0; j < H; ++j) {
+                const double y = Wrapped(j, H);
+                for (size_t i = 0; i < W; ++i) {
+                    const double x = Wrapped(i, W);
+                    window[i + W * (j + H * k)] = x * x + y * y + z * z <= radius * radius ? T(1) : T(0);
+                }
+            }
+        }
+        return window;
+    }
+
+    const auto gx = PeriodicGaussian(W, radius);
+    const auto gy = PeriodicGaussian(H, radius);
+    const auto gz = PeriodicGaussian(D, radius);
+    for (size_t k = 0; k < D; ++k) {
+        for (size_t j = 0; j < H; ++j) {
+            for (size_t i = 0; i < W; ++i) {
+                window[i + W * (j + H * k)] = static_cast<T>(gx[i] * gy[j] * gz[k]);
+            }
+        }
+    }
+    return window;
+}
+
+template <typename T>
+MinkowskiFields<T>::MinkowskiFields(size_t width, size_t height, size_t depth, WindowShape shape,
+    const std::vector<double>& radii, WindowNormalisation normalisation):
+    _width(width),
+    _height(height),
+    _depth(depth),
+    _size(width * height * depth),
+    _normalisation(normalisation),
+    _bank(width, height, depth, Modes::CPU)
+{
+    if (radii.empty()) {
+        throw std::invalid_argument("MinkowskiFields: give at least one window radius.");
+    }
+    for (double r : radii) {
+        const std::vector<T> window = MakeWindow<T>(width, height, depth, shape, r);
+        double weight = 0.0;
+        for (T v : window) {
+            weight += static_cast<double>(v);
+        }
+        _bank.AddKernel(window.data());
+        _windowWeights.push_back(weight);
+    }
+}
+
+template <typename T>
+void MinkowskiFields<T>::Compute(const uint8_t* volume, T* out)
+{
+    PROFILE_FUNCTION();
+
+    if (out == nullptr) {
+        throw std::invalid_argument("MinkowskiFields::Compute: the pointer to out is null.");
+    }
+    _densities.resize(4 * _size);
+    MinkowskiDensities(volume, _width, _height, _depth, _densities.data(), DensityCentring::Voxel);
+
+    const size_t K = ScaleCount();
+    for (size_t f = 0; f < 4; ++f) {
+        T* block = out + f * K * _size;
+        _bank.Apply(_densities.data() + f * _size, block);
+        if (_normalisation == WindowNormalisation::Mean) {
+            for (size_t s = 0; s < K; ++s) {
+                const T scale = static_cast<T>(1.0 / _windowWeights[s]);
+                T* field = block + s * _size;
+                for (size_t n = 0; n < _size; ++n) {
+                    field[n] *= scale;
+                }
+            }
+        }
+    }
+}
+
+template std::vector<float> MakeWindow<float>(size_t, size_t, size_t, WindowShape, double);
+template std::vector<double> MakeWindow<double>(size_t, size_t, size_t, WindowShape, double);
+template class MinkowskiFields<float>;
+template class MinkowskiFields<double>;
 
 } // namespace RapiDHT

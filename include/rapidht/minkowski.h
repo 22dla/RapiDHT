@@ -9,8 +9,11 @@
 #ifndef RAPIDHT_MINKOWSKI_H
 #define RAPIDHT_MINKOWSKI_H
 
+#include <rapidht/convolution.h>
+
 #include <cstddef>
 #include <cstdint>
+#include <vector>
 
 namespace RapiDHT {
 
@@ -94,7 +97,7 @@ enum class DensityCentring {
  * mean curvature, Euler characteristic, every plane in the input's layout. Each plane
  * sums to the corresponding MinkowskiFunctionals(..., Periodic) value. Convolving a
  * plane with a window (EvenKernelConvolution) gives the field of that functional in the
- * window, the construction of B-202.
+ * window; MinkowskiFields does this for a bank of windows.
  *
  * @param out 4 * Width*Height*Depth elements.
  * @tparam T float or double.
@@ -102,6 +105,80 @@ enum class DensityCentring {
 template <typename T>
 void MinkowskiDensities(const uint8_t* volume, size_t width, size_t height, size_t depth, T* out,
     DensityCentring centring = DensityCentring::Voxel);
+
+/// @brief Shape of the window over which the local functionals are taken.
+enum class WindowShape {
+    /// 1 at the voxels whose centre lies within the radius, 0 elsewhere. The radius must be
+    /// below half of every extent, or the ball would overlap its own periodic image.
+    Ball,
+    /// exp(-|x|^2 / (2 r^2)) with the radius as the standard deviation, summed over the
+    /// periodic images, so any radius is allowed and the window stays smooth and even.
+    Gaussian,
+};
+
+/**
+ * @brief A window in the wrapped layout (centre at index 0), even along every axis.
+ * @param width, height, depth Extents, as for HartleyTransform.
+ * @throws std::invalid_argument for a non-positive radius, or a Ball that does not fit.
+ */
+template <typename T>
+std::vector<T> MakeWindow(size_t width, size_t height, size_t depth, WindowShape shape, double radius);
+
+/// @brief Whether a field holds the windowed sum of a density or its window average.
+enum class WindowNormalisation {
+    Sum, ///< The functional of the part of the body inside the window (weighted, for Gaussian).
+    Mean, ///< The same divided by the window's total weight: per-voxel densities, e.g. the
+          ///< local volume fraction, comparable across window sizes.
+};
+
+/**
+ * @brief Local Minkowski functionals on a bank of windows (B-202), periodic boundary.
+ *
+ * The four voxel-centred densities (MinkowskiDensities) are each convolved with every
+ * window through EvenKernelBank: 4 (1 + K) separable transforms for K windows, not the
+ * 22 or 256 convolutions of a configuration-by-configuration approach. With an even
+ * window and voxel centring every field commutes with the symmetries of the voxel grid,
+ * the central inversion included.
+ *
+ * Output layout: 4 * K fields of Size() values, functional-major,
+ * out[(f * K + s) * Size() + n] for functional f (volume, surface, mean curvature,
+ * Euler characteristic) and window s, in the order of the radii.
+ *
+ * Usage:
+ * @code
+ *   MinkowskiFields<float> mf(64, 64, 64, WindowShape::Ball, { 2, 4, 8 });
+ *   std::vector<float> out(mf.FieldCount() * mf.Size());
+ *   mf.Compute(solid.data(), out.data());
+ * @endcode
+ *
+ * @tparam T float or double. Extents must be powers of two (HartleyTransform).
+ */
+template <typename T>
+class MinkowskiFields {
+public:
+    MinkowskiFields(size_t width, size_t height, size_t depth, WindowShape shape, const std::vector<double>& radii,
+        WindowNormalisation normalisation = WindowNormalisation::Mean);
+
+    /// @brief Fills out with FieldCount() fields of the binary volume (nonzero = foreground).
+    void Compute(const uint8_t* volume, T* out);
+
+    size_t ScaleCount() const noexcept { return _windowWeights.size(); }
+    size_t FieldCount() const noexcept { return 4 * ScaleCount(); }
+    size_t Size() const noexcept { return _size; }
+
+    /// @brief Total weight of window s (the voxel count, for a Ball).
+    double WindowWeight(size_t s) const { return _windowWeights.at(s); }
+
+private:
+    size_t _width;
+    size_t _height;
+    size_t _depth;
+    size_t _size;
+    WindowNormalisation _normalisation;
+    EvenKernelBank<T> _bank;
+    std::vector<double> _windowWeights;
+    std::vector<T> _densities;
+};
 
 } // namespace RapiDHT
 
