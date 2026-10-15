@@ -66,6 +66,7 @@ transform, so this is not a micro-optimisation.
 | 🖥️ **Three backends** | `CPU` (OpenMP butterflies), `GPU` (CUDA, dense matrices through cuBLAS), `RFFT` (real FFT, 1D only) |
 | 📌 **Device-resident data** | `DeviceVolume` keeps a volume on the card so a pipeline pays for the transfer once |
 | 🧩 **Optional everything** | CUDA and MPI are off by default; the public headers name no CUDA type, so consuming the library needs no toolkit |
+| 🔷 **Minkowski functionals** | Volume, surface, mean curvature and Euler characteristic of binary volumes, and their local densities (`<rapidht/minkowski.h>`), ready to be windowed by `EvenKernelConvolution` |
 | 🎯 **Both precisions** | `float` and `double`; on consumer GPUs `float` is 9–29× faster |
 | ✅ **Verified, not asserted** | 36 tests, including comparison against an `O(N²)` reference and analytically known transform pairs |
 

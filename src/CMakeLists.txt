@@ -5,6 +5,7 @@ find_package(OpenMP REQUIRED)
 set(RAPIDHT_SOURCES
     transform.cpp
     convolution.cpp
+    minkowski.cpp
     backend_cpu.cpp
     device_volume.cpp
     utilities.cpp

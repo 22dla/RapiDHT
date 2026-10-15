@@ -16,6 +16,7 @@ set(RAPIDHT_TEST_SUITES
     test_smoke
     test_correctness
     test_convolution
+    test_minkowski
 )
 
 foreach(SUITE ${RAPIDHT_TEST_SUITES})
