@@ -313,6 +313,45 @@ TEST(Correctness, DeviceResidentMatchesReference_GPU)
     }
 }
 
+// B-003: the host-path staging buffer is allocated on first use, so the same
+// object must give the right answer whichever path runs first -- resident then
+// host, and host then resident. A buffer left unallocated would make the host
+// path transfer nothing (Upload truncates to the buffer's size) and hand back
+// the input unchanged, which the reference comparison catches.
+TEST(Correctness, HostAndResidentPathsShareOneTransform_GPU)
+{
+    SKIP_IF_NO_CUDA();
+    for (const Extent& e : kReferenceExtents) {
+        SCOPED_TRACE("extent " + Describe(e));
+        const Dims dims = Dims::Of(e.width, e.height, e.depth);
+        const auto input = MakeSignal(dims.Total());
+        const auto expected = ReferenceDht(input, dims);
+
+        for (const bool residentFirst : { true, false }) {
+            SCOPED_TRACE(residentFirst ? "resident first" : "host first");
+            HartleyTransform<double> ht(e.width, e.height, e.depth, Modes::GPU);
+            DeviceVolume<double> volume(dims.Total());
+            std::vector<double> fromResident(dims.Total());
+            auto fromHost = input;
+
+            if (residentFirst) {
+                volume.Upload(input.data());
+                ht.ForwardTransform(volume);
+                volume.Download(fromResident.data());
+                ht.ForwardTransform(fromHost.data());
+            } else {
+                ht.ForwardTransform(fromHost.data());
+                volume.Upload(input.data());
+                ht.ForwardTransform(volume);
+                volume.Download(fromResident.data());
+            }
+
+            ExpectClose(fromResident, expected, 1e-9);
+            ExpectClose(fromHost, expected, 1e-9);
+        }
+    }
+}
+
 // The whole point of the type is that the data survives between calls. Two
 // forward transforms without touching the host must scale the input by N, the
 // same as two host-path calls would.

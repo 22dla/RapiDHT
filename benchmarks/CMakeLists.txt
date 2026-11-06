@@ -31,6 +31,10 @@ endif()
 # Bare driver for nsys/ncu: one transform, in a loop, and nothing else.
 add_executable(profile_gpu3d profile_gpu3d.cpp)
 target_link_libraries(profile_gpu3d PRIVATE coreht rapidht_warnings)
+# cudaMemGetInfo, to report what the transform holds on the device.
+if(RAPIDHT_WITH_CUDA)
+    target_link_libraries(profile_gpu3d PRIVATE CUDA::cudart)
+endif()
 
 # Optional FFTW baseline. Ubuntu's libfftw3-dev ships a pkg-config file but no
 # CMake package config, so pkg-config is the reliable route.

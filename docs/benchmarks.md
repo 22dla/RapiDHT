@@ -95,7 +95,7 @@ measured in the same run:
 
 | | time | arithmetic | achieved | extra device memory |
 | --- | ---: | ---: | ---: | ---: |
-| RapiDHT, matrix | 44.8 ms | 412 GFLOP | 9.2 TFLOP/s | **515 MiB** |
+| RapiDHT, matrix | 44.8 ms | 412 GFLOP | 9.2 TFLOP/s | **556 MiB** |
 | cuFFT + conversion | **12.1 ms** | ~9 GFLOP | 0.75 TFLOP/s | 1 028 MiB |
 
 **cuFFT is 3.7× faster on the transform.** That is the number to quote. The gap
@@ -107,10 +107,20 @@ Two measured facts sit alongside it:
 - The matrix path performs about **46× more arithmetic** yet finishes only 3.7×
   behind, because it is compute-bound and reaches 57% of the card while an FFT
   is bandwidth-bound and reaches around 5%.
-- It needs **half the extra device memory** — 515 MiB of scratch and matrices
-  against cuFFT's 1 028 MiB of spectrum and workspace, read from
-  `cufftGetSize3d`. On this card that is a largest cubic volume of about 997³
+- It needs **about half the extra device memory** — 556 MiB, measured with
+  `cudaMemGetInfo` (`profile_gpu3d`): 512 MiB of scratch, 3 MiB of matrices and
+  about 41 MiB that the cuBLAS handle takes — against cuFFT's 1 028 MiB of
+  spectrum and workspace, read from `cufftGetSize3d` (which leaves out cuFFT's
+  own handle overhead). On this card that is a largest cubic volume of about 997³
   against about 871³.
+
+  *Correction (B-003):* this table used to say 515 MiB while the transform, at
+  construction, also allocated a host-staging buffer the size of the volume:
+  it really held 1 068 MiB, more than cuFFT. Since B-003 that buffer is
+  allocated on the first host-pointer call only. Measured on 2026-11-06
+  (`benchmarks/results/2026-11-06_evgeny_memory.txt`), f32 512³: 556 MiB after
+  construction and after resident use, 1 068 MiB once a host-pointer call has
+  run; f64: 1 068 and 2 092 MiB.
 
 The table settles neither of the two things that would decide the question. A
 GEMM maps onto tensor cores and an FFT does not, so the gap is a property of the

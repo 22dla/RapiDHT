@@ -24,6 +24,10 @@
 
 #include <rapidht/transform.h>
 
+#ifdef RAPIDHT_WITH_CUDA
+#include <cuda_runtime.h>
+#endif
+
 #include <chrono>
 #include <cmath>
 #include <cstdio>
@@ -33,6 +37,23 @@
 #include <vector>
 
 namespace {
+
+/// Device memory in use, MiB, as the driver reports it. Differences between two
+/// readings give what an object holds, which is the figure the benchmarks
+/// document quotes as "extra device memory".
+double UsedMiB()
+{
+#ifdef RAPIDHT_WITH_CUDA
+    size_t freeBytes = 0, totalBytes = 0;
+    cudaDeviceSynchronize();
+    if (cudaMemGetInfo(&freeBytes, &totalBytes) != cudaSuccess) {
+        return -1.0;
+    }
+    return static_cast<double>(totalBytes - freeBytes) / (1024.0 * 1024.0);
+#else
+    return -1.0;
+#endif
+}
 
 template <typename T>
 int Run(size_t width, int iterations, const char* label)
@@ -49,10 +70,14 @@ int Run(size_t width, int iterations, const char* label)
         iterations);
 
     try {
-        RapiDHT::HartleyTransform<T> transform(width, width, width, RapiDHT::Modes::GPU);
-
+        // Touch the device first so that context creation is not counted as
+        // memory the transform holds.
         RapiDHT::DeviceVolume<T> volume(count);
         volume.Upload(data.data());
+
+        const double base = UsedMiB();
+        RapiDHT::HartleyTransform<T> transform(width, width, width, RapiDHT::Modes::GPU);
+        const double afterConstruct = UsedMiB();
 
         // Untimed warm-up: the first call pays for context creation and for
         // cuBLAS picking its kernels.
@@ -72,6 +97,16 @@ int Run(size_t width, int iterations, const char* label)
         // division by 1000 here printed 0.00 for every run.
         std::printf("  %.2f ms per transform, %.1f GFLOP of matrix arithmetic, %.2f TFLOP/s\n",
             msPer, gflop, gflop / msPer);
+
+        // Device memory the transform holds beyond the volume itself: after
+        // construction, after resident use (cuBLAS workspace included), and
+        // after one host-pointer call, which allocates the staging buffer.
+        const double afterResident = UsedMiB();
+        transform.ForwardTransform(data.data());
+        const double afterHost = UsedMiB();
+        std::printf("  device memory held by the transform: %.0f MiB built, %.0f MiB after resident use, "
+                    "%.0f MiB after a host-pointer call\n",
+            afterConstruct - base, afterResident - base, afterHost - base);
     } catch (const std::exception& error) {
         std::fprintf(stderr, "  failed: %s\n", error.what());
         return 1;

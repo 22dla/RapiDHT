@@ -90,16 +90,32 @@ struct HartleyTransform<T>::Impl {
     std::array<internal::DeviceArray<T>, static_cast<size_t>(Direction::Count)> transformMatrices;
 
     /*
-     * Working buffers, allocated once with the object rather than on every
+     * Working buffers, kept with the object rather than allocated on every
      * call. They used to be locals inside each DHT*Cuda method, so a 512^3
      * transform allocated and released two 512 MiB regions, and created and
      * destroyed two CUDA streams, every single time it ran.
      *
-     * Holding them costs twice the volume in device memory for the lifetime of
-     * the object, which is the usual bargain for a transform plan.
+     * scratchB is the multiplies' output and every path needs it, so it is
+     * allocated with the object. staging only receives host data on the
+     * host-pointer path; a DeviceVolume plays its part on the resident path.
+     * It is therefore allocated on first use (B-003): a transform used only
+     * on resident volumes costs one volume of device memory, not two, which
+     * at 512^3 in float is 512 MiB and the difference between fitting a
+     * volume on an 8 GiB card or not.
      */
-    internal::DeviceArray<T> scratchA;
+    internal::DeviceArray<T> staging;
     internal::DeviceArray<T> scratchB;
+
+    /// The host-path staging buffer, allocated the first time it is asked for.
+    /// DeviceArray::Upload truncates to its size, so an unallocated buffer
+    /// would silently transfer nothing -- hence a getter rather than the field.
+    internal::DeviceArray<T>& Staging(size_t count)
+    {
+        if (staging.Size() < count) {
+            staging.Resize(count);
+        }
+        return staging;
+    }
 
     // Created once with the object: the 3D path used to create and destroy a
     // handle on every call.

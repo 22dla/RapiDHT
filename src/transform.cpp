@@ -80,10 +80,10 @@ HartleyTransform<T>::HartleyTransform(size_t width, size_t height, size_t depth,
         InitializeHartleyMatrix(matrices[static_cast<size_t>(Direction::Z)].Data(), Depth());
 
         // Sized for the whole volume, which is the largest any of the 1D, 2D
-        // or 3D paths asks for.
+        // or 3D paths asks for. The host-path staging buffer is not allocated
+        // here but on first use; see Impl.
         const size_t totalElements = Width() * (Height() == 0 ? size_t { 1 } : Height())
                                    * (Depth() == 0 ? size_t { 1 } : Depth());
-        _impl->scratchA.Resize(totalElements);
         _impl->scratchB.Resize(totalElements);
 #else
         ThrowGpuUnavailable();
@@ -265,7 +265,8 @@ void HartleyTransform<T>::ForwardTransform(DeviceVolume<T>& volume)
 
 #ifdef RAPIDHT_WITH_CUDA
     // scratchB is the working buffer; the volume itself plays the part that
-    // scratchA plays on the host path.
+    // the staging buffer plays on the host path, which is why that one is
+    // never allocated for resident-only use.
     TransformOnDevice(static_cast<T*>(volume.DeviceData()), _impl->scratchB.Data());
 #else
     ThrowGpuUnavailable();

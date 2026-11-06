@@ -22,11 +22,12 @@ void HartleyTransform<T>::DHT1DCuda(T* hostData)
 {
     PROFILE_FUNCTION();
 
-    // Buffers live in Impl and are allocated once with the object, not on
-    // every call.
-    _impl->scratchA.Upload(hostData, Width());
-    DHT1DOnDevice(_impl->scratchA.Data(), _impl->scratchB.Data());
-    _impl->scratchA.Download(hostData, Width());
+    // Buffers live in Impl and are allocated once, not on every call; the
+    // staging one on the first host-path call.
+    auto& staging = _impl->Staging(Width());
+    staging.Upload(hostData, Width());
+    DHT1DOnDevice(staging.Data(), _impl->scratchB.Data());
+    staging.Download(hostData, Width());
 }
 
 template <typename T>
@@ -49,9 +50,10 @@ void HartleyTransform<T>::DHT2DCuda(T* hostData)
 
     const size_t sliceSize = Width() * Height();
 
-    _impl->scratchA.Upload(hostData, sliceSize);
-    DHT2DOnDevice(_impl->scratchA.Data(), _impl->scratchB.Data());
-    _impl->scratchA.Download(hostData, sliceSize);
+    auto& staging = _impl->Staging(sliceSize);
+    staging.Upload(hostData, sliceSize);
+    DHT2DOnDevice(staging.Data(), _impl->scratchB.Data());
+    staging.Download(hostData, sliceSize);
 }
 
 template <typename T>
@@ -124,9 +126,10 @@ void HartleyTransform<T>::DHT3DCuda(T* hostData)
 
     const size_t totalSize = Width() * Height() * Depth();
 
-    _impl->scratchA.Upload(hostData, totalSize);
-    DHT3DOnDevice(_impl->scratchA.Data(), _impl->scratchB.Data());
-    _impl->scratchA.Download(hostData, totalSize);
+    auto& staging = _impl->Staging(totalSize);
+    staging.Upload(hostData, totalSize);
+    DHT3DOnDevice(staging.Data(), _impl->scratchB.Data());
+    staging.Download(hostData, totalSize);
 }
 
 template <typename T>

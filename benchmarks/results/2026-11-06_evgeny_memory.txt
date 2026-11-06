@@ -1,0 +1,6 @@
+f32  512^3  (134217728 elements, 512.0 MiB per buffer)  x10 iterations
+  43.82 ms per transform, 412.3 GFLOP of matrix arithmetic, 9.41 TFLOP/s
+  device memory held by the transform: 556 MiB built, 556 MiB after resident use, 1068 MiB after a host-pointer call
+f64  512^3  (134217728 elements, 1024.0 MiB per buffer)  x10 iterations
+  1651.22 ms per transform, 412.3 GFLOP of matrix arithmetic, 0.25 TFLOP/s
+  device memory held by the transform: 1068 MiB built, 1068 MiB after resident use, 2092 MiB after a host-pointer call
