@@ -25,6 +25,9 @@ card through `DeviceVolume`.
 | f64 256³ | 479 546 µs | 136 943 µs | 104 761 µs | 4.6× |
 | f64 512³ | 4 959 353 µs | 1 927 057 µs | 1 693 259 µs | 2.9× |
 
+**The CPU column predates B-106** (see [CPU backend after B-106](#cpu-backend-after-b-106))
+and is 8–16× too slow for the current code; it needs re-measuring on this machine.
+
 The device columns were measured after the 3D path stopped transposing the
 volume around its multiplies; the CPU column is from the run before, since the
 CPU backend did not change. The chart above predates the change and still shows
@@ -160,10 +163,44 @@ same few passes over memory, not faster multiplies.
 
 ---
 
+## CPU backend after B-106
+
+Two changes, both in `src/backend_cpu.cpp`:
+
+- **Bracewell pass in place, by orbits.** Each output reads the separable
+  spectrum only at its own point and at its mirror images, so the points split
+  into orbits of up to 8 under the axis flips. Every orbit is read once and
+  written once, with the fastest axis innermost. The full-size result buffer,
+  the final copy and the strided `collapse(3)` loop are gone.
+- **1D passes on blocks of 32 lines.** Neighbouring lines are gathered into a
+  buffer laid out `[index along the axis][line]`, so every butterfly is a short
+  contiguous loop across lines that the compiler vectorises, and the strided
+  gather is paid once per block. No allocation per line any more.
+
+Measured in a cloud container (Xeon @ 2.1 GHz, 2 threads, `-O3`, best of 3–5),
+before and after, same machine, same run. Not comparable with the table above.
+
+| | before | after | |
+| --- | ---: | ---: | ---: |
+| f32 128³ | 77.0 ms | 6.3 ms | 12× |
+| f32 256³ | 932.7 ms | 58.7 ms | 16× |
+| f64 128³ | 81.1 ms | 10.3 ms | 8× |
+| f64 256³ | 1 411 ms | 126.4 ms | 11× |
+
+The Bracewell share of the 256³ transform fell from 61–70% to 5–13%, and
+`float` is now about twice as fast as `double` instead of on par, which is what
+vectorised butterflies should give. For scale, `scipy.fft.rfftn` (pocketfft) on
+the same container with 2 workers takes 6.1 ms at 128³ and 49.5 ms at 256³ in
+`float` -- RapiDHT is within 1.05–1.2× of it while computing the true rather
+than the separable transform. FFTW was not available there; the comparison
+B-106 asks for (≤ 1.5× of FFTW) is still to be made on the desktop.
+
+---
+
 ## FFTW, for reference
 
 `FFTW_DHT` in double takes 11 506 / 142 809 / 1 600 990 µs on the same volumes,
-2.2× to 3.4× faster than this CPU backend. Note the 13% run-to-run variation at
+2.2× to 3.4× faster than this CPU backend as it was before B-106. Note the 13% run-to-run variation at
 512³, by far the noisiest figure here.
 
 Three caveats: FFTW here is single-threaded, it is in double against our float,
@@ -175,10 +212,12 @@ reading is that a GPU beats a single CPU core, not that this beats FFTW.
 
 ## Known openings
 
-- The CPU backend gains almost nothing from `float` — 1.15× where 2× is
-  available — which points at butterflies that do not vectorise.
-- Its throughput falls from 85 to 36 M points/s between 128³ and 256³, exactly
-  where the volume stops fitting in the 18 MiB L3.
+- ~~The CPU backend gains almost nothing from `float`~~ — addressed by B-106
+  (blocks of lines, vectorised butterflies); `float` is now ~2× `double`.
+- Before B-106, CPU throughput fell from 85 to 36 M points/s between 128³ and
+  256³, where the volume stops fitting in the 18 MiB L3. To re-check after
+  B-106: blocks keep each line's passes in cache, but the gather/scatter still
+  streams the whole volume once per axis.
 - 1024³ does not fit on an 8 GiB card in any precision: two buffers of 4 GiB
   each in `float`. Volumes beyond ~997³ need slab decomposition.
 - The Bracewell pass takes 4.9 ms at 512³ against the 2.6 ms of a plain copy.

@@ -267,6 +267,19 @@ private:
     void Series1D(T* image, Direction direction);
 
     /**
+     * @brief Fast Hartley butterflies on a block of lines held side by side.
+     *
+     * buffer holds Length(direction) rows of `lanes` values, row idx being
+     * element idx of every line in the block. Each butterfly is then a short
+     * contiguous loop across the lines, which the compiler vectorises, and the
+     * strided gather from the volume happens once per block, not per element.
+     * @param buffer Length(direction) * lanes values, transformed in place.
+     * @param lanes Number of lines in the block.
+     * @param direction Axis whose length, bit reversal and twiddles to use.
+     */
+    void FDHTLanes(T* buffer, size_t lanes, Direction direction) const;
+
+    /**
      * @brief Throws std::invalid_argument unless every non-zero extent is a
      *        power of two, as the CPU butterflies require.
      *

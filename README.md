@@ -216,6 +216,10 @@ the CPU one is a range because that machine has frequency scaling on. The full
 picture, including profiling and an extrapolation to datacentre hardware, is in
 **[docs/benchmarks.md](docs/benchmarks.md)**.
 
+> The CPU row predates B-106, which made the CPU backend 8–16× faster at 128³
+> and 256³ on another machine; the row and the GPU-vs-CPU ratio are due to be
+> re-measured.
+
 ---
 
 ## 🧪 Tests

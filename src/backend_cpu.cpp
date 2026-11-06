@@ -11,6 +11,7 @@
 
 #include <omp.h>
 
+#include <algorithm>
 #include <cmath>
 #include <complex>
 #include <string>
@@ -97,108 +98,245 @@ void HartleyTransform<T>::Series1D(T* data, Direction direction)
     if (data == nullptr) {
         throw std::invalid_argument("The pointer to image is null.");
     }
-    // Last line of defence for any future caller: FDHT1D's own check would
-    // throw inside the parallel region below and terminate the process.
+    // Last line of defence for any future caller: an exception thrown inside
+    // the parallel region below would terminate the process.
     RequirePowerOfTwoExtents("Series1D");
 
-    size_t M1 = 0, M2 = 0;
+    // No RFFT branch on purpose: the constructor rejects Modes::RFFT for
+    // anything but 1D, and Series1D is only ever reached from 2D and 3D.
+    if (_mode != Modes::CPU) {
+        return;
+    }
+
+    const size_t W = Width();
+    const size_t H = Height();
+    const size_t D = (Depth() == 0 ? 1 : Depth());
+
+    // A line runs along `direction` with stride axisStride. Lines are taken in
+    // blocks of `lanes` neighbours along a second axis ("lane" axis), chosen
+    // as the fastest axis whenever the line itself is not along it, so that
+    // gathering one row of the block reads contiguous memory. The remaining
+    // axis ("other") just enumerates blocks.
+    size_t axisStride = 0, laneStride = 0, laneLength = 0, otherStride = 0, otherLength = 0;
     switch (direction) {
-        case Direction::Y:
-            M1 = Height();
-            M2 = (Depth() == 0 ? 1 : Depth());
+        case Direction::Y: // along the fastest axis; neighbouring lines are rows
+            axisStride = 1;
+            laneStride = W;
+            laneLength = H;
+            otherStride = W * H;
+            otherLength = D;
             break;
         case Direction::X:
-            M1 = Width();
-            M2 = (Depth() == 0 ? 1 : Depth());
+            axisStride = W;
+            laneStride = 1;
+            laneLength = W;
+            otherStride = W * H;
+            otherLength = D;
             break;
         case Direction::Z:
-            M1 = Width();
-            M2 = Height();
+            axisStride = W * H;
+            laneStride = 1;
+            laneLength = W;
+            otherStride = W;
+            otherLength = H;
             break;
         default:
             throw std::invalid_argument("Invalid direction");
     }
 
-    if (_mode == Modes::CPU) {
-        // Signed, and cast rather than made size_t: MSVC implements OpenMP 2.0,
-        // whose parallel-for index must be a signed integer. The comparison is
-        // what warned, so the bound is cast to match rather than the index
-        // changed to something MSVC would reject.
-        const int lineCount = static_cast<int>(M1);
-#pragma omp parallel for
-        for (int i = 0; i < lineCount; ++i) {
-            for (size_t j = 0; j < M2; ++j) {
-                auto index = AxisIndex(0, static_cast<size_t>(i), j, direction);
-                FDHT1D(data + index, direction);
+    // 32 lanes measured best against 8, 16 and 64; with n = 512 a float block is 64 KiB --
+    // it stays in L1/L2 for the whole log2(n) stages. Extents are powers of
+    // two, so `lanes` divides laneLength exactly.
+    constexpr size_t kMaxLanes = 32;
+    const size_t n = Length(direction);
+    const size_t lanes = (laneLength < kMaxLanes ? laneLength : kMaxLanes);
+    const size_t blocksPerOther = laneLength / lanes;
+
+    // Signed for OpenMP 2.0 (MSVC).
+    const int blockCount = static_cast<int>(blocksPerOther * otherLength);
+#pragma omp parallel
+    {
+        // One buffer per thread for the whole call, not one per line.
+        std::vector<T> buffer(n * lanes);
+#pragma omp for
+        for (int p = 0; p < blockCount; ++p) {
+            const size_t other = static_cast<size_t>(p) / blocksPerOther;
+            const size_t firstLane = (static_cast<size_t>(p) % blocksPerOther) * lanes;
+            T* base = data + other * otherStride + firstLane * laneStride;
+
+            for (size_t idx = 0; idx < n; ++idx) {
+                const T* src = base + idx * axisStride;
+                T* dst = buffer.data() + idx * lanes;
+                for (size_t b = 0; b < lanes; ++b) {
+                    dst[b] = src[b * laneStride];
+                }
+            }
+
+            FDHTLanes(buffer.data(), lanes, direction);
+
+            for (size_t idx = 0; idx < n; ++idx) {
+                const T* src = buffer.data() + idx * lanes;
+                T* dst = base + idx * axisStride;
+                for (size_t b = 0; b < lanes; ++b) {
+                    dst[b * laneStride] = src[b];
+                }
             }
         }
-        return;
     }
-    // No RFFT branch here on purpose: the constructor rejects Modes::RFFT for
-    // anything but 1D, and Series1D is only ever reached from 2D and 3D.
 }
+
+template <typename T>
+void HartleyTransform<T>::FDHTLanes(T* buffer, size_t lanes, Direction direction) const
+{
+    const size_t n = Length(direction);
+
+    for (size_t i = 1; i < n; ++i) {
+        const size_t j = BitReversedIndex(direction, i);
+        if (j > i) {
+            std::swap_ranges(buffer + i * lanes, buffer + (i + 1) * lanes, buffer + j * lanes);
+        }
+    }
+
+    // The same stages as FDHT1D, with every scalar operation widened into a
+    // loop across the lanes. The pairs of rows touched in one step are always
+    // distinct, so the restrict qualifiers hold and let the loops vectorise.
+    const Twiddle* twiddles = _twiddles[static_cast<size_t>(direction)].data();
+    for (size_t m = 2; m <= n; m <<= 1) {
+        const size_t m2 = m / 2;
+        const size_t m4 = m / 4;
+        // Only stages with m >= 8 read twiddles; for n < 4 the table is empty
+        // and offsetting its (possibly null) data pointer would be undefined.
+        const Twiddle* stage = (m4 > 1 ? twiddles + m2 : nullptr);
+
+        for (size_t r = 0; r + m <= n; r += m) {
+            for (size_t j = 1; j < m4; ++j) {
+                const T c = stage[j].cosine;
+                const T s = stage[j].sine;
+                T* __restrict u = buffer + (r + m2 + j) * lanes;
+                T* __restrict v = buffer + (r + m - j) * lanes;
+                for (size_t b = 0; b < lanes; ++b) {
+                    const T uu = u[b];
+                    const T vv = v[b];
+                    u[b] = uu * c + vv * s;
+                    v[b] = uu * s - vv * c;
+                }
+            }
+            for (size_t j = 0; j < m2; ++j) {
+                T* __restrict a = buffer + (r + j) * lanes;
+                T* __restrict b2 = buffer + (r + j + m2) * lanes;
+                for (size_t b = 0; b < lanes; ++b) {
+                    const T x = a[b];
+                    const T y = b2[b];
+                    a[b] = x + y;
+                    b2[b] = x - y;
+                }
+            }
+        }
+    }
+}
+
+/*
+ * The Bracewell correction turns the separable spectrum S into the true one.
+ * Each output reads S only at the point itself and at its mirror images
+ * (index -> (N - index) mod N along some axes), so the points split into
+ * disjoint orbits under the axis flips -- up to 4 points in 2D, 8 in 3D -- and
+ * every orbit can be transformed in place: load all its values, then store
+ * all its outputs. That replaces a full-size result buffer and a final copy.
+ *
+ * The loops run over one representative per orbit, index in [0, N/2] on every
+ * axis, with the fastest axis innermost so that the point and its mirror are
+ * both read as contiguous runs (one forwards, one backwards). Where an index is
+ * its own mirror (0 or N/2) the orbit is smaller and some loads and stores
+ * coincide; the formulas then give identical values for the coinciding stores,
+ * so nothing special is needed. Orbits are disjoint, so the outer loop
+ * parallelises without races.
+ */
+namespace {
+
+/// Mirror of an index along an axis of length n: (n - i) mod n.
+inline size_t Mirror(size_t i, size_t n) noexcept
+{
+    return i == 0 ? 0 : n - i;
+}
+
+} // namespace
 
 template <typename T>
 void HartleyTransform<T>::BracewellTransform2DCPU(T* image)
 {
     PROFILE_FUNCTION();
 
-    int W = Width();
-    int H = Height();
+    const size_t W = Width();
+    const size_t H = Height();
+    const T half = static_cast<T>(0.5);
 
-    std::vector<T> result(W * H, T(0));
-
-    // collapse(N) needs perfectly nested loops, so anything declared between
-    // them has to move inside the innermost one.
-#pragma omp parallel for collapse(2)
-    for (int y = 0; y < W; ++y) {
-        for (int x = 0; x < H; ++x) {
-            const int ym = (y > 0) ? (W - y) : 0;
-            const int xm = (x > 0) ? (H - x) : 0;
-
-            const T A = image[LinearIndex(y, x, 0)];
-            const T B = image[LinearIndex(y, xm, 0)]; // flip X
-            const T C = image[LinearIndex(ym, x, 0)]; // flip Y
-            const T D = image[LinearIndex(ym, xm, 0)]; // flip both
-
-            result[LinearIndex(y, x, 0)] = (A + B + C - D) / static_cast<T>(2);
+    // Signed index for OpenMP 2.0 (MSVC). Representatives x in [0, H/2].
+    const int rowPairs = static_cast<int>(H / 2 + 1);
+#pragma omp parallel for
+    for (int xi = 0; xi < rowPairs; ++xi) {
+        const size_t x = static_cast<size_t>(xi);
+        T* r0 = image + W * x; // row x
+        T* r1 = image + W * Mirror(x, H); // row -x
+        for (size_t y = 0; y <= W / 2; ++y) {
+            const size_t ym = Mirror(y, W);
+            // v<flip y><flip x>
+            const T v00 = r0[y], v10 = r0[ym], v01 = r1[y], v11 = r1[ym];
+            r0[y] = (v00 + v01 + v10 - v11) * half;
+            r0[ym] = (v10 + v11 + v00 - v01) * half;
+            r1[y] = (v01 + v00 + v11 - v10) * half;
+            r1[ym] = (v11 + v10 + v01 - v00) * half;
         }
     }
-
-    std::copy(result.begin(), result.end(), image);
 }
 
 template <typename T>
 void HartleyTransform<T>::BracewellTransform3DCPU(T* volumePtr)
 {
     PROFILE_FUNCTION();
-    int W = Width();
-    int H = Height();
-    int D = Depth();
 
-    std::vector<T> result(W * H * D, T(0));
+    const size_t W = Width();
+    const size_t H = Height();
+    const size_t D = Depth();
+    const T half = static_cast<T>(0.5);
 
-    // collapse(N) needs perfectly nested loops, so anything declared between
-    // them has to move inside the innermost one.
-#pragma omp parallel for collapse(3)
-    for (int y = 0; y < W; ++y) {
-        for (int x = 0; x < H; ++x) {
-            for (int z = 0; z < D; ++z) {
-                const int ym = (y > 0) ? (W - y) : 0;
-                const int xm = (x > 0) ? (H - x) : 0;
-                const int zm = (z > 0) ? (D - z) : 0;
+    // One flat signed loop over the (z, x) representatives instead of
+    // collapse(2): OpenMP 2.0 (MSVC) has no collapse, and z alone gives too
+    // few iterations to balance on small depths.
+    const size_t xReps = H / 2 + 1;
+    const int pairCount = static_cast<int>((D / 2 + 1) * xReps);
+#pragma omp parallel for
+    for (int p = 0; p < pairCount; ++p) {
+        const size_t z = static_cast<size_t>(p) / xReps;
+        const size_t x = static_cast<size_t>(p) % xReps;
+        const size_t zm = Mirror(z, D);
+        const size_t xm = Mirror(x, H);
 
-                const T A = volumePtr[LinearIndex(ym, x, z)]; // flip X
-                const T B = volumePtr[LinearIndex(y, xm, z)]; // flip Y
-                const T C = volumePtr[LinearIndex(y, x, zm)]; // flip Z
-                const T D_ = volumePtr[LinearIndex(ym, xm, zm)]; // flip all
+        // Rows along the fastest axis; suffix = <flip y><flip x><flip z>.
+        T* r00 = volumePtr + W * (x + H * z);
+        T* r10 = volumePtr + W * (xm + H * z);
+        T* r01 = volumePtr + W * (x + H * zm);
+        T* r11 = volumePtr + W * (xm + H * zm);
 
-                result[LinearIndex(y, x, z)] = (A + B + C - D_) / static_cast<T>(2);
-            }
+        for (size_t y = 0; y <= W / 2; ++y) {
+            const size_t ym = Mirror(y, W);
+            const T v000 = r00[y], v100 = r00[ym];
+            const T v010 = r10[y], v110 = r10[ym];
+            const T v001 = r01[y], v101 = r01[ym];
+            const T v011 = r11[y], v111 = r11[ym];
+
+            // out(s) = (v(s^100) + v(s^010) + v(s^001) - v(s^111)) / 2, with
+            // s^100 flipping y only, and so on: the definition used before,
+            // A + B + C - D over the single-axis and all-axes mirrors.
+            r00[y] = (v100 + v010 + v001 - v111) * half;
+            r00[ym] = (v000 + v110 + v101 - v011) * half;
+            r10[y] = (v110 + v000 + v011 - v101) * half;
+            r10[ym] = (v010 + v100 + v111 - v001) * half;
+            r01[y] = (v101 + v011 + v000 - v110) * half;
+            r01[ym] = (v001 + v111 + v100 - v010) * half;
+            r11[y] = (v111 + v001 + v010 - v100) * half;
+            r11[ym] = (v011 + v101 + v110 - v000) * half;
         }
     }
-
-    std::copy(result.begin(), result.end(), volumePtr);
 }
 
 template <typename T>

@@ -40,6 +40,10 @@ const Extent kReferenceExtents[] = {
     { 16, 8, 0 },
     { 4, 4, 4 },
     { 8, 4, 2 },
+    // Longer than one block of lines (32) along the axis the CPU passes group
+    // lines by: width for the X and Z passes, height for the Y pass.
+    { 64, 8, 4 },
+    { 8, 64, 2 },
 };
 
 // Larger sizes, used only for properties that do not need the O(N^2) reference.
