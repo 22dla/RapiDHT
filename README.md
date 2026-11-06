@@ -67,7 +67,7 @@ transform, so this is not a micro-optimisation.
 | 📌 **Device-resident data** | `DeviceVolume` keeps a volume on the card so a pipeline pays for the transfer once |
 | 🧩 **Optional everything** | CUDA and MPI are off by default; the public headers name no CUDA type, so consuming the library needs no toolkit |
 | 🔷 **Minkowski functionals** | Volume, surface, mean curvature and Euler characteristic of binary volumes, their local densities, and their fields over a bank of ball or Gaussian windows (`<rapidht/minkowski.h>`), every scale for one forward transform per density |
-| 🎯 **Both precisions** | `float` and `double`; on consumer GPUs `float` is 9–29× faster |
+| 🎯 **Both precisions** | `float` and `double`; on consumer GPUs `float` is 26–38× faster |
 | ✅ **Verified, not asserted** | 36 tests, including comparison against an `O(N²)` reference and analytically known transform pairs |
 
 ---
@@ -206,19 +206,15 @@ At 512³ in single precision, with the volume resident on the device:
 
 | | time | vs CPU |
 | --- | ---: | ---: |
-| CPU, 6 cores | 3.8–4.2 s | — |
-| **GPU, resident** | **45 ms** | **85–94×** |
-| cuFFT + conversion | 12 ms | ~330× |
+| CPU, 6 cores | 248 ms | — |
+| **GPU, resident** | **44 ms** | **5.6×** |
+| cuFFT + conversion | 12 ms | ~21× |
 
-The GPU backend is 85–94× the CPU one and 3.7× behind cuFFT, while needing half
-cuFFT's extra device memory. The device figures repeat to under 1% across runs;
-the CPU one is a range because that machine has frequency scaling on. The full
-picture, including profiling and an extrapolation to datacentre hardware, is in
-**[docs/benchmarks.md](docs/benchmarks.md)**.
-
-> The CPU row predates B-106, which made the CPU backend 8–16× faster at 128³
-> and 256³ on another machine; the row and the GPU-vs-CPU ratio are due to be
-> re-measured.
+The resident GPU backend is 5.6× the CPU one in `float` and 3.7× behind cuFFT,
+while needing half cuFFT's extra device memory. In `double` the CPU backend is
+the faster one, by 2.4–3.8×, because a GeForce runs FP64 at 1/64 of FP32. The
+full picture, including profiling and an extrapolation to datacentre hardware,
+is in **[docs/benchmarks.md](docs/benchmarks.md)**.
 
 ---
 

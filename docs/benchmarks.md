@@ -16,22 +16,23 @@ card through `DeviceVolume`.
 
 ![3D benchmark](images/benchmark-3d.svg)
 
-| | CPU | GPU | Resident | vs CPU |
+| | CPU | GPU | Resident | Resident vs CPU |
 | --- | ---: | ---: | ---: | ---: |
-| f32 128³ | 14 989 µs | 2 158 µs | **264 µs** | 56.8× |
-| f32 256³ | 416 096 µs | 17 734 µs | **3 057 µs** | **136.1×** |
-| f32 512³ | 4 155 799 µs | 160 780 µs | **44 758 µs** | **92.9×** |
-| f64 128³ | 25 446 µs | 10 846 µs | 7 030 µs | 3.6× |
-| f64 256³ | 479 546 µs | 136 943 µs | 104 761 µs | 4.6× |
-| f64 512³ | 4 959 353 µs | 1 927 057 µs | 1 693 259 µs | 2.9× |
+| f32 128³ | 1 586 µs | 2 129 µs | **261 µs** | 6.1× |
+| f32 256³ | 18 467 µs | 17 684 µs | **3 035 µs** | 6.1× |
+| f32 512³ | 247 634 µs | 160 305 µs | **44 157 µs** | 5.6× |
+| f64 128³ | **2 811 µs** | 10 485 µs | 6 710 µs | 0.42× |
+| f64 256³ | **40 449 µs** | 133 803 µs | 104 015 µs | 0.39× |
+| f64 512³ | **442 164 µs** | 1 901 526 µs | 1 662 816 µs | 0.27× |
 
-**The CPU column predates B-106** (see [CPU backend after B-106](#cpu-backend-after-b-106))
-and is 8–16× too slow for the current code; it needs re-measuring on this machine.
-
-The device columns were measured after the 3D path stopped transposing the
-volume around its multiplies; the CPU column is from the run before, since the
-CPU backend did not change. The chart above predates the change and still shows
-the old device figures: 57.4 ms resident at 512³ and a 4.8× gap to cuFFT.
+All columns from one run on 2026-11-06, after B-106
+(`benchmarks/results/2026-11-06_evgeny.json`), `OMP_NUM_THREADS=6`. The device
+figures agree with the previous run to within 2%; the CPU ones are 9–23× faster
+than before B-106 (14 989 / 416 096 / 4 155 799 µs in f32 and 25 446 / 479 546 /
+4 959 353 µs in f64). **In double precision the CPU now beats the GPU**, resident
+or not, by 2.4–3.8×; in single precision the resident GPU leads by about 6×, not
+the 57–136× this table used to show. The chart above predates both B-106 and
+the removal of the device transposes and should be redrawn.
 
 What the transposes cost, resident, f32:
 
@@ -51,8 +52,8 @@ GEMMs.
 ### The bus was hiding the transform
 
 At 512³ the resident figure of 44.8 ms is the transform and nothing else.
-Through the copying interface the same work reads as 26× the CPU backend;
-resident, it is 93×. The difference is the bus: 116 ms of it per call, measured
+Through the copying interface the same work is 1.5× the CPU backend;
+resident, it is 5.6× (before B-106 these were 26× and 93×). The difference is the bus: 116 ms of it per call, measured
 separately as the `PCIe` case, and 44.8 + 116.0 accounts for the 161 ms the
 copying path takes.
 
@@ -68,14 +69,15 @@ the floor for any pass over it.
 
 ### Precision decides the outcome on consumer hardware
 
-A GeForce runs FP64 at a fraction of its FP32 rate, so single precision is 9–29×
-faster on the device while barely moving the CPU. Anyone using this backend for
-volumes should be in `float`. On datacentre cards the ratio is 1:2 rather than
+A GeForce runs FP64 at a fraction of its FP32 rate, so single precision is 26–38×
+faster on the device, against 1.8–2.2× on the CPU. Anyone using the GPU backend
+for volumes should be in `float`; in `double` the CPU backend is the faster one. On datacentre cards the ratio is 1:2 rather than
 1:64 and the choice matters far less.
 
 ### Only 3D is worth offloading
 
-In 2D the GPU is roughly at parity. In 1D it is 66–80× slower: the axis is the
+In 2D the CPU is now faster at every size measured (1.4–2.3× in f32 at
+128²–1024²). In 1D it is 66–80× slower: the axis is the
 whole signal, so the matrix is `n × n`, and at n = 262 144 it would need 512 GiB.
 The benchmark does not register GPU cases whose matrices exceed 1 GiB.
 
@@ -192,32 +194,33 @@ The Bracewell share of the 256³ transform fell from 61–70% to 5–13%, and
 vectorised butterflies should give. For scale, `scipy.fft.rfftn` (pocketfft) on
 the same container with 2 workers takes 6.1 ms at 128³ and 49.5 ms at 256³ in
 `float` -- RapiDHT is within 1.05–1.2× of it while computing the true rather
-than the separable transform. FFTW was not available there; the comparison
-B-106 asks for (≤ 1.5× of FFTW) is still to be made on the desktop.
+than the separable transform. On the desktop, see the table at the top and
+[FFTW, for reference](#fftw-for-reference).
 
 ---
 
 ## FFTW, for reference
 
-`FFTW_DHT` in double takes 11 506 / 142 809 / 1 600 990 µs on the same volumes,
-2.2× to 3.4× faster than this CPU backend as it was before B-106. Note the 13% run-to-run variation at
-512³, by far the noisiest figure here.
+`FFTW_DHT` in double takes 15 871 / 144 146 / 1 500 455 µs on the same volumes
+(2026-11-06; run-to-run variation 18% / 2% / 11%, the noisiest figures here).
+The CPU backend in double takes 2 811 / 40 449 / 442 164 µs: 3.4–5.6× faster.
+Before B-106 it was 2.2–3.4× slower.
 
-Three caveats: FFTW here is single-threaded, it is in double against our float,
+That is not "faster than FFTW". FFTW here runs on one thread against our six,
 and in 2D/3D it computes the *separable* transform while RapiDHT computes the
-true multidimensional one and pays for an extra Bracewell pass. The honest
-reading is that a GPU beats a single CPU core, not that this beats FFTW.
+true multidimensional one, Bracewell pass included. A like-for-like comparison
+needs either FFTW with threads or this backend with `OMP_NUM_THREADS=1`.
 
 ---
 
 ## Known openings
 
 - ~~The CPU backend gains almost nothing from `float`~~ — addressed by B-106
-  (blocks of lines, vectorised butterflies); `float` is now ~2× `double`.
-- Before B-106, CPU throughput fell from 85 to 36 M points/s between 128³ and
-  256³, where the volume stops fitting in the 18 MiB L3. To re-check after
-  B-106: blocks keep each line's passes in cache, but the gather/scatter still
-  streams the whole volume once per axis.
+  (blocks of lines, vectorised butterflies); `float` is now 1.8–2.2× `double`.
+- CPU throughput still falls with size, though from a much higher level: in
+  f32 1 320, 910 and 540 M points/s at 128³, 256³ and 512³ (before B-106: 140,
+  40 and 32). The 128³ volume fits in the 18 MiB L3, the others do not; each of
+  the three 1D passes and the Bracewell pass still stream the whole volume.
 - 1024³ does not fit on an 8 GiB card in any precision: two buffers of 4 GiB
   each in `float`. Volumes beyond ~997³ need slab decomposition.
 - The Bracewell pass takes 4.9 ms at 512³ against the 2.6 ms of a plain copy.
@@ -238,9 +241,19 @@ cmake -S . -B build-bench -DCMAKE_BUILD_TYPE=Release \
 cmake --build build-bench -j
 
 export OMP_NUM_THREADS=6          # physical cores, not logical
+mkdir -p benchmarks/results
 ./build-bench/benchmarks/bench_transform \
-  --benchmark_repetitions=7 --benchmark_report_aggregates_only=true
+  --benchmark_repetitions=7 --benchmark_report_aggregates_only=true \
+  --benchmark_out=benchmarks/results/$(date +%F)_$(hostname).json \
+  --benchmark_out_format=json
 ```
+
+Always keep `--benchmark_out`: the console table is not saved anywhere, while
+the JSON holds every figure plus the machine context (CPU, frequency, caches,
+build type), so a run can be read back later -- by Claude too -- without
+copying console output. One file per run, named by date and machine, in
+`benchmarks/results/` rather than `build-bench/`, which is a build directory
+and gets wiped.
 
 Enabling benchmarks makes the configure step fetch Google Benchmark. An
 `FFTW_DHT` baseline is built when FFTW is visible to `pkg-config`; the cuFFT
