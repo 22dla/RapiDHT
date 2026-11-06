@@ -267,6 +267,18 @@ private:
     void Series1D(T* image, Direction direction);
 
     /**
+     * @brief Throws std::invalid_argument unless every non-zero extent is a
+     *        power of two, as the CPU butterflies require.
+     *
+     * Series1D runs FDHT1D inside an OpenMP parallel region, where an escaping
+     * exception ends in std::terminate instead of reaching the caller. Checking
+     * all axes here, before the first pass, turns that into an ordinary error
+     * and leaves the caller's data untouched.
+     * @param caller Name of the public entry point, for the message.
+     */
+    void RequirePowerOfTwoExtents(const char* caller) const;
+
+    /**
      * @brief Computes bit-reversed indices for FFT.
      * @param indices Pointer to the vector of indices to fill.
      */

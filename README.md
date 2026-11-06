@@ -240,12 +240,17 @@ backend until this suite arrived.
 
 The forward transform is **unnormalised**: applying it twice scales the input by
 N, and `InverseTransform` is the forward transform followed by a `1/N` scaling.
+`ForwardSeparable` is unnormalised too. Texts that put the `1/N` in the forward
+transform instead (the author's dissertation, section 2.1, among them) differ
+from this library by exactly that factor: their spectrum is ours divided by N.
+The test `NormalisationIsOneOverNInInverseOnly` pins this down.
 
 Data is stored **row-major with the first axis fastest**:
 `index = i + Width·(j + Height·k)`.
 
-Extents must be **powers of two** — `FDHT1D` rejects anything else. `height == 0`
-means a 1D transform, `depth == 0` means 2D.
+Extents must be **powers of two** on the CPU backend — every axis is checked
+before the first pass, and anything else raises `std::invalid_argument` with the
+data left untouched. `height == 0` means a 1D transform, `depth == 0` means 2D.
 
 ---
 

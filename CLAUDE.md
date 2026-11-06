@@ -31,7 +31,7 @@ cmake --preset cpu && cmake --build --preset cpu -j && ctest --preset cpu
 # ноутбук (Windows)
 cmake --preset windows-cpu; cmake --build --preset windows-cpu; ctest --preset windows-cpu
 ```
-Ожидается 73 теста; без GPU 12 из них пропускаются (`SKIP_IF_NO_GPU()`), на десктопе должны выполняться все.
+Ожидается 76 тестов; без GPU 13 из них пропускаются (`SKIP_IF_NO_GPU()`), на десктопе должны выполняться все.
 
 Python-пакет (`pyproject.toml`, scikit-build-core + nanobind; собирается в `build-python/`):
 ```bash

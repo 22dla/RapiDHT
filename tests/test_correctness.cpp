@@ -158,6 +158,55 @@ TEST(Correctness, ConstantTransformsToImpulse)
     }
 }
 
+// B-004: pins where the normalisation sits, which the round trip cannot do --
+// Forward then Inverse gives the input back for 1/N in the inverse (ours), 1/N
+// in the forward (the dissertation, section 2.1) and 1/sqrt(N) in both alike.
+// An impulse tells them apart: forward gives 1 (not 1/N or 1/sqrt(N)) in every
+// bin, inverse gives 1/N (not 1 or 1/sqrt(N)). ForwardSeparable follows the
+// forward convention, which EvenKernelConvolution relies on.
+namespace {
+
+void ExpectNormalisationConvention(Modes mode)
+{
+    for (const Extent& e : kPropertyExtents) {
+        SCOPED_TRACE("extent " + Describe(e));
+        const Dims dims = Dims::Of(e.width, e.height, e.depth);
+        const double n = static_cast<double>(dims.Total());
+
+        std::vector<double> impulse(dims.Total(), 0.0);
+        impulse[0] = 1.0;
+
+        HartleyTransform<double> ht(e.width, e.height, e.depth, mode);
+
+        auto forward = impulse;
+        ht.ForwardTransform(forward.data());
+        ExpectClose(forward, std::vector<double>(dims.Total(), 1.0));
+
+        auto inverse = impulse;
+        ht.InverseTransform(inverse.data());
+        ExpectClose(inverse, std::vector<double>(dims.Total(), 1.0 / n));
+
+        if (mode == Modes::CPU) {
+            auto separable = impulse;
+            ht.ForwardSeparable(separable.data());
+            ExpectClose(separable, std::vector<double>(dims.Total(), 1.0));
+        }
+    }
+}
+
+} // namespace
+
+TEST(Correctness, NormalisationIsOneOverNInInverseOnly_CPU)
+{
+    ExpectNormalisationConvention(Modes::CPU);
+}
+
+TEST(Correctness, NormalisationIsOneOverNInInverseOnly_GPU)
+{
+    SKIP_IF_NO_GPU();
+    ExpectNormalisationConvention(Modes::GPU);
+}
+
 // The DHT is its own inverse up to the factor N, so applying it twice must
 // scale the input by N. This is a much stronger statement than Forward followed
 // by Inverse, because Inverse is implemented as Forward plus a 1/N scaling and
@@ -342,6 +391,41 @@ TEST(Correctness, RejectsNonPowerOfTwoLength)
     HartleyTransform<double> ht(12, 0, 0, Modes::CPU);
     std::vector<double> data(12, 1.0);
     EXPECT_THROW(ht.ForwardTransform(data.data()), std::invalid_argument);
+}
+
+// B-007: in 2D and 3D the 1D passes run inside an OpenMP parallel region, and
+// an exception escaping one aborts the process through std::terminate. The
+// extents must therefore be checked before any pass starts, which also leaves
+// the caller's data untouched. Each axis is tried in turn, because the passes
+// run in a fixed order and only the first one reached would have thrown.
+TEST(Correctness, RejectsNonPowerOfTwoExtentIn2DAnd3DWithoutTouchingData)
+{
+    struct Case {
+        size_t width, height, depth;
+    };
+    const Case cases[] = {
+        { 12, 8, 0 }, { 8, 12, 0 }, // 2D: each axis
+        { 12, 8, 8 }, { 8, 12, 8 }, { 8, 8, 12 }, // 3D: each axis
+    };
+    for (const auto& c : cases) {
+        SCOPED_TRACE(std::to_string(c.width) + "x" + std::to_string(c.height) + "x" + std::to_string(c.depth));
+        const size_t total = c.width * c.height * (c.depth == 0 ? 1 : c.depth);
+        const auto input = MakeSignal(total);
+
+        HartleyTransform<double> ht(c.width, c.height, c.depth, Modes::CPU);
+
+        auto data = input;
+        EXPECT_THROW(ht.ForwardTransform(data.data()), std::invalid_argument);
+        EXPECT_EQ(data, input);
+
+        data = input;
+        EXPECT_THROW(ht.InverseTransform(data.data()), std::invalid_argument);
+        EXPECT_EQ(data, input);
+
+        data = input;
+        EXPECT_THROW(ht.ForwardSeparable(data.data()), std::invalid_argument);
+        EXPECT_EQ(data, input);
+    }
 }
 
 // Powers of two must be accepted right up to the boundary cases, where the

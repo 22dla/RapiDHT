@@ -76,6 +76,20 @@ void HartleyTransform<T>::BuildTwiddleTable(Direction direction)
 }
 
 template <typename T>
+void HartleyTransform<T>::RequirePowerOfTwoExtents(const char* caller) const
+{
+    static const char* const kAxisNames[] = { "width", "height", "depth" };
+    for (size_t axis = 0; axis < _dims.size(); ++axis) {
+        // Zero means "this axis is absent" (1D or 2D), not a length.
+        if (_dims[axis] != 0 && !IsPowerOfTwo(_dims[axis])) {
+            throw std::invalid_argument(std::string(caller) + ": " + kAxisNames[axis]
+                                        + " must be a power of two for Modes::CPU, got "
+                                        + std::to_string(_dims[axis]) + ".");
+        }
+    }
+}
+
+template <typename T>
 void HartleyTransform<T>::Series1D(T* data, Direction direction)
 {
     PROFILE_FUNCTION();
@@ -83,6 +97,9 @@ void HartleyTransform<T>::Series1D(T* data, Direction direction)
     if (data == nullptr) {
         throw std::invalid_argument("The pointer to image is null.");
     }
+    // Last line of defence for any future caller: FDHT1D's own check would
+    // throw inside the parallel region below and terminate the process.
+    RequirePowerOfTwoExtents("Series1D");
 
     size_t M1 = 0, M2 = 0;
     switch (direction) {
@@ -263,6 +280,7 @@ void HartleyTransform<T>::FDHT2D(T* image)
     if (image == nullptr) {
         throw std::invalid_argument("FDHT2D: the pointer to image is null.");
     }
+    RequirePowerOfTwoExtents("ForwardTransform");
 
     Series1D(image, Direction::X);
     Series1D(image, Direction::Y);
@@ -278,6 +296,7 @@ void HartleyTransform<T>::FDHT3D(T* volume)
     if (volume == nullptr) {
         throw std::invalid_argument("FDHT3D: the pointer to volume is null.");
     }
+    RequirePowerOfTwoExtents("ForwardTransform");
 
     // 1D transforms along X, Y, Z dimensions
     Series1D(volume, Direction::Y);
@@ -314,6 +333,7 @@ void HartleyTransform<T>::ForwardSeparable(T* data)
     }
 
     // The constructor rejects Modes::RFFT beyond 1D, so this is Modes::CPU.
+    RequirePowerOfTwoExtents("ForwardSeparable");
     Series1D(data, Direction::Y);
     Series1D(data, Direction::X);
     if (!is2D) {
