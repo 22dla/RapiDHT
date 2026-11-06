@@ -9,6 +9,7 @@ set(RAPIDHT_SOURCES
     backend_cpu.cpp
     device_volume.cpp
     utilities.cpp
+    factored.cpp
 )
 
 if(RAPIDHT_WITH_CUDA)

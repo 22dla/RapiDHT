@@ -456,6 +456,10 @@ void HartleyTransform<T>::ForwardSeparable(T* data)
     const bool is1D = (Height() == 0 && Depth() == 0);
     const bool is2D = (Height() > 0 && Depth() == 0);
 
+    if (_mode == Modes::GPUFactored) {
+        FactoredOnHost(data, true);
+        return;
+    }
     if (_mode == Modes::GPU) {
         // The device paths take a flag rather than having separate copies:
         // the separable transform is the true one minus its last pass.

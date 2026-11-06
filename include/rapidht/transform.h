@@ -29,7 +29,11 @@ enum class Direction : size_t { Y = 0,
 /// Which backend carries out the transform.
 enum class Modes { CPU, ///< OpenMP, fast Hartley transform.
     GPU, ///< CUDA, dense matrices through cuBLAS. Needs RAPIDHT_WITH_CUDA.
-    RFFT ///< Real FFT, 1D only, for comparison.
+    RFFT, ///< Real FFT, 1D only, for comparison.
+    /// CUDA, experimental (R-4): every axis as two small dense multiplies in
+    /// shared memory, in place, with no device memory beyond the data itself.
+    /// Extents up to 2048 per axis. Needs RAPIDHT_WITH_CUDA.
+    GPUFactored
 };
 
 /**
@@ -266,6 +270,17 @@ private:
     /// Rejects a DeviceVolume this object cannot transform: wrong mode, wrong
     /// size or no allocation. Shared by the resident overloads.
     void CheckResidentVolume(const DeviceVolume<T>& volume) const;
+
+    /// True for both device modes, Modes::GPU and Modes::GPUFactored.
+    bool IsDeviceMode() const noexcept { return _mode == Modes::GPU || _mode == Modes::GPUFactored; }
+
+    /// Modes::GPUFactored (R-4): every present axis by the factored kernel,
+    /// then, unless `separable`, the Bracewell correction -- all in place on
+    /// device memory.
+    void FactoredOnDevice(T* deviceData, bool separable);
+
+    /// The host-pointer version: staging upload, FactoredOnDevice, download.
+    void FactoredOnHost(T* hostData, bool separable);
 
     /**
      * @brief Performs a 1D Real Fourier Transform along the specified direction.

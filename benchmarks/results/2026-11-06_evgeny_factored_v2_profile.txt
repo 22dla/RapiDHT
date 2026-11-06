@@ -1,0 +1,6 @@
+f32 factored  512^3  (134217728 elements, 512.0 MiB per buffer)  x10 iterations
+  29.72 ms per transform, 38.7 GFLOP of multiply-add arithmetic, 1.30 TFLOP/s
+  device memory held by the transform: 32 MiB built, 34 MiB after resident use, 546 MiB after a host-pointer call
+f64 factored  512^3  (134217728 elements, 1024.0 MiB per buffer)  x10 iterations
+  149.77 ms per transform, 38.7 GFLOP of multiply-add arithmetic, 0.26 TFLOP/s
+  device memory held by the transform: 32 MiB built, 34 MiB after resident use, 1058 MiB after a host-pointer call

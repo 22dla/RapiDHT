@@ -94,6 +94,58 @@ TEST(Correctness, ForwardMatchesReference_GPU)
     }
 }
 
+// R-4: the factored device path, host pointer and resident volume, in double
+// and in float, against the definition. The 3D extents include axes longer
+// than one block of lines and axes of length 2, where N1/2 is the only
+// non-zero column.
+TEST(Correctness, FactoredMatchesReference_GPU)
+{
+    SKIP_IF_NO_GPU();
+    for (const Extent& e : kReferenceExtents) {
+        SCOPED_TRACE("extent " + Describe(e));
+        const Dims dims = Dims::Of(e.width, e.height, e.depth);
+        const auto input = MakeSignal(dims.Total());
+        const auto expected = ReferenceDht(input, dims);
+
+        ExpectClose(Forward(input, e.width, e.height, e.depth, Modes::GPUFactored), expected, 1e-10);
+
+        HartleyTransform<double> ht(e.width, e.height, e.depth, Modes::GPUFactored);
+        DeviceVolume<double> volume(dims.Total());
+        volume.Upload(input.data());
+        ht.ForwardTransform(volume);
+        std::vector<double> resident(dims.Total());
+        volume.Download(resident.data());
+        ExpectClose(resident, expected, 1e-10);
+
+        std::vector<float> single(input.begin(), input.end());
+        HartleyTransform<float> htf(e.width, e.height, e.depth, Modes::GPUFactored);
+        htf.ForwardTransform(single.data());
+        ExpectClose(std::vector<double>(single.begin(), single.end()), expected, 2e-5);
+    }
+}
+
+// Larger extents, against the CPU backend, which the tests above pin to the
+// definition: 512 is the 32 x 16 split the benchmarks run, 2048 the limit.
+TEST(Correctness, FactoredAgreesWithCpuOnLargeExtents_GPU)
+{
+    SKIP_IF_NO_GPU();
+    const Extent extents[] = { { 512, 0, 0 }, { 2048, 0, 0 }, { 256, 128, 0 }, { 64, 32, 128 }, { 128, 128, 128 } };
+    for (const Extent& e : extents) {
+        SCOPED_TRACE("extent " + Describe(e));
+        const Dims dims = Dims::Of(e.width, e.height, e.depth);
+        const auto input = MakeSignal(dims.Total());
+        ExpectClose(Forward(input, e.width, e.height, e.depth, Modes::GPUFactored),
+            Forward(input, e.width, e.height, e.depth, Modes::CPU), 1e-10);
+    }
+}
+
+TEST(Correctness, FactoredRejectsTooLongOrNonPowerOfTwoExtents_GPU)
+{
+    SKIP_IF_NO_GPU();
+    EXPECT_THROW(HartleyTransform<float>(4096, 0, 0, Modes::GPUFactored), std::invalid_argument);
+    EXPECT_THROW(HartleyTransform<float>(64, 12, 0, Modes::GPUFactored), std::invalid_argument);
+}
+
 // Sizes above 65536 exercise a bit-reversal path that the smaller cases do
 // not: an inline 32-bit reversal used to overflow into indices far outside the
 // array there, which segfaulted rather than returning a wrong answer.
@@ -207,6 +259,7 @@ TEST(Correctness, NormalisationIsOneOverNInInverseOnly_GPU)
 {
     SKIP_IF_NO_GPU();
     ExpectNormalisationConvention(Modes::GPU);
+    ExpectNormalisationConvention(Modes::GPUFactored);
 }
 
 // The DHT is its own inverse up to the factor N, so applying it twice must

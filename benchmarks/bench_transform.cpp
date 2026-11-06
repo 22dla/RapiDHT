@@ -39,11 +39,13 @@
  *   pays for an extra Bracewell pass, so it is doing strictly more work there.
  */
 
+#include <rapidht/minkowski.h>
 #include <rapidht/transform.h>
 
 #include <benchmark/benchmark.h>
 
 #include <cmath>
+#include <cstdint>
 #include <cstring>
 #include <memory>
 #include <string>
@@ -126,7 +128,8 @@ void BM_Forward(
  * entry is the price of the current copy-per-call interface.
  */
 template <typename T>
-void BM_Resident(benchmark::State& state, size_t width, size_t height, size_t depth, bool separable = false)
+void BM_Resident(benchmark::State& state, size_t width, size_t height, size_t depth, bool separable = false,
+    Modes mode = Modes::GPU)
 {
     const size_t count = ElementCount(width, height, depth);
     const std::vector<T> pristine = MakeSignal<T>(count);
@@ -134,7 +137,7 @@ void BM_Resident(benchmark::State& state, size_t width, size_t height, size_t de
     std::unique_ptr<HartleyTransform<T>> transform;
     std::unique_ptr<RapiDHT::DeviceVolume<T>> volume;
     try {
-        transform = std::make_unique<HartleyTransform<T>>(width, height, depth, Modes::GPU);
+        transform = std::make_unique<HartleyTransform<T>>(width, height, depth, mode);
         volume = std::make_unique<RapiDHT::DeviceVolume<T>>(count);
         volume->Upload(pristine.data());
     } catch (const std::exception& error) {
@@ -348,6 +351,46 @@ const Extent kExtents3D[] = { { 128, 128, 128 }, { 256, 256, 256 }, { 512, 512, 
 const Extent kExtents1D[] = { { 1024, 0, 0 }, { 16384, 0, 0 } };
 const Extent kExtents2D[] = { { 128, 128, 0 }, { 512, 512, 0 }, { 1024, 1024, 0 } };
 
+/*
+ * R-4: the factored device path. Registered for every extent up to its 2048
+ * limit, matrices or not -- it holds none. Factored/ copies across the bus like
+ * GPU/, FactoredResident/ does not, like Resident/; compare those two pairs and
+ * FactoredResident/ against cuFFT/.
+ */
+template <typename T>
+void RegisterFactored(const Extent* extents, size_t n, const char* rank, const char* type)
+{
+#ifdef RAPIDHT_WITH_CUDA
+    for (size_t i = 0; i < n; ++i) {
+        const Extent e = extents[i];
+        if (e.width > 2048 || e.height > 2048 || e.depth > 2048) {
+            continue;
+        }
+        const std::string suffix = std::string(type) + "/" + rank + "/" + Describe(e);
+        benchmark::RegisterBenchmark(("Factored/" + suffix).c_str(),
+            [e](benchmark::State& s) { BM_Forward<T>(s, e.width, e.height, e.depth, Modes::GPUFactored); })
+            ->Unit(benchmark::kMicrosecond);
+        benchmark::RegisterBenchmark(("FactoredResident/" + suffix).c_str(),
+            [e](benchmark::State& s) {
+                BM_Resident<T>(s, e.width, e.height, e.depth, false, Modes::GPUFactored);
+            })
+            ->Unit(benchmark::kMicrosecond);
+        if (e.height > 0) {
+            benchmark::RegisterBenchmark(("FactoredResidentSeparable/" + suffix).c_str(),
+                [e](benchmark::State& s) {
+                    BM_Resident<T>(s, e.width, e.height, e.depth, true, Modes::GPUFactored);
+                })
+                ->Unit(benchmark::kMicrosecond);
+        }
+    }
+#else
+    (void)extents;
+    (void)n;
+    (void)rank;
+    (void)type;
+#endif
+}
+
 template <typename T>
 void RegisterFor(const Extent* extents, size_t n, const char* rank, const char* type)
 {
@@ -439,6 +482,42 @@ void RegisterDoubleOnly(const Extent* extents, size_t n, const char* rank)
     }
 }
 
+/*
+ * Local Minkowski functionals as hno-porous uses them: 4 fields on 3 ball
+ * windows (radii N/32, N/16, N/8) of a random 40% solid. This is the B-203
+ * target -- 512^3, 4 fields, 3 scales under a second -- measured on the CPU
+ * path before deciding whether a GPU one is needed. Memory: 12 output fields,
+ * 4 densities and 3 window spectra, about 10 GiB in float at 512^3.
+ */
+void BM_MinkowskiFields(benchmark::State& state, size_t n)
+{
+    std::vector<uint8_t> solid(n * n * n);
+    uint32_t seed = 12345;
+    for (auto& v : solid) {
+        seed = seed * 1664525u + 1013904223u; // fixed LCG: reproducible, no <random> state
+        v = static_cast<uint8_t>((seed >> 24) < 102); // ~40%
+    }
+    const double r = static_cast<double>(n) / 16.0;
+
+    std::unique_ptr<RapiDHT::MinkowskiFields<float>> fields;
+    std::vector<float> out;
+    try {
+        fields = std::make_unique<RapiDHT::MinkowskiFields<float>>(
+            n, n, n, RapiDHT::WindowShape::Ball, std::vector<double> { r / 2, r, 2 * r });
+        out.resize(fields->FieldCount() * fields->Size());
+    } catch (const std::exception& error) {
+        state.SkipWithError(error.what());
+        return;
+    }
+
+    for (auto _ : state) {
+        fields->Compute(solid.data(), out.data());
+        benchmark::DoNotOptimize(out.data());
+        benchmark::ClobberMemory();
+    }
+    state.SetItemsProcessed(static_cast<int64_t>(state.iterations() * n * n * n));
+}
+
 template <size_t N>
 constexpr size_t CountOf(const Extent (&)[N])
 {
@@ -455,10 +534,18 @@ int main(int argc, char** argv)
     RegisterFor<double>(kExtents3D, CountOf(kExtents3D), "3D", "f64");
     RegisterFor<float>(kExtents3D, CountOf(kExtents3D), "3D", "f32");
     RegisterCufft(kExtents3D, CountOf(kExtents3D), "3D");
+    RegisterFactored<double>(kExtents3D, CountOf(kExtents3D), "3D", "f64");
+    RegisterFactored<float>(kExtents3D, CountOf(kExtents3D), "3D", "f32");
     RegisterDoubleOnly(kExtents3D, CountOf(kExtents3D), "3D");
+    for (const Extent& e : kExtents3D) {
+        benchmark::RegisterBenchmark(("MinkowskiFields/f32/3D/" + Describe(e)).c_str(),
+            [e](benchmark::State& s) { BM_MinkowskiFields(s, e.width); })
+            ->Unit(benchmark::kMillisecond);
+    }
 
     RegisterFor<double>(kExtents2D, CountOf(kExtents2D), "2D", "f64");
     RegisterFor<float>(kExtents2D, CountOf(kExtents2D), "2D", "f32");
+    RegisterFactored<float>(kExtents2D, CountOf(kExtents2D), "2D", "f32");
     RegisterDoubleOnly(kExtents2D, CountOf(kExtents2D), "2D");
 
     RegisterFor<double>(kExtents1D, CountOf(kExtents1D), "1D", "f64");

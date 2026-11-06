@@ -56,7 +56,7 @@ double UsedMiB()
 }
 
 template <typename T>
-int Run(size_t width, int iterations, const char* label)
+int Run(size_t width, int iterations, const char* label, RapiDHT::Modes mode)
 {
     const size_t count = width * width * width;
 
@@ -76,7 +76,7 @@ int Run(size_t width, int iterations, const char* label)
         volume.Upload(data.data());
 
         const double base = UsedMiB();
-        RapiDHT::HartleyTransform<T> transform(width, width, width, RapiDHT::Modes::GPU);
+        RapiDHT::HartleyTransform<T> transform(width, width, width, mode);
         const double afterConstruct = UsedMiB();
 
         // Untimed warm-up: the first call pays for context creation and for
@@ -92,10 +92,20 @@ int Run(size_t width, int iterations, const char* label)
         const double ms = std::chrono::duration<double, std::milli>(finish - start).count();
         const double msPer = ms / iterations;
         // 3 axes, W^2 lines each, 2*W^2 flops per line.
-        const double gflop = 6.0 * std::pow(static_cast<double>(width), 4.0) / 1e9;
+        // Dense matrices: 2W flops per element per axis. Factored (R-4): 2(N1 + N2),
+        // N1 = 2^ceil(log2(W)/2), the twiddle not counted.
+        double perAxis = 2.0 * static_cast<double>(width);
+        if (mode == RapiDHT::Modes::GPUFactored) {
+            size_t n1 = 1;
+            while (n1 * n1 < width) {
+                n1 *= 2;
+            }
+            perAxis = 2.0 * static_cast<double>(n1 + width / n1);
+        }
+        const double gflop = 3.0 * perAxis * std::pow(static_cast<double>(width), 3.0) / 1e9;
         // GFLOP per millisecond is already TFLOP per second; the earlier
         // division by 1000 here printed 0.00 for every run.
-        std::printf("  %.2f ms per transform, %.1f GFLOP of matrix arithmetic, %.2f TFLOP/s\n",
+        std::printf("  %.2f ms per transform, %.1f GFLOP of multiply-add arithmetic, %.2f TFLOP/s\n",
             msPer, gflop, gflop / msPer);
 
         // Device memory the transform holds beyond the volume itself: after
@@ -133,12 +143,15 @@ int main(int argc, char** argv)
     const size_t width = (argc > 1) ? std::strtoul(argv[1], nullptr, 10) : 256;
     const int iterations = (argc > 2) ? std::atoi(argv[2]) : 10;
     const bool useDouble = (argc > 3) && std::strcmp(argv[3], "f64") == 0;
+    // A fourth argument "factored" runs the R-4 path instead of the matrices.
+    const bool factored = (argc > 4) && std::strcmp(argv[4], "factored") == 0;
+    const RapiDHT::Modes mode = factored ? RapiDHT::Modes::GPUFactored : RapiDHT::Modes::GPU;
 
     if (width == 0 || (width & (width - 1)) != 0) {
         std::fprintf(stderr, "width must be a power of two, got %zu\n", width);
         return 1;
     }
 
-    return useDouble ? Run<double>(width, iterations, "f64")
-                     : Run<float>(width, iterations, "f32");
+    const char* label = useDouble ? (factored ? "f64 factored" : "f64") : (factored ? "f32 factored" : "f32");
+    return useDouble ? Run<double>(width, iterations, label, mode) : Run<float>(width, iterations, label, mode);
 }

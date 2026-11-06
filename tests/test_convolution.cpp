@@ -176,18 +176,21 @@ TEST(Separable, MatchesDefinition_GPU)
         const auto input = MakeSignal(d.Total());
         const auto expected = ReferenceSeparableDht(input, d);
 
-        HartleyTransform<double> ht(e.width, e.height, e.depth, Modes::GPU);
+        for (const Modes mode : { Modes::GPU, Modes::GPUFactored }) {
+            SCOPED_TRACE(mode == Modes::GPU ? "GPU" : "GPUFactored");
+            HartleyTransform<double> ht(e.width, e.height, e.depth, mode);
 
-        std::vector<double> fromHost = input;
-        ht.ForwardSeparable(fromHost.data());
-        ExpectClose(fromHost, expected, 1e-9);
+            std::vector<double> fromHost = input;
+            ht.ForwardSeparable(fromHost.data());
+            ExpectClose(fromHost, expected, 1e-9);
 
-        DeviceVolume<double> volume(d.Total());
-        volume.Upload(input.data());
-        ht.ForwardSeparable(volume);
-        std::vector<double> fromResident(d.Total());
-        volume.Download(fromResident.data());
-        ExpectClose(fromResident, expected, 1e-9);
+            DeviceVolume<double> volume(d.Total());
+            volume.Upload(input.data());
+            ht.ForwardSeparable(volume);
+            std::vector<double> fromResident(d.Total());
+            volume.Download(fromResident.data());
+            ExpectClose(fromResident, expected, 1e-9);
+        }
     }
 }
 

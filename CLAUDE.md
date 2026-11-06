@@ -32,7 +32,7 @@ cmake --preset cpu && cmake --build --preset cpu -j && ctest --preset cpu
 # ноутбук (Windows)
 cmake --preset windows-cpu; cmake --build --preset windows-cpu; ctest --preset windows-cpu
 ```
-Ожидается 79 тестов; без GPU 16 из них пропускаются (`SKIP_IF_NO_GPU()`), на десктопе (CUDA) пропускаются только 2 — `DeviceVolumeIsRejectedWithoutCuda` и `GpuModeIsRejectedWhenNotCompiledIn`, они для сборки без CUDA.
+Ожидается 90 тестов; без GPU 19 из них пропускаются (`SKIP_IF_NO_GPU()`), на десктопе (CUDA) пропускаются только 2 — `DeviceVolumeIsRejectedWithoutCuda` и `GpuModeIsRejectedWhenNotCompiledIn`, они для сборки без CUDA.
 
 Python-пакет (`pyproject.toml`, scikit-build-core + nanobind; собирается в `build-python/`):
 ```bash

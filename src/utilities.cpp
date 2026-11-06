@@ -23,7 +23,9 @@ Modes ParseDevice(const char* device)
         return Modes::GPU;
     if (!strcmp(device, "RFFT"))
         return Modes::RFFT;
-    throw std::runtime_error("Error: device must be CPU, GPU or RFFT");
+    if (!strcmp(device, "GPUFactored"))
+        return Modes::GPUFactored;
+    throw std::runtime_error("Error: device must be CPU, GPU, RFFT or GPUFactored");
 }
 
 LoadingConfig ParseArgs(int argc, char** argv)

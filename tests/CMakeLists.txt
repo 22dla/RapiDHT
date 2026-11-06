@@ -17,11 +17,18 @@ set(RAPIDHT_TEST_SUITES
     test_correctness
     test_convolution
     test_minkowski
+    test_factored
+    test_factored_kernels
 )
 
 foreach(SUITE ${RAPIDHT_TEST_SUITES})
     add_executable(${SUITE} "${SUITE}.cpp")
     target_link_libraries(${SUITE} PRIVATE coreht gtest_main rapidht_warnings)
     gtest_discover_tests(${SUITE})
+    # test_factored* check internal code (R-4): the host reference and the
+    # device kernels compiled for the host.
+    if(SUITE MATCHES "^test_factored")
+        target_include_directories(${SUITE} PRIVATE "${CMAKE_SOURCE_DIR}/src")
+    endif()
     install(TARGETS ${SUITE} DESTINATION bin)
 endforeach()

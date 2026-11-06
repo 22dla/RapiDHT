@@ -11,6 +11,7 @@
 #include "internal/support.h"
 
 #ifdef RAPIDHT_WITH_CUDA
+#include "internal/factored.h"
 #include "internal/kernels.h"
 #endif
 
@@ -69,6 +70,7 @@ HartleyTransform<T>::HartleyTransform(size_t width, size_t height, size_t depth,
         // Allocated only for the GPU backend: a CPU-only transform must not
         // touch the CUDA runtime at all, not even to create a stream.
         _impl = std::make_unique<Impl>();
+        _impl->cublas = std::make_unique<internal::CublasHandle>();
         auto& matrices = _impl->transformMatrices;
 
         matrices[static_cast<size_t>(Direction::Y)].Resize(Width() * Width());
@@ -85,6 +87,31 @@ HartleyTransform<T>::HartleyTransform(size_t width, size_t height, size_t depth,
         const size_t totalElements = Width() * (Height() == 0 ? size_t { 1 } : Height())
                                    * (Depth() == 0 ? size_t { 1 } : Depth());
         _impl->scratchB.Resize(totalElements);
+#else
+        ThrowGpuUnavailable();
+#endif
+    }
+    if (_mode == Modes::GPUFactored) {
+#ifdef RAPIDHT_WITH_CUDA
+        // Only the tables: the transform runs in place in shared memory, so
+        // there is no scratch buffer, no matrix and no cuBLAS handle.
+        _impl = std::make_unique<Impl>();
+        for (size_t a = 0; a < _dims.size(); ++a) {
+            const size_t n = (_dims[a] == 0 ? 1 : _dims[a]);
+            if (n > kFactoredMaxLength) {
+                throw std::invalid_argument("Modes::GPUFactored handles extents up to "
+                                            + std::to_string(kFactoredMaxLength) + ", got "
+                                            + std::to_string(n) + ".");
+            }
+            const auto tables = internal::MakeFactoredTables<T>(n); // throws unless a power of two
+            std::vector<T> packed;
+            for (const auto* part : { &tables.c1, &tables.c2, &tables.cHalf, &tables.twC, &tables.twD }) {
+                packed.insert(packed.end(), part->begin(), part->end());
+            }
+            _impl->factoredSplit[a] = tables.split;
+            _impl->factoredTables[a].Resize(packed.size());
+            _impl->factoredTables[a].Upload(packed.data(), packed.size());
+        }
 #else
         ThrowGpuUnavailable();
 #endif
@@ -146,6 +173,9 @@ void HartleyTransform<T>::ForwardTransform(T* data)
         case Modes::RFFT:
             // The constructor rejects RFFT for anything but 1D.
             RealFFT1D(data);
+            break;
+        case Modes::GPUFactored:
+            FactoredOnHost(data, false);
             break;
     }
 }
@@ -216,14 +246,30 @@ void HartleyTransform<T>::DHT3DOnDevice(T*, T*, bool)
     ThrowGpuUnavailable();
 }
 
+template <typename T>
+void HartleyTransform<T>::FactoredOnDevice(T*, bool)
+{
+    ThrowGpuUnavailable();
+}
+
+template <typename T>
+void HartleyTransform<T>::FactoredOnHost(T*, bool)
+{
+    ThrowGpuUnavailable();
+}
+
 #endif
 
 template <typename T>
 void HartleyTransform<T>::TransformOnDevice(T* deviceInOut, T* deviceScratch, bool separable)
 {
+    if (_mode == Modes::GPUFactored) {
+        FactoredOnDevice(deviceInOut, separable);
+        return;
+    }
     if (_mode != Modes::GPU) {
         throw std::invalid_argument(
-            "Device-resident transforms require Modes::GPU; this object was built for another mode.");
+            "Device-resident transforms require a device mode (Modes::GPU or Modes::GPUFactored); this object was built for another mode.");
     }
 
     const bool is1D = (Height() == 0 && Depth() == 0);
@@ -241,11 +287,11 @@ void HartleyTransform<T>::TransformOnDevice(T* deviceInOut, T* deviceScratch, bo
 template <typename T>
 void HartleyTransform<T>::CheckResidentVolume(const DeviceVolume<T>& volume) const
 {
-    // The mode has to come first. _impl exists only for Modes::GPU, and the
-    // callers read _impl->scratchB right after this returns.
-    if (_mode != Modes::GPU) {
+    // The mode has to come first. _impl exists only for the device modes, and
+    // the callers read _impl->scratchB right after this returns.
+    if (!IsDeviceMode()) {
         throw std::invalid_argument(
-            "Device-resident transforms require Modes::GPU; this object was built for another mode.");
+            "Device-resident transforms require a device mode (Modes::GPU or Modes::GPUFactored); this object was built for another mode.");
     }
 
     const size_t expected = Width() * (Height() == 0 ? size_t { 1 } : Height())
@@ -275,6 +321,7 @@ void HartleyTransform<T>::ForwardTransform(DeviceVolume<T>& volume)
     // scratchB is the working buffer; the volume itself plays the part that
     // the staging buffer plays on the host path, which is why that one is
     // never allocated for resident-only use.
+    // scratchB is empty in Modes::GPUFactored, which needs none.
     TransformOnDevice(static_cast<T*>(volume.DeviceData()), _impl->scratchB.Data());
 #else
     ThrowGpuUnavailable();

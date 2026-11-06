@@ -209,6 +209,58 @@ than the separable transform. On the desktop, see the table at the top and
 
 ---
 
+## The separable transform (B-102)
+
+`ForwardSeparable` skips the Bracewell pass; it is what an even-kernel
+convolution runs. f32, `OMP_NUM_THREADS=6`, median of 7, 2026-11-06
+(`benchmarks/results/2026-11-06_evgeny_separable.json`):
+
+| | CPU | CPU separable | | Resident | Resident separable | |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| 128² | 25.9 µs | 23.4 µs | −10% | 34.3 µs | 28.1 µs | −18% |
+| 512² | 286 µs | 263 µs | −8% | 408 µs | 397 µs | −3% |
+| 1024² | 1 301 µs | 1 258 µs | −3% | 3 018 µs | 2 978 µs | −1% |
+| 128³ | 1 691 µs | 1 555 µs | −8% | 261 µs | 242 µs | −7% |
+| 256³ | 18.6 ms | 15.7 ms | −15% | 3.01 ms | 2.84 ms | −6% |
+| 512³ | 239 ms | 214 ms | −10% | 44.1 ms | 42.3 ms | −4% |
+
+On the device the 3D saving is 1.85 ms at 512³, not the 4.9 ms the Bracewell
+kernel takes: three out-of-place multiplies leave the separable spectrum in the
+scratch buffer, and copying it back costs about 2.6 ms of the 4.9. Ending the
+multiplies in the caller's buffer instead would need an in-place multiply or an
+even number of passes. Either way the transform is GEMM-bound -- the
+correction was never more than a tenth of it -- so skipping it is worth having
+but does not change the picture.
+
+---
+
+## The factored device path (R-4, experimental)
+
+`Modes::GPUFactored` replaces each dense `N x N` multiply by two small ones,
+`N = N1 * N2` (512 = 32 * 16): 96 multiply-adds per element and axis instead
+of 1 024. Each axis is one kernel that holds a block of lines in shared memory
+and works in place; the Bracewell pass runs in place too. It holds no scratch
+buffer, no matrices and no cuBLAS handle. Resident, f32, median of 5,
+2026-11-06 (`benchmarks/results/2026-11-06_evgeny_factored_v2.2.json`):
+
+| | matrices | factored | cuFFT + conversion |
+| --- | ---: | ---: | ---: |
+| 128³ | 261 µs | 345 µs | **192 µs** |
+| 256³ | 3.02 ms | 2.43 ms | **1.49 ms** |
+| 512³ | 44.2 ms | 25.3 ms | **12.0 ms** |
+| 512³, f64 | 1 651 ms | **150 ms** | — |
+| 1024², 2D | 3.04 ms | **0.29 ms** | — |
+| extra device memory, 512³ f32 | 556 MiB | **32 MiB** | 1 028 MiB |
+
+The 32 MiB are the CUDA memory pool's granularity; the tables themselves are
+a few KiB. Per kernel at 512³ f32 (`RAPIDHT_TRACE_KERNELS=1`, after warm-up):
+fastest axis 8.6 ms, the other two 6.9 ms each, Bracewell 2.6 ms -- against
+about 2.4 ms for one read and one write of the volume. The axes are still
+latency-bound, not bandwidth- or FMA-bound (1.4 TFLOP/s); see R-4 in the
+backlog for the plan.
+
+---
+
 ## FFTW, for reference
 
 `FFTW_DHT` in double takes 15 871 / 144 146 / 1 500 455 µs on the same volumes

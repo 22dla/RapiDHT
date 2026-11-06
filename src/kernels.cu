@@ -5,7 +5,11 @@
  * Author: Volkov Evgeny Aleksandrovich, volkov22dla@yandex.ru
  */
 
+#include "internal/device_array.h"
 #include "internal/kernels.h"
+
+// Outside namespace RapiDHT, which the header opens itself.
+#include "internal/factored_kernels.cuh"
 
 #include "device_launch_parameters.h"
 
@@ -179,8 +183,8 @@ void MatrixMultiplication(const T* A, const T* B, T* C, int M, int K, int N)
         (M + BLOCK_SIZE - 1) / BLOCK_SIZE);
 
     MatrixMultiplicationSharedKernel<<<blocksPerGrid, threadsPerBlock>>>(A, B, C, M, K, N);
-
-    cudaDeviceSynchronize();
+    RAPIDHT_CUDA_CHECK(cudaGetLastError());
+    RAPIDHT_CUDA_CHECK(cudaDeviceSynchronize());
 }
 
 template <typename T>
@@ -190,7 +194,8 @@ void VectorMatrixMultiplication(const T* A, const T* x, T* y, int N)
     int blocksPerGrid = (N + threadsPerBlock - 1) / threadsPerBlock;
 
     VectorMatrixMultiplicationKernel<<<blocksPerGrid, threadsPerBlock>>>(A, x, y, N);
-    cudaDeviceSynchronize();
+    RAPIDHT_CUDA_CHECK(cudaGetLastError());
+    RAPIDHT_CUDA_CHECK(cudaDeviceSynchronize());
 }
 
 // rows and cols describe the destination, that is the shape of B.
@@ -203,7 +208,8 @@ void MatrixTranspose(const T* A, T* B, int rows, int cols)
         (rows + BLOCK_SIZE - 1) / BLOCK_SIZE);
 
     MatrixTransposeKernel<<<blocksPerGrid, threadsPerBlock>>>(A, B, rows, cols);
-    cudaDeviceSynchronize();
+    RAPIDHT_CUDA_CHECK(cudaGetLastError());
+    RAPIDHT_CUDA_CHECK(cudaDeviceSynchronize());
 }
 
 template <typename T>
@@ -213,7 +219,8 @@ void ScaleOnDevice(T* deviceData, size_t count, T factor)
     const size_t blocks = (count + threads - 1) / threads;
 
     ScaleKernel<<<static_cast<unsigned int>(blocks), threads>>>(deviceData, count, factor);
-    cudaDeviceSynchronize();
+    RAPIDHT_CUDA_CHECK(cudaGetLastError());
+    RAPIDHT_CUDA_CHECK(cudaDeviceSynchronize());
 }
 
 template <typename T>
@@ -224,7 +231,8 @@ void BracewellTransform2D(const T* deviceIn, T* deviceOut, int W, int H)
         (H + blockDim.y - 1) / blockDim.y);
 
     BracewellTransform2DKernel<<<gridDim, blockDim>>>(deviceIn, deviceOut, W, H);
-    cudaDeviceSynchronize();
+    RAPIDHT_CUDA_CHECK(cudaGetLastError());
+    RAPIDHT_CUDA_CHECK(cudaDeviceSynchronize());
 }
 
 template <typename T>
@@ -239,26 +247,130 @@ void BracewellTransform3D(const T* deviceIn, T* deviceOut, int W, int H, int D)
         (D + blockDim.z - 1) / blockDim.z);
 
     BracewellTransform3DKernel<<<gridDim, blockDim>>>(deviceIn, deviceOut, W, H, D);
-    cudaDeviceSynchronize();
+    RAPIDHT_CUDA_CHECK(cudaGetLastError());
+    RAPIDHT_CUDA_CHECK(cudaDeviceSynchronize());
 }
 
 void InitializeHartleyMatrix(double* deviceMatrix, size_t height)
 {
+    // An absent axis (height 0, in 1D and 2D) has no matrix. Launching anyway
+    // meant a 0 x 0 grid, an invalid configuration that nothing checked: the
+    // error stayed pending and surfaced at the next cudaGetLastError, in
+    // whichever unrelated kernel happened to ask (found through R-4).
+    if (height == 0) {
+        return;
+    }
     dim3 block(16, 16);
     dim3 grid((height + block.x - 1) / block.x, (height + block.y - 1) / block.y);
 
     InitializeHartleyMatrixKernel<<<grid, block>>>(deviceMatrix, height);
-    cudaDeviceSynchronize();
+    RAPIDHT_CUDA_CHECK(cudaGetLastError());
+    RAPIDHT_CUDA_CHECK(cudaDeviceSynchronize());
 }
 
 void InitializeHartleyMatrix(float* deviceMatrix, size_t height)
 {
+    // An absent axis (height 0, in 1D and 2D) has no matrix. Launching anyway
+    // meant a 0 x 0 grid, an invalid configuration that nothing checked: the
+    // error stayed pending and surfaced at the next cudaGetLastError, in
+    // whichever unrelated kernel happened to ask (found through R-4).
+    if (height == 0) {
+        return;
+    }
     dim3 block(16, 16);
     dim3 grid((height + block.x - 1) / block.x, (height + block.y - 1) / block.y);
 
     InitializeHartleyMatrixKernel<<<grid, block>>>(deviceMatrix, height);
-    cudaDeviceSynchronize();
+    RAPIDHT_CUDA_CHECK(cudaGetLastError());
+    RAPIDHT_CUDA_CHECK(cudaDeviceSynchronize());
 }
+
+template <typename T>
+void FactoredAxis(T* data, const FactoredAxisTables<T>& tables, size_t axisStride, size_t laneStride,
+    size_t laneLength, size_t otherStride, size_t otherLength)
+{
+    if (tables.n <= 1) {
+        return; // the DHT of a single value is that value
+    }
+    const size_t n = static_cast<size_t>(tables.n);
+    const size_t n1 = static_cast<size_t>(tables.n1);
+    const size_t n2 = static_cast<size_t>(tables.n2);
+
+    int device = 0;
+    int optIn = 48 * 1024;
+    RAPIDHT_CUDA_CHECK(cudaGetDevice(&device));
+    RAPIDHT_CUDA_CHECK(cudaDeviceGetAttribute(&optIn, cudaDevAttrMaxSharedMemoryPerBlockOptin, device));
+
+    // The register-tiled kernel wherever its multiples of 4 hold: 8 lines per
+    // block in float, 4 in double, for two blocks per SM at n = 512.
+    if (n1 >= 4 && n2 >= 4) {
+        size_t lanes = (sizeof(T) == 4 ? 8 : 4);
+        while (lanes > laneLength) {
+            lanes /= 2;
+        }
+        auto bytesFor = [&](size_t l) {
+            return (n * l + n1 * FactoredWorkStride<T>(n2, l) + n1 * n1 + 2 * n2 * n2) * sizeof(T);
+        };
+        if (lanes > 4 && bytesFor(lanes) > static_cast<size_t>(optIn)) {
+            lanes = 4;
+        }
+        if (lanes >= 4 && bytesFor(lanes) <= static_cast<size_t>(optIn)) {
+            const size_t sharedBytes = bytesFor(lanes);
+            if (sharedBytes > 48 * 1024) {
+                RAPIDHT_CUDA_CHECK(cudaFuncSetAttribute(FactoredAxisKernelFast<T>,
+                    cudaFuncAttributeMaxDynamicSharedMemorySize, static_cast<int>(sharedBytes)));
+            }
+            const size_t blocksPerOther = laneLength / lanes;
+            FactoredAxisKernelFast<T><<<static_cast<unsigned int>(blocksPerOther * otherLength), 256, sharedBytes>>>(
+                data, tables, axisStride, laneStride, static_cast<int>(lanes), static_cast<int>(blocksPerOther),
+                otherStride, static_cast<int>(FactoredWorkStride<T>(n2, lanes)));
+            RAPIDHT_CUDA_CHECK(cudaGetLastError());
+            return;
+        }
+    }
+
+    // Generic kernel: short lines (n < 16) or fewer than 4 lines to a block.
+    // As many neighbouring lines as fit twice into 48 KiB, at most 16, a power
+    // of two so that it divides laneLength.
+    const size_t lineBytes = 2 * n * sizeof(T);
+    size_t lanes = 16;
+    while (lanes > 1 && (lanes * lineBytes > 48 * 1024 || lanes > laneLength)) {
+        lanes /= 2;
+    }
+    const size_t blocksPerOther = laneLength / lanes;
+    const size_t blocks = blocksPerOther * otherLength;
+    const size_t sharedBytes = lanes * lineBytes;
+
+    FactoredAxisKernel<T><<<static_cast<unsigned int>(blocks), 256, sharedBytes>>>(data, tables, axisStride,
+        laneStride, static_cast<int>(lanes), static_cast<int>(blocksPerOther), otherStride);
+    RAPIDHT_CUDA_CHECK(cudaGetLastError());
+}
+
+template <typename T>
+void BracewellInPlace2D(T* data, int W, int H)
+{
+    const dim3 block(32, 8);
+    const dim3 grid((W / 2 + 1 + block.x - 1) / block.x, (H / 2 + 1 + block.y - 1) / block.y);
+    BracewellInPlace2DKernel<T><<<grid, block>>>(data, W, H);
+    RAPIDHT_CUDA_CHECK(cudaGetLastError());
+}
+
+template <typename T>
+void BracewellInPlace3D(T* data, int W, int H, int D)
+{
+    const dim3 block(32, 8);
+    const dim3 grid((W / 2 + 1 + block.x - 1) / block.x, (H / 2 + 1 + block.y - 1) / block.y, D / 2 + 1);
+    BracewellInPlace3DKernel<T><<<grid, block>>>(data, W, H, D);
+    RAPIDHT_CUDA_CHECK(cudaGetLastError());
+}
+
+template void FactoredAxis<float>(float*, const FactoredAxisTables<float>&, size_t, size_t, size_t, size_t, size_t);
+template void FactoredAxis<double>(
+    double*, const FactoredAxisTables<double>&, size_t, size_t, size_t, size_t, size_t);
+template void BracewellInPlace2D<float>(float*, int, int);
+template void BracewellInPlace2D<double>(double*, int, int);
+template void BracewellInPlace3D<float>(float*, int, int, int);
+template void BracewellInPlace3D<double>(double*, int, int, int);
 
 // Matrix operations
 template void MatrixMultiplication<float>(const float* A, const float* B, float* C, int M, int K, int N);

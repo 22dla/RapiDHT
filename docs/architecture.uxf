@@ -57,8 +57,9 @@ bg=#E8F1FB</panel_attributes>
 +HartleyTransform(width, height, depth, mode)
 +ForwardTransform(data: T*)  — unnormalised
 +InverseTransform(data: T*)  — forward, then × 1÷N
-+ForwardSeparable(data: T*)  — no Bracewell pass, CPU
++ForwardSeparable(data: T*)  — no Bracewell pass, every mode
 +ForwardTransform(volume: DeviceVolume&lt;T&gt;&amp;)
++ForwardSeparable(volume: DeviceVolume&lt;T&gt;&amp;)
 +InverseTransform(volume: DeviceVolume&lt;T&gt;&amp;)
 +Width(), Height(), Depth(), Length(dir)
 +LinearIndex(i, j, k), AxisIndex(...)
@@ -80,7 +81,7 @@ bg=#FFFFFF</panel_attributes>
       <x>520</x>
       <y>70</y>
       <w>340</w>
-      <h>130</h>
+      <h>160</h>
     </coordinates>
     <panel_attributes>«enumeration»
 *Modes*
@@ -88,6 +89,8 @@ bg=#FFFFFF</panel_attributes>
 CPU   — OpenMP, radix-2 fast Hartley
 GPU   — CUDA, cas matrices × cuBLAS GEMM
 RFFT  — real FFT, 1D only, for comparison
+GPUFactored  — CUDA, experimental (R-4): two small
+    dense multiplies per axis in shared memory, in place
 bg=#FFFFFF</panel_attributes>
     <additional_attributes/>
   </element>
@@ -95,7 +98,7 @@ bg=#FFFFFF</panel_attributes>
     <id>UMLClass</id>
     <coordinates>
       <x>520</x>
-      <y>220</y>
+      <y>245</y>
       <w>340</w>
       <h>130</h>
     </coordinates>
@@ -197,16 +200,18 @@ bg=#FFFFFF</panel_attributes>
       <x>40</x>
       <y>820</y>
       <w>380</w>
-      <h>160</h>
+      <h>190</h>
     </coordinates>
     <panel_attributes>*HartleyTransform&lt;T&gt;::Impl*
-«exists only for Modes::GPU»
+«exists only for Modes::GPU and Modes::GPUFactored»
 --
-+transformMatrices[3]: DeviceArray&lt;T&gt;
++transformMatrices[3]: DeviceArray&lt;T&gt;  — GPU
     — cas(2πkn÷N), one N×N matrix per axis
-+scratchA: DeviceArray&lt;T&gt;  — host-pointer path
-+scratchB: DeviceArray&lt;T&gt;  — GEMM ping-pong
-+cublas: CublasHandle
++staging: DeviceArray&lt;T&gt;  — host-pointer path,
+    allocated on first use (Staging(count))
++scratchB: DeviceArray&lt;T&gt;  — GEMM ping-pong, GPU
++cublas: unique_ptr&lt;CublasHandle&gt;  — GPU
++factoredTables[3], factoredSplit[3]  — GPUFactored
 bg=#FFFFFF</panel_attributes>
     <additional_attributes/>
   </element>
@@ -214,9 +219,9 @@ bg=#FFFFFF</panel_attributes>
     <id>UMLClass</id>
     <coordinates>
       <x>40</x>
-      <y>1020</y>
+      <y>1030</y>
       <w>380</w>
-      <h>160</h>
+      <h>180</h>
     </coordinates>
     <panel_attributes>«header» kernels.h
 «launchers, defined in kernels.cu»
@@ -226,6 +231,8 @@ MatrixMultiplication, MatrixTranspose
 VectorMatrixMultiplication
 BracewellTransform2D, BracewellTransform3D
 ScaleOnDevice(data, count, factor)
+FactoredAxis(data, tables, strides...)  — R-4
+BracewellInPlace2D, BracewellInPlace3D
 bg=#FFFFFF</panel_attributes>
     <additional_attributes/>
   </element>
@@ -327,9 +334,10 @@ bg=#FFFFFF</panel_attributes>
     </coordinates>
     <panel_attributes>«source» backend_cpu.cpp  [OpenMP]
 --
-FDHT1D: radix-2 FHT along one axis
-Series1D: FDHT1D over every line of an axis
+FDHT1D: radix-2 FHT along one axis (1D)
+Series1D: blocks of 32 lines → FDHTLanes
 FDHT2D, FDHT3D: Series1D per axis + Bracewell
+    in place, by orbits of mirror images
 ForwardSeparable: Series1D per axis only
 RealFFT1D: reference path for Modes::RFFT
 bg=#FFFFFF</panel_attributes>
@@ -367,7 +375,8 @@ bg=#FFFFFF</panel_attributes>
 --
 __global__ kernels behind kernels.h:
 cas matrix init, Bracewell 2D and 3D,
-scale, tiled matmul, transpose
+scale, tiled matmul, transpose;
+FactoredAxisKernel, BracewellInPlace2D/3D (R-4)
 bg=#FFFFFF</panel_attributes>
     <additional_attributes/>
   </element>
@@ -599,4 +608,26 @@ launches</panel_attributes>
 implements</panel_attributes>
     <additional_attributes>22.0;10.0;10.0;10.0;10.0;545.0;467.0;545.0;467.0;485.0;492.0;485.0</additional_attributes>
   </element>
-</diagram>
+<element>
+    <id>UMLClass</id>
+    <coordinates>
+      <x>900</x>
+      <y>1120</y>
+      <w>390</w>
+      <h>200</h>
+    </coordinates>
+    <panel_attributes>«header» factored.h  +  «source» factored.cpp
+«R-4, compiled in every build»
+device code: factored_kernels.cuh (in kernels.cu;
+    also host-compiled by test_factored_kernels)
+--
+SplitLength(n) → { n, n1, n2 }, n = n1·n2
+FactoredTables&lt;T&gt;: c1, c2, cHalf, twC, twD
+MakeFactoredTables&lt;T&gt;(n)
+FactoredDhtLanes(tile, work, lanes, tables)
+    — host reference of FactoredAxisKernel,
+      tested against the O(N²) definition
+bg=#FFFFFF</panel_attributes>
+    <additional_attributes/>
+  </element>
+  </diagram>

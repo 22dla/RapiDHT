@@ -92,8 +92,10 @@ struct LoadingConfig {
                   << " height=" << height
                   << " depth=" << depth
                   << " mode="
-                  << (mode == RapiDHT::Modes::CPU ? "CPU" : mode == RapiDHT::Modes::GPU ? "GPU"
-                                                                                        : "RFFT")
+                  << (mode == RapiDHT::Modes::CPU              ? "CPU"
+                         : mode == RapiDHT::Modes::GPU         ? "GPU"
+                         : mode == RapiDHT::Modes::GPUFactored ? "GPUFactored"
+                                                               : "RFFT")
                   << std::endl;
     }
 };

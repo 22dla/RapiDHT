@@ -15,6 +15,9 @@
 #include <cublas_v2.h>
 #include <cuda_runtime.h>
 
+#include <cstdio>
+#include <cstdlib>
+
 namespace RapiDHT {
 
 template <typename T>
@@ -150,7 +153,7 @@ void HartleyTransform<T>::DHT3DOnDevice(T* deviceInOut, T* deviceScratch, bool s
     const int D = static_cast<int>(Depth());
     const long long plane = static_cast<long long>(W) * H;
 
-    cublasHandle_t handle = _impl->cublas.Get();
+    cublasHandle_t handle = _impl->cublas->Get();
     const T alpha = 1.0;
     const T beta = 0.0;
 
@@ -203,6 +206,150 @@ void HartleyTransform<T>::DHT3DOnDevice(T* deviceInOut, T* deviceScratch, bool s
     BracewellTransform3D(deviceScratch, deviceInOut, W, H, D);
 }
 
+namespace {
+
+/*
+ * RAPIDHT_TRACE_KERNELS=1 makes the factored path time each of its kernels
+ * with CUDA events and print one line per call to stderr. It exists because
+ * the profiler is not always usable (nsys from the Ubuntu archive ships
+ * without its report importer); the events cost nothing when it is unset.
+ */
+class KernelTrace {
+public:
+    KernelTrace()
+    {
+        const char* flag = std::getenv("RAPIDHT_TRACE_KERNELS");
+        _enabled = (flag != nullptr && flag[0] != '\0' && flag[0] != '0');
+    }
+    ~KernelTrace()
+    {
+        // Only the events that were created: destroying a null handle fails
+        // with cudaErrorInvalidResourceHandle, and an ignored failure still
+        // becomes the pending error that the next cudaGetLastError reports --
+        // which is how this first showed up, as a "failed" kernel launch.
+        for (int i = 0; i < _count; ++i) {
+            cudaEventDestroy(_events[i]);
+        }
+    }
+    KernelTrace(const KernelTrace&) = delete;
+    KernelTrace& operator=(const KernelTrace&) = delete;
+
+    /// Marks the end of the previous phase and the start of the next, `name`.
+    void Mark(const char* name)
+    {
+        if (!_enabled || _count >= kMax) {
+            return;
+        }
+        RAPIDHT_CUDA_CHECK(cudaEventCreate(&_events[_count]));
+        RAPIDHT_CUDA_CHECK(cudaEventRecord(_events[_count]));
+        _names[_count] = name;
+        ++_count;
+    }
+
+    /// Call after the last phase has been synchronised.
+    void Print() const
+    {
+        if (!_enabled || _count < 2) {
+            return;
+        }
+        std::fprintf(stderr, "[RapiDHT trace]");
+        float total = 0.0f;
+        for (int i = 0; i + 1 < _count; ++i) {
+            float ms = 0.0f;
+            cudaEventElapsedTime(&ms, _events[i], _events[i + 1]);
+            total += ms;
+            std::fprintf(stderr, " %s %.3f ms,", _names[i], static_cast<double>(ms));
+        }
+        std::fprintf(stderr, " total %.3f ms\n", static_cast<double>(total));
+    }
+
+private:
+    static constexpr int kMax = 8;
+    bool _enabled = false;
+    int _count = 0;
+    cudaEvent_t _events[kMax] = {};
+    const char* _names[kMax] = {};
+};
+
+} // namespace
+
+template <typename T>
+void HartleyTransform<T>::FactoredOnDevice(T* deviceData, bool separable)
+{
+    PROFILE_FUNCTION();
+    KernelTrace trace;
+
+    const size_t W = Width();
+    const size_t H = (Height() == 0 ? 1 : Height());
+    const size_t D = (Depth() == 0 ? 1 : Depth());
+
+    // The geometry of Series1D: per axis, the stride along a line, the lane
+    // axis that neighbouring lines run along, and the remaining axis.
+    struct Geometry {
+        Direction axis;
+        size_t axisStride, laneStride, laneLength, otherStride, otherLength;
+    };
+    const Geometry passes[] = {
+        { Direction::Y, 1, W, H, W * H, D }, // along the fastest axis
+        { Direction::X, W, 1, W, W * H, D },
+        { Direction::Z, W * H, 1, W, W, H },
+    };
+    // Named by memory layout, not by the historical Direction names: "x" is
+    // the fastest axis (Width), "z" the slowest.
+    const char* const passNames[] = { "axis-x(width)", "axis-y(height)", "axis-z(depth)" };
+    int passIndex = 0;
+
+    for (const Geometry& g : passes) {
+        const char* passName = passNames[passIndex++];
+        const size_t a = static_cast<size_t>(g.axis);
+        const internal::FactoredSplit& split = _impl->factoredSplit[a];
+        if (split.n <= 1) {
+            continue; // absent axis (1D, 2D) or length 1
+        }
+        trace.Mark(passName);
+        const size_t n1 = split.n1;
+        const size_t n2 = split.n2;
+        const size_t pairs = (n1 / 2 == 0 ? 1 : n1 / 2);
+        const T* t = _impl->factoredTables[a].Data();
+
+        FactoredAxisTables<T> tables;
+        tables.c1 = t;
+        tables.c2 = tables.c1 + n1 * n1;
+        tables.cHalf = tables.c2 + n2 * n2;
+        tables.twC = tables.cHalf + n2 * n2;
+        tables.twD = tables.twC + pairs * n2;
+        tables.n = static_cast<int>(split.n);
+        tables.n1 = static_cast<int>(n1);
+        tables.n2 = static_cast<int>(n2);
+
+        FactoredAxis(deviceData, tables, g.axisStride, g.laneStride, g.laneLength, g.otherStride, g.otherLength);
+    }
+
+    if (!separable) {
+        trace.Mark("bracewell");
+        if (Depth() > 0) {
+            BracewellInPlace3D(deviceData, static_cast<int>(W), static_cast<int>(H), static_cast<int>(D));
+        } else if (Height() > 0) {
+            BracewellInPlace2D(deviceData, static_cast<int>(W), static_cast<int>(H));
+        }
+    }
+    trace.Mark("end");
+    // Every other device path returns with the device idle; so does this one,
+    // and a kernel fault surfaces here rather than at some later call.
+    RAPIDHT_CUDA_CHECK(cudaDeviceSynchronize());
+    trace.Print();
+}
+
+template <typename T>
+void HartleyTransform<T>::FactoredOnHost(T* hostData, bool separable)
+{
+    const size_t total = Width() * (Height() == 0 ? 1 : Height()) * (Depth() == 0 ? 1 : Depth());
+    auto& staging = _impl->Staging(total);
+    staging.Upload(hostData, total);
+    FactoredOnDevice(staging.Data(), separable);
+    staging.Download(hostData, total);
+}
+
 // Explicit instantiation is per translation unit: it only reaches members
 // whose definition is visible here, so each backend file instantiates its
 // own.
@@ -212,11 +359,15 @@ template void HartleyTransform<double>::DHT2DCuda(double*, bool);
 template void HartleyTransform<double>::DHT2DOnDevice(double*, double*, bool);
 template void HartleyTransform<double>::DHT3DCuda(double*, bool);
 template void HartleyTransform<double>::DHT3DOnDevice(double*, double*, bool);
+template void HartleyTransform<double>::FactoredOnDevice(double*, bool);
+template void HartleyTransform<double>::FactoredOnHost(double*, bool);
 template void HartleyTransform<float>::DHT1DCuda(float*);
 template void HartleyTransform<float>::DHT1DOnDevice(float*, float*);
 template void HartleyTransform<float>::DHT2DCuda(float*, bool);
 template void HartleyTransform<float>::DHT2DOnDevice(float*, float*, bool);
 template void HartleyTransform<float>::DHT3DCuda(float*, bool);
 template void HartleyTransform<float>::DHT3DOnDevice(float*, float*, bool);
+template void HartleyTransform<float>::FactoredOnDevice(float*, bool);
+template void HartleyTransform<float>::FactoredOnHost(float*, bool);
 
 } // namespace RapiDHT

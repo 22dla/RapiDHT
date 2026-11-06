@@ -18,12 +18,14 @@
 
 #ifdef RAPIDHT_WITH_CUDA
 #include "internal/device_array.h"
+#include "internal/factored.h"
 
 #include <cublas_v2.h>
 #endif
 
 #include <array>
 #include <cstddef>
+#include <memory>
 
 namespace RapiDHT {
 
@@ -118,8 +120,14 @@ struct HartleyTransform<T>::Impl {
     }
 
     // Created once with the object: the 3D path used to create and destroy a
-    // handle on every call.
-    internal::CublasHandle cublas;
+    // handle on every call. Modes::GPU only -- the handle alone holds about
+    // 41 MiB of device memory, which the factored mode does not need.
+    std::unique_ptr<internal::CublasHandle> cublas;
+
+    // Modes::GPUFactored (R-4): the tables of each present axis, back to back
+    // as c1 | c2 | cHalf | twC | twD, and their split.
+    std::array<internal::DeviceArray<T>, static_cast<size_t>(Direction::Count)> factoredTables;
+    std::array<internal::FactoredSplit, static_cast<size_t>(Direction::Count)> factoredSplit;
 #endif
 };
 
