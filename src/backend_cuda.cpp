@@ -44,7 +44,7 @@ void HartleyTransform<T>::DHT1DOnDevice(T* deviceInOut, T* deviceScratch)
 }
 
 template <typename T>
-void HartleyTransform<T>::DHT2DCuda(T* hostData)
+void HartleyTransform<T>::DHT2DCuda(T* hostData, bool separable)
 {
     PROFILE_FUNCTION();
 
@@ -52,12 +52,12 @@ void HartleyTransform<T>::DHT2DCuda(T* hostData)
 
     auto& staging = _impl->Staging(sliceSize);
     staging.Upload(hostData, sliceSize);
-    DHT2DOnDevice(staging.Data(), _impl->scratchB.Data());
+    DHT2DOnDevice(staging.Data(), _impl->scratchB.Data(), separable);
     staging.Download(hostData, sliceSize);
 }
 
 template <typename T>
-void HartleyTransform<T>::DHT2DOnDevice(T* deviceInOut, T* deviceScratch)
+void HartleyTransform<T>::DHT2DOnDevice(T* deviceInOut, T* deviceScratch, bool separable)
 {
     PROFILE_FUNCTION();
 
@@ -78,6 +78,14 @@ void HartleyTransform<T>::DHT2DOnDevice(T* deviceInOut, T* deviceScratch)
     MatrixMultiplication(deviceInOut, _impl->transformMatrices[static_cast<size_t>(Direction::X)].Data(),
         deviceScratch, Width(), Height(), Height());
     MatrixTranspose(deviceScratch, deviceInOut, Width(), Height());
+
+    // The separable transform ends here, already in deviceInOut. Synchronise
+    // so that both variants return with the device idle, as the Bracewell
+    // path below does.
+    if (separable) {
+        RAPIDHT_CUDA_CHECK(cudaDeviceSynchronize());
+        return;
+    }
 
     // Without this the GPU produced the separable transform while the CPU
     // produced the true multidimensional one: the two backends computed
@@ -120,7 +128,7 @@ struct CublasGemmStridedBatched<double> {
 } // namespace
 
 template <typename T>
-void HartleyTransform<T>::DHT3DCuda(T* hostData)
+void HartleyTransform<T>::DHT3DCuda(T* hostData, bool separable)
 {
     PROFILE_FUNCTION();
 
@@ -128,12 +136,12 @@ void HartleyTransform<T>::DHT3DCuda(T* hostData)
 
     auto& staging = _impl->Staging(totalSize);
     staging.Upload(hostData, totalSize);
-    DHT3DOnDevice(staging.Data(), _impl->scratchB.Data());
+    DHT3DOnDevice(staging.Data(), _impl->scratchB.Data(), separable);
     staging.Download(hostData, totalSize);
 }
 
 template <typename T>
-void HartleyTransform<T>::DHT3DOnDevice(T* deviceInOut, T* deviceScratch)
+void HartleyTransform<T>::DHT3DOnDevice(T* deviceInOut, T* deviceScratch, bool separable)
 {
     PROFILE_FUNCTION();
 
@@ -178,6 +186,17 @@ void HartleyTransform<T>::DHT3DOnDevice(T* deviceInOut, T* deviceScratch)
         &alpha, deviceInOut, W * H, 0, _impl->transformMatrices[(size_t)Direction::Z].Data(), D, 0, &beta,
         deviceScratch, W * H, 0, 1));
 
+    // Three out-of-place multiplies leave the separable spectrum in the
+    // scratch buffer, so without the correction it has to be copied back --
+    // one plain pass over the volume in place of the Bracewell kernel's
+    // four-point gather.
+    if (separable) {
+        RAPIDHT_CUDA_CHECK(cudaMemcpy(deviceInOut, deviceScratch,
+            static_cast<size_t>(plane) * static_cast<size_t>(D) * sizeof(T), cudaMemcpyDeviceToDevice));
+        RAPIDHT_CUDA_CHECK(cudaDeviceSynchronize());
+        return;
+    }
+
     // The correction reads mirrored points and cannot share its input and
     // output buffer, which conveniently lands the result in deviceInOut, as
     // this method promises. It synchronises the device on return.
@@ -189,15 +208,15 @@ void HartleyTransform<T>::DHT3DOnDevice(T* deviceInOut, T* deviceScratch)
 // own.
 template void HartleyTransform<double>::DHT1DCuda(double*);
 template void HartleyTransform<double>::DHT1DOnDevice(double*, double*);
-template void HartleyTransform<double>::DHT2DCuda(double*);
-template void HartleyTransform<double>::DHT2DOnDevice(double*, double*);
-template void HartleyTransform<double>::DHT3DCuda(double*);
-template void HartleyTransform<double>::DHT3DOnDevice(double*, double*);
+template void HartleyTransform<double>::DHT2DCuda(double*, bool);
+template void HartleyTransform<double>::DHT2DOnDevice(double*, double*, bool);
+template void HartleyTransform<double>::DHT3DCuda(double*, bool);
+template void HartleyTransform<double>::DHT3DOnDevice(double*, double*, bool);
 template void HartleyTransform<float>::DHT1DCuda(float*);
 template void HartleyTransform<float>::DHT1DOnDevice(float*, float*);
-template void HartleyTransform<float>::DHT2DCuda(float*);
-template void HartleyTransform<float>::DHT2DOnDevice(float*, float*);
-template void HartleyTransform<float>::DHT3DCuda(float*);
-template void HartleyTransform<float>::DHT3DOnDevice(float*, float*);
+template void HartleyTransform<float>::DHT2DCuda(float*, bool);
+template void HartleyTransform<float>::DHT2DOnDevice(float*, float*, bool);
+template void HartleyTransform<float>::DHT3DCuda(float*, bool);
+template void HartleyTransform<float>::DHT3DOnDevice(float*, float*, bool);
 
 } // namespace RapiDHT

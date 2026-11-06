@@ -81,7 +81,8 @@ size_t ElementCount(size_t width, size_t height, size_t depth)
 }
 
 template <typename T>
-void BM_Forward(benchmark::State& state, size_t width, size_t height, size_t depth, Modes mode)
+void BM_Forward(
+    benchmark::State& state, size_t width, size_t height, size_t depth, Modes mode, bool separable = false)
 {
     const size_t count = ElementCount(width, height, depth);
     const std::vector<T> pristine = MakeSignal<T>(count);
@@ -100,7 +101,11 @@ void BM_Forward(benchmark::State& state, size_t width, size_t height, size_t dep
         std::memcpy(data.data(), pristine.data(), count * sizeof(T));
         state.ResumeTiming();
 
-        transform->ForwardTransform(data.data());
+        if (separable) {
+            transform->ForwardSeparable(data.data());
+        } else {
+            transform->ForwardTransform(data.data());
+        }
         benchmark::DoNotOptimize(data.data());
         benchmark::ClobberMemory();
     }
@@ -121,7 +126,7 @@ void BM_Forward(benchmark::State& state, size_t width, size_t height, size_t dep
  * entry is the price of the current copy-per-call interface.
  */
 template <typename T>
-void BM_Resident(benchmark::State& state, size_t width, size_t height, size_t depth)
+void BM_Resident(benchmark::State& state, size_t width, size_t height, size_t depth, bool separable = false)
 {
     const size_t count = ElementCount(width, height, depth);
     const std::vector<T> pristine = MakeSignal<T>(count);
@@ -142,7 +147,11 @@ void BM_Resident(benchmark::State& state, size_t width, size_t height, size_t de
     // transfer back into the measurement, which is exactly what this case is
     // built to exclude.
     for (auto _ : state) {
-        transform->ForwardTransform(*volume);
+        if (separable) {
+            transform->ForwardSeparable(*volume);
+        } else {
+            transform->ForwardTransform(*volume);
+        }
     }
 
     state.SetItemsProcessed(static_cast<int64_t>(state.iterations() * count));
@@ -350,6 +359,17 @@ void RegisterFor(const Extent* extents, size_t n, const char* rank, const char* 
             [e](benchmark::State& s) { BM_Forward<T>(s, e.width, e.height, e.depth, Modes::CPU); })
             ->Unit(benchmark::kMicrosecond);
 
+        // The separable transform (no Bracewell pass), which is what an
+        // even-kernel convolution runs: the difference against CPU/ and
+        // Resident/ is what skipping the correction saves (B-102). 1D has no
+        // correction to skip.
+        const bool multiDimensional = (e.height > 0);
+        if (multiDimensional) {
+            benchmark::RegisterBenchmark(("CPUSeparable/" + suffix).c_str(),
+                [e](benchmark::State& s) { BM_Forward<T>(s, e.width, e.height, e.depth, Modes::CPU, true); })
+                ->Unit(benchmark::kMicrosecond);
+        }
+
         if (kCudaEnabled && GpuMatrixBytes(e, sizeof(T)) <= kGpuMatrixBudget) {
             benchmark::RegisterBenchmark(("GPU/" + suffix).c_str(),
                 [e](benchmark::State& s) { BM_Forward<T>(s, e.width, e.height, e.depth, Modes::GPU); })
@@ -359,6 +379,12 @@ void RegisterFor(const Extent* extents, size_t n, const char* rank, const char* 
             benchmark::RegisterBenchmark(("Resident/" + suffix).c_str(),
                 [e](benchmark::State& s) { BM_Resident<T>(s, e.width, e.height, e.depth); })
                 ->Unit(benchmark::kMicrosecond);
+
+            if (multiDimensional) {
+                benchmark::RegisterBenchmark(("ResidentSeparable/" + suffix).c_str(),
+                    [e](benchmark::State& s) { BM_Resident<T>(s, e.width, e.height, e.depth, true); })
+                    ->Unit(benchmark::kMicrosecond);
+            }
 
             const size_t count = ElementCount(e.width, e.height, e.depth);
             benchmark::RegisterBenchmark(("PCIe/" + suffix).c_str(),

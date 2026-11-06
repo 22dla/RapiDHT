@@ -121,12 +121,22 @@ public:
      * so the correction pass and its extra buffer can be skipped entirely.
      * See EvenKernelConvolution in <rapidht/convolution.h>.
      *
-     * Implemented for Modes::CPU and Modes::RFFT (1D); Modes::GPU throws
-     * std::runtime_error until the device path lands.
+     * Implemented for every mode. On Modes::GPU it is the true transform's
+     * multiplies without the Bracewell kernel; in 3D one device-to-device copy
+     * takes its place, because three out-of-place multiplies leave the result
+     * in the scratch buffer.
      *
      * @param data Input/output, Width()*Height()*Depth() elements, row-major.
      */
     void ForwardSeparable(T* data);
+
+    /**
+     * @brief The separable transform of a volume already resident on the
+     *        device, in place. Requires Modes::GPU and a matching size, as
+     *        ForwardTransform(DeviceVolume&) does.
+     * @param volume Input/output, left holding the separable spectrum.
+     */
+    void ForwardSeparable(DeviceVolume<T>& volume);
 
     /**
      * @brief Transforms a volume already resident on the device, in place.
@@ -229,13 +239,13 @@ private:
      * @brief Performs a 2D Hartley Transform using CUDA matrix-matrix multiplication.
      * @param image Pointer to the input/output 2D data array.
      */
-    void DHT2DCuda(T* image);
+    void DHT2DCuda(T* image, bool separable = false);
 
     /**
      * @brief Performs a 3D Hartley Transform using CUDA matrix-matrix multiplication.
      * @param image Pointer to the input/output 3D data array.
      */
-    void DHT3DCuda(T* data);
+    void DHT3DCuda(T* data, bool separable = false);
 
     /*
      * The device-side halves of the three above, working on memory that is
@@ -243,14 +253,19 @@ private:
      * these, and a copy out; the resident overloads call them directly.
      *
      * Each leaves its result in `deviceInOut` and may use `deviceScratch`,
-     * which must hold at least as many elements.
+     * which must hold at least as many elements. `separable` skips the
+     * Bracewell correction (ForwardSeparable); in 1D there is none to skip.
      */
     void DHT1DOnDevice(T* deviceInOut, T* deviceScratch);
-    void DHT2DOnDevice(T* deviceInOut, T* deviceScratch);
-    void DHT3DOnDevice(T* deviceInOut, T* deviceScratch);
+    void DHT2DOnDevice(T* deviceInOut, T* deviceScratch, bool separable = false);
+    void DHT3DOnDevice(T* deviceInOut, T* deviceScratch, bool separable = false);
 
     /// Dispatches to the right rank, and rejects anything but Modes::GPU.
-    void TransformOnDevice(T* deviceInOut, T* deviceScratch);
+    void TransformOnDevice(T* deviceInOut, T* deviceScratch, bool separable = false);
+
+    /// Rejects a DeviceVolume this object cannot transform: wrong mode, wrong
+    /// size or no allocation. Shared by the resident overloads.
+    void CheckResidentVolume(const DeviceVolume<T>& volume) const;
 
     /**
      * @brief Performs a 1D Real Fourier Transform along the specified direction.

@@ -164,6 +164,47 @@ TEST(Separable, MatchesDefinition)
     }
 }
 
+// B-102: the device path is the true transform's multiplies without the
+// Bracewell kernel (plus a copy in 3D). Checked against the definition, not
+// against the CPU, so that both backends answer to the same reference.
+TEST(Separable, MatchesDefinition_GPU)
+{
+    SKIP_IF_NO_GPU();
+    for (const auto& e : kExtents) {
+        SCOPED_TRACE(Describe(e));
+        const Dims d = Dims::Of(e.width, e.height, e.depth);
+        const auto input = MakeSignal(d.Total());
+        const auto expected = ReferenceSeparableDht(input, d);
+
+        HartleyTransform<double> ht(e.width, e.height, e.depth, Modes::GPU);
+
+        std::vector<double> fromHost = input;
+        ht.ForwardSeparable(fromHost.data());
+        ExpectClose(fromHost, expected, 1e-9);
+
+        DeviceVolume<double> volume(d.Total());
+        volume.Upload(input.data());
+        ht.ForwardSeparable(volume);
+        std::vector<double> fromResident(d.Total());
+        volume.Download(fromResident.data());
+        ExpectClose(fromResident, expected, 1e-9);
+    }
+}
+
+// The resident overload shares the checks of ForwardTransform(DeviceVolume&),
+// which must run before anything touches the device state of a CPU object.
+TEST(Separable, ResidentRejectsCpuModeAndWrongSize_GPU)
+{
+    SKIP_IF_NO_GPU();
+    DeviceVolume<double> volume(64);
+
+    HartleyTransform<double> cpu(4, 4, 4, Modes::CPU);
+    EXPECT_THROW(cpu.ForwardSeparable(volume), std::invalid_argument);
+
+    HartleyTransform<double> gpu(8, 4, 4, Modes::GPU);
+    EXPECT_THROW(gpu.ForwardSeparable(volume), std::invalid_argument);
+}
+
 TEST(Separable, AppliedTwiceScalesByN)
 {
     for (const auto& e : kExtents) {

@@ -190,11 +190,9 @@ void ExpectNormalisationConvention(Modes mode)
         ht.InverseTransform(inverse.data());
         ExpectClose(inverse, std::vector<double>(dims.Total(), 1.0 / n));
 
-        if (mode == Modes::CPU) {
-            auto separable = impulse;
-            ht.ForwardSeparable(separable.data());
-            ExpectClose(separable, std::vector<double>(dims.Total(), 1.0));
-        }
+        auto separable = impulse;
+        ht.ForwardSeparable(separable.data());
+        ExpectClose(separable, std::vector<double>(dims.Total(), 1.0));
     }
 }
 

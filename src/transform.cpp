@@ -187,13 +187,13 @@ void HartleyTransform<T>::DHT1DCuda(T*)
 }
 
 template <typename T>
-void HartleyTransform<T>::DHT2DCuda(T*)
+void HartleyTransform<T>::DHT2DCuda(T*, bool)
 {
     ThrowGpuUnavailable();
 }
 
 template <typename T>
-void HartleyTransform<T>::DHT3DCuda(T*)
+void HartleyTransform<T>::DHT3DCuda(T*, bool)
 {
     ThrowGpuUnavailable();
 }
@@ -205,13 +205,13 @@ void HartleyTransform<T>::DHT1DOnDevice(T*, T*)
 }
 
 template <typename T>
-void HartleyTransform<T>::DHT2DOnDevice(T*, T*)
+void HartleyTransform<T>::DHT2DOnDevice(T*, T*, bool)
 {
     ThrowGpuUnavailable();
 }
 
 template <typename T>
-void HartleyTransform<T>::DHT3DOnDevice(T*, T*)
+void HartleyTransform<T>::DHT3DOnDevice(T*, T*, bool)
 {
     ThrowGpuUnavailable();
 }
@@ -219,7 +219,7 @@ void HartleyTransform<T>::DHT3DOnDevice(T*, T*)
 #endif
 
 template <typename T>
-void HartleyTransform<T>::TransformOnDevice(T* deviceInOut, T* deviceScratch)
+void HartleyTransform<T>::TransformOnDevice(T* deviceInOut, T* deviceScratch, bool separable)
 {
     if (_mode != Modes::GPU) {
         throw std::invalid_argument(
@@ -232,21 +232,17 @@ void HartleyTransform<T>::TransformOnDevice(T* deviceInOut, T* deviceScratch)
     if (is1D) {
         DHT1DOnDevice(deviceInOut, deviceScratch);
     } else if (is2D) {
-        DHT2DOnDevice(deviceInOut, deviceScratch);
+        DHT2DOnDevice(deviceInOut, deviceScratch, separable);
     } else {
-        DHT3DOnDevice(deviceInOut, deviceScratch);
+        DHT3DOnDevice(deviceInOut, deviceScratch, separable);
     }
 }
 
 template <typename T>
-void HartleyTransform<T>::ForwardTransform(DeviceVolume<T>& volume)
+void HartleyTransform<T>::CheckResidentVolume(const DeviceVolume<T>& volume) const
 {
-    PROFILE_FUNCTION();
-
-    // This has to come first. _impl exists only for Modes::GPU, and the call
-    // below reads _impl->scratchB while evaluating its own arguments -- before
-    // any check inside the callee can run. Validating the mode there instead
-    // meant dereferencing a null _impl on the way to the diagnostic.
+    // The mode has to come first. _impl exists only for Modes::GPU, and the
+    // callers read _impl->scratchB right after this returns.
     if (_mode != Modes::GPU) {
         throw std::invalid_argument(
             "Device-resident transforms require Modes::GPU; this object was built for another mode.");
@@ -262,12 +258,38 @@ void HartleyTransform<T>::ForwardTransform(DeviceVolume<T>& volume)
     if (volume.DeviceData() == nullptr) {
         throw std::invalid_argument("DeviceVolume holds no allocation.");
     }
+}
+
+template <typename T>
+void HartleyTransform<T>::ForwardTransform(DeviceVolume<T>& volume)
+{
+    PROFILE_FUNCTION();
+
+    // This has to come first. _impl exists only for Modes::GPU, and the call
+    // below reads _impl->scratchB while evaluating its own arguments -- before
+    // any check inside the callee can run. Validating the mode there instead
+    // meant dereferencing a null _impl on the way to the diagnostic.
+    CheckResidentVolume(volume);
 
 #ifdef RAPIDHT_WITH_CUDA
     // scratchB is the working buffer; the volume itself plays the part that
     // the staging buffer plays on the host path, which is why that one is
     // never allocated for resident-only use.
     TransformOnDevice(static_cast<T*>(volume.DeviceData()), _impl->scratchB.Data());
+#else
+    ThrowGpuUnavailable();
+#endif
+}
+
+template <typename T>
+void HartleyTransform<T>::ForwardSeparable(DeviceVolume<T>& volume)
+{
+    PROFILE_FUNCTION();
+
+    CheckResidentVolume(volume);
+
+#ifdef RAPIDHT_WITH_CUDA
+    TransformOnDevice(static_cast<T*>(volume.DeviceData()), _impl->scratchB.Data(), true);
 #else
     ThrowGpuUnavailable();
 #endif

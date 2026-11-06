@@ -452,13 +452,22 @@ void HartleyTransform<T>::ForwardSeparable(T* data)
     if (data == nullptr) {
         throw std::invalid_argument("ForwardSeparable: the pointer to data is null.");
     }
-    if (_mode == Modes::GPU) {
-        throw std::runtime_error(
-            "ForwardSeparable is not implemented for Modes::GPU yet; use Modes::CPU.");
-    }
 
     const bool is1D = (Height() == 0 && Depth() == 0);
     const bool is2D = (Height() > 0 && Depth() == 0);
+
+    if (_mode == Modes::GPU) {
+        // The device paths take a flag rather than having separate copies:
+        // the separable transform is the true one minus its last pass.
+        if (is1D) {
+            DHT1DCuda(data);
+        } else if (is2D) {
+            DHT2DCuda(data, true);
+        } else {
+            DHT3DCuda(data, true);
+        }
+        return;
+    }
 
     if (is1D) {
         // In 1D the separable and the true transform are the same function.
