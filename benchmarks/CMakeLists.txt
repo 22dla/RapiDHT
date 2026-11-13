@@ -36,6 +36,13 @@ if(RAPIDHT_WITH_CUDA)
     target_link_libraries(profile_gpu3d PRIVATE CUDA::cudart)
 endif()
 
+# R-4 step 0.4: float error of the GPU paths and of cuFFT against the CPU in
+# double. Needs cuFFT, so only with CUDA.
+if(RAPIDHT_WITH_CUDA)
+    add_executable(accuracy_gpu3d accuracy_gpu3d.cpp cufft_baseline.cu)
+    target_link_libraries(accuracy_gpu3d PRIVATE coreht rapidht_warnings CUDA::cudart CUDA::cufft)
+endif()
+
 # Optional FFTW baseline. Ubuntu's libfftw3-dev ships a pkg-config file but no
 # CMake package config, so pkg-config is the reliable route.
 find_package(PkgConfig QUIET)

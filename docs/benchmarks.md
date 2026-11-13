@@ -286,8 +286,20 @@ changed three things at once (the pipeline, the shared-memory layout, moving
 lines in quads), and the per-axis difference has not been isolated by a
 measurement. The float result at these extents is checked against the CPU
 backend by `FactoredFloatAgreesWithCpuOnBenchmarkExtents_GPU`; single-precision
-error of the factored path is 1.1e-5 of the spectrum RMS at 256³ and 6.3e-5 at
-512³ (host build of the kernels), and has not yet been compared with cuFFT's.
+error, measured on the device against the CPU backend in double
+(`benchmarks/accuracy_gpu3d`, `…_r4_accuracy.txt`), relative to the RMS of
+the spectrum of zero-mean noise:
+
+| | 256³ largest | 256³ RMS | 512³ largest | 512³ RMS |
+| --- | ---: | ---: | ---: | ---: |
+| cuFFT + conversion | 1.41e-5 | 2.76e-7 | 1.92e-5 | 3.17e-7 |
+| factored | 1.12e-5 | 2.02e-7 | 6.31e-5 | 2.39e-7 |
+| matrices | 3.16e-4 | 4.18e-5 | 7.36e-4 | 8.42e-5 |
+
+The factored path has the smaller RMS error at both sizes, but at 512³ its
+largest error is 3.3 times cuFFT's (backlog R-4a). The matrix path sums each
+output over the whole axis in one dot product and is 20–40 times less
+accurate than either.
 The review of this track and the plan from here are in `docs/R4_PLAN.md`.
 
 ---

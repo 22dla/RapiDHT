@@ -1,0 +1,8 @@
+256^3, zero-mean noise in [-1, 1), errors relative to the RMS of the double spectrum
+  cuFFT R2C + conversion       largest 1.413e-05   rms 2.759e-07   largest / cuFFT's 1.00
+  RapiDHT GPUFactored          largest 1.115e-05   rms 2.015e-07   largest / cuFFT's 0.79
+  RapiDHT GPU (matrices)       largest 3.156e-04   rms 4.183e-05   largest / cuFFT's 22.33
+512^3, zero-mean noise in [-1, 1), errors relative to the RMS of the double spectrum
+  cuFFT R2C + conversion       largest 1.921e-05   rms 3.166e-07   largest / cuFFT's 1.00
+  RapiDHT GPUFactored          largest 6.305e-05   rms 2.387e-07   largest / cuFFT's 3.28
+  RapiDHT GPU (matrices)       largest 7.358e-04   rms 8.419e-05   largest / cuFFT's 38.30
