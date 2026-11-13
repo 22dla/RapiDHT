@@ -296,6 +296,14 @@ the spectrum of zero-mean noise:
 | factored | 1.12e-5 | 2.02e-7 | 6.31e-5 | 2.39e-7 |
 | matrices | 3.16e-4 | 4.18e-5 | 7.36e-4 | 8.42e-5 |
 
+**Largest volume on the 8 GB card, float** (`…_r4_1024.txt`, R-4 step 0.5):
+the factored path transforms 1024³ (4 GiB) in place in 198 ms, holding the
+same 32 MiB beside the volume. The cuFFT baseline does not fit: with the volume
+resident about 2 970 MiB remain, and the half spectrum alone is 4 104 MiB
+(`cufftPlan3d` returned code 5, `CUFFT_INTERNAL_ERROR`). At 1024³ the axes run
+at 2.4–3.1 times the copy time against 1.5–2.3 at 512³; one block per SM fits
+there (77 KiB of shared memory), which is a likely but unmeasured cause.
+
 The factored path has the smaller RMS error at both sizes, but at 512³ its
 largest error is 3.3 times cuFFT's (backlog R-4a). The matrix path sums each
 output over the whole axis in one dot product and is 20–40 times less

@@ -55,6 +55,21 @@ double UsedMiB()
 #endif
 }
 
+/// Device memory still free, MiB.
+double FreeMiB()
+{
+#ifdef RAPIDHT_WITH_CUDA
+    size_t freeBytes = 0, totalBytes = 0;
+    cudaDeviceSynchronize();
+    if (cudaMemGetInfo(&freeBytes, &totalBytes) != cudaSuccess) {
+        return -1.0;
+    }
+    return static_cast<double>(freeBytes) / (1024.0 * 1024.0);
+#else
+    return -1.0;
+#endif
+}
+
 template <typename T>
 int Run(size_t width, int iterations, const char* label, RapiDHT::Modes mode)
 {
@@ -112,11 +127,22 @@ int Run(size_t width, int iterations, const char* label, RapiDHT::Modes mode)
         // construction, after resident use (cuBLAS workspace included), and
         // after one host-pointer call, which allocates the staging buffer.
         const double afterResident = UsedMiB();
-        transform.ForwardTransform(data.data());
-        const double afterHost = UsedMiB();
-        std::printf("  device memory held by the transform: %.0f MiB built, %.0f MiB after resident use, "
-                    "%.0f MiB after a host-pointer call\n",
-            afterConstruct - base, afterResident - base, afterHost - base);
+        // The host-pointer call stages through a second device buffer of the
+        // volume's size. At 1024^3 f32 that is another 4 GiB, which an 8 GB
+        // card does not have beside the resident volume, and the exception
+        // used to hide the two figures above. Skip it when it cannot fit.
+        const double volumeMiB = static_cast<double>(count * sizeof(T)) / (1024.0 * 1024.0);
+        if (FreeMiB() < volumeMiB + 64.0) {
+            std::printf("  device memory held by the transform: %.0f MiB built, %.0f MiB after resident use; "
+                        "host-pointer call skipped (needs another %.0f MiB, %.0f MiB free)\n",
+                afterConstruct - base, afterResident - base, volumeMiB, FreeMiB());
+        } else {
+            transform.ForwardTransform(data.data());
+            const double afterHost = UsedMiB();
+            std::printf("  device memory held by the transform: %.0f MiB built, %.0f MiB after resident use, "
+                        "%.0f MiB after a host-pointer call\n",
+                afterConstruct - base, afterResident - base, afterHost - base);
+        }
     } catch (const std::exception& error) {
         std::fprintf(stderr, "  failed: %s\n", error.what());
         return 1;

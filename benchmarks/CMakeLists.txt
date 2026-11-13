@@ -41,6 +41,9 @@ endif()
 if(RAPIDHT_WITH_CUDA)
     add_executable(accuracy_gpu3d accuracy_gpu3d.cpp cufft_baseline.cu)
     target_link_libraries(accuracy_gpu3d PRIVATE coreht rapidht_warnings CUDA::cudart CUDA::cufft)
+    # R-4 step 0.5: does the cuFFT baseline fit a given volume at all.
+    add_executable(capacity_gpu3d capacity_gpu3d.cpp cufft_baseline.cu)
+    target_link_libraries(capacity_gpu3d PRIVATE rapidht_warnings CUDA::cudart CUDA::cufft)
 endif()
 
 # Optional FFTW baseline. Ubuntu's libfftw3-dev ships a pkg-config file but no

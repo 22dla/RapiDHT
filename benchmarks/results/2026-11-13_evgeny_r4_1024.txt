@@ -1,0 +1,12 @@
+[RapiDHT trace] axis-x(width) 49.858 ms, axis-y(height) 57.567 ms, axis-z(depth) 63.638 ms, bracewell 20.937 ms, total 191.999 ms
+[RapiDHT trace] axis-x(width) 51.166 ms, axis-y(height) 58.540 ms, axis-z(depth) 66.549 ms, bracewell 21.331 ms, total 197.586 ms
+[RapiDHT trace] axis-x(width) 52.111 ms, axis-y(height) 58.565 ms, axis-z(depth) 67.666 ms, bracewell 21.325 ms, total 199.666 ms
+[RapiDHT trace] axis-x(width) 50.892 ms, axis-y(height) 58.919 ms, axis-z(depth) 66.313 ms, bracewell 21.316 ms, total 197.440 ms
+f32 factored  1024^3  (1073741824 elements, 4096.0 MiB per buffer)  x3 iterations
+  198.25 ms per transform, 412.3 GFLOP of multiply-add arithmetic, 2.08 TFLOP/s
+  device memory held by the transform: 32 MiB built, 34 MiB after resident use; host-pointer call skipped (needs another 4096 MiB, 2932 MiB free)
+cuFFT baseline, 1024^3 float: volume 4096 MiB, half spectrum 4104 MiB; 7062 MiB free before
+  does not fit: cufftPlan3d: cuFFT error 5
+cuFFT baseline, 512^3 float: volume 512 MiB, half spectrum 514 MiB; 7062 MiB free before
+  plan built: spectrum 514 MiB + workspace 514 MiB; 5512 MiB free
+  fits: 10.72 ms per transform (R2C + conversion)
