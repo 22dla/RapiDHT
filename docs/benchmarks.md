@@ -74,10 +74,13 @@ faster on the device, against 1.8–2.2× on the CPU. Anyone using the GPU backe
 for volumes should be in `float`; in `double` the CPU backend is the faster one. On datacentre cards the ratio is 1:2 rather than
 1:64 and the choice matters far less.
 
-### Only 3D is worth offloading
+### What is worth offloading
 
-In 2D the CPU is now faster at every size measured (1.4–2.3× in f32 at
-128²–1024²). In 1D it is 66–80× slower: the axis is the
+This held for the matrix path only. On the matrix path the CPU is faster in
+2D at every size measured (1.4–2.3× in f32 at 128²–1024²). The factored path
+(R-4, below) changed that: in f32 v2.3 is 1.2×, 9.4× and 8.5× faster than the
+CPU at 128², 512² and 1024² (15.0, 30.2 and 156 µs against 18.3, 285 and
+1 321 µs; `…_r4_f64_2d.json`, resident data, so without the bus). In 1D the matrix path is 66–80× slower than the CPU: the axis is the
 whole signal, so the matrix is `n × n`, and at n = 262 144 it would need 512 GiB.
 The benchmark does not register GPU cases whose matrices exceed 1 GiB.
 
@@ -257,8 +260,8 @@ same build, `RAPIDHT_FACTORED_KERNEL=v2`, in `…_v2.2_samebuild.json`):
 | 256³ | 3.02 ms | 2.43 ms | 2.00 ms | **1.34 ms** | 1.01 ms |
 | 512³ | 44.2 ms | 25.3 ms | 18.0 ms | **10.74 ms** | 8.11 ms |
 | 512³, separable | — | 22.7 ms | 15.4 ms | — | — |
-| 512³, f64 | 1 651 ms | **150 ms** | not measured | — | — |
-| 1024², 2D | 3.04 ms | **0.29 ms** | not measured | — | — |
+| 512³, f64 | 1 651 ms | **150 ms** | 164 ms | — | — |
+| 1024², 2D | 3.04 ms | 0.29 ms | **0.156 ms** | — | — |
 | extra device memory, 512³ f32 | 556 MiB | **32 MiB** | **32 MiB** | 1 028 MiB | 1 028 MiB |
 
 The cuFFT columns are from 2026-11-13 (`…_r4_cufft_pairs.json`, R-4 step 0.3).
@@ -272,13 +275,29 @@ cuFFT's 1 028 MiB are the half spectrum (514 MiB) plus the workspace
 2(W/2 + 1) floats, which this library's layout does not have.
 
 The 32 MiB are the CUDA memory pool's granularity; the tables themselves are
-a few KiB. Per kernel at 512³ f32 (`RAPIDHT_TRACE_KERNELS=1`, after warm-up),
-against about 2.4 ms for one read and one write of the volume:
+a few KiB. Not usable: `2026-11-06_evgeny_factored_v2.1.json` is truncated
+(the run crashed on the event-destruction bug fixed in v2.2), so v2.1 has no
+measured effect of its own; its change is part of v2.2 and v2.3.
+
+Per kernel, f32 (`RAPIDHT_TRACE_KERNELS=1`, median of the calls after the
+first; v2.3 from `…_r4_base_trace.txt` and `…_r4_1024.txt`). The Bracewell pass
+reads and writes the volume once and runs at the speed of a copy, so its time
+is the yardstick for the others:
 
 | | x (fastest) | y | z | Bracewell |
 | --- | ---: | ---: | ---: | ---: |
-| v2.2 | 8.6 ms | 6.9 ms | 6.9 ms | 2.6 ms |
-| v2.3 | 3.9–4.3 ms | 5.1–5.7 ms | 5.9–6.3 ms | 2.6 ms |
+| v2.2, 512³ | 8.6 ms | 6.9 ms | 6.9 ms | 2.6 ms |
+| v2.3, 128³ | 0.097 ms | 0.097 ms | 0.097 ms | 0.042 ms |
+| v2.3, 256³ | 0.557 ms | 0.551 ms | 0.559 ms | 0.331 ms |
+| v2.3, 512³ | 3.97 ms | 5.11 ms | 6.09 ms | 2.62 ms |
+| v2.3, 1024³ | 50.9 ms | 58.6 ms | 66.4 ms | 21.3 ms |
+
+In double v2.3 is slower than v2 (164 against 150 ms at 512³, 2.09 against
+1.52 ms at 128³; two different days, backlog R-4 plan step 2.0). In 2D float
+it is 13–47 % faster than v2.
+
+The axes differ only from 512³ up; at 128³ and 256³ all three take the same
+time (2.3 and 1.7 Bracewell passes).
 
 Bracewell already runs at the bus limit. In v2.3 the fastest axis is the
 quickest and y and z are now the slow ones. Why is not established: v2.3
