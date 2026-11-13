@@ -13,6 +13,8 @@
 
 #include <gtest/gtest.h>
 
+#include <cmath>
+#include <cstdint>
 #include <numeric>
 #include <string>
 #include <vector>
@@ -136,6 +138,103 @@ TEST(Correctness, FactoredAgreesWithCpuOnLargeExtents_GPU)
         const auto input = MakeSignal(dims.Total());
         ExpectClose(Forward(input, e.width, e.height, e.depth, Modes::GPUFactored),
             Forward(input, e.width, e.height, e.depth, Modes::CPU), 1e-10);
+    }
+}
+
+// The configuration the benchmarks run: float, resident, axes long enough
+// that the register-tiled kernels use every thread of a block and each block
+// of the pipelined kernel walks several batches of lines. The tests above
+// reach those kernels in float only on extents of one batch to a block, and on
+// long axes only in double, so the code path whose timings are published was
+// never compared with anything on the device.
+//
+// A zero-mean pseudo-random volume against the CPU backend in double. Every
+// coefficient of its spectrum is of the same order, so the tolerance is tied
+// to their RMS: with MakeSignal the DC term is N times larger than the rest
+// and a tolerance scaled to it would hide a wrong coefficient. Float rounding
+// alone grows with the volume: 1.1e-5 of the RMS at 256^3 and 6.3e-5 at 512^3
+// (the same kernels built for the host, float against double). 5e-4 is eight
+// times that and still two thousand times below one wrong coefficient.
+namespace {
+
+std::vector<double> MakeNoise(size_t count)
+{
+    std::vector<double> data(count);
+    uint32_t seed = 2463534242u;
+    for (double& value : data) {
+        seed = seed * 1664525u + 1013904223u; // fixed LCG: reproducible
+        value = static_cast<double>(seed >> 8) / 8388608.0 - 1.0;
+    }
+    return data;
+}
+
+void ExpectFactoredFloatMatchesCpu(const Extent& e)
+{
+    const Dims dims = Dims::Of(e.width, e.height, e.depth);
+    const auto input = MakeNoise(dims.Total());
+    const auto expected = Forward(input, e.width, e.height, e.depth, Modes::CPU);
+
+    const std::vector<float> single(input.begin(), input.end());
+    HartleyTransform<float> transform(e.width, e.height, e.depth, Modes::GPUFactored);
+    DeviceVolume<float> volume(dims.Total());
+    volume.Upload(single.data());
+    transform.ForwardTransform(volume);
+    std::vector<float> actual(dims.Total());
+    volume.Download(actual.data());
+
+    double sumOfSquares = 0.0;
+    for (const double value : expected) {
+        sumOfSquares += value * value;
+    }
+    const double rms = std::sqrt(sumOfSquares / static_cast<double>(expected.size()));
+
+    double worst = 0.0;
+    size_t worstIndex = 0;
+    for (size_t i = 0; i < expected.size(); ++i) {
+        const double error = std::fabs(static_cast<double>(actual[i]) - expected[i]);
+        if (!(error <= worst)) { // also catches NaN
+            worst = error;
+            worstIndex = i;
+        }
+    }
+    EXPECT_LE(worst, 5e-4 * rms) << "largest error at index " << worstIndex << ", spectrum RMS " << rms;
+}
+
+} // namespace
+
+// One long axis in each position, so that the pass along it runs in each of
+// the three geometries (lines contiguous, lines 4 apart in a row, lines a
+// plane apart) with several batches to a block; 1024 and 2048 are the other
+// splits (32 x 32 and 64 x 32, the latter with 4 lines to a block).
+TEST(Correctness, FactoredFloatAgreesWithCpuOnLongAxes_GPU)
+{
+    SKIP_IF_NO_GPU();
+    const Extent extents[] = {
+        { 512, 64, 32 },
+        { 64, 512, 32 },
+        { 32, 64, 512 },
+        { 1024, 32, 16 },
+        { 16, 32, 1024 },
+        { 2048, 16, 16 },
+        { 256, 128, 0 },
+        { 128, 128, 128 },
+    };
+    for (const Extent& e : extents) {
+        SCOPED_TRACE("extent " + Describe(e));
+        ExpectFactoredFloatMatchesCpu(e);
+    }
+}
+
+// Exactly what docs/benchmarks.md quotes against cuFFT. Kept apart from the
+// test above because it needs 512 MiB on the device and about 4 GiB of host
+// memory; filter it out with --gtest_filter=-*BenchmarkExtents* where that is
+// too much.
+TEST(Correctness, FactoredFloatAgreesWithCpuOnBenchmarkExtents_GPU)
+{
+    SKIP_IF_NO_GPU();
+    for (const Extent& e : { Extent { 256, 256, 256 }, Extent { 512, 512, 512 } }) {
+        SCOPED_TRACE("extent " + Describe(e));
+        ExpectFactoredFloatMatchesCpu(e);
     }
 }
 

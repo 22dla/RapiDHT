@@ -268,9 +268,14 @@ against about 2.4 ms for one read and one write of the volume:
 | v2.3 | 3.9–4.3 ms | 5.1–5.7 ms | 5.9–6.3 ms | 2.6 ms |
 
 Bracewell already runs at the bus limit. In v2.3 the fastest axis is the
-quickest -- its 8-way bank conflicts are gone -- and y and z, whose blocks of
-lines are 32-byte strips of rows far apart in memory, are now the slow ones;
-see R-4 in the backlog for the plan.
+quickest and y and z are now the slow ones. Why is not established: v2.3
+changed three things at once (the pipeline, the shared-memory layout, moving
+lines in quads), and the per-axis difference has not been isolated by a
+measurement. The float result at these extents is checked against the CPU
+backend by `FactoredFloatAgreesWithCpuOnBenchmarkExtents_GPU`; single-precision
+error of the factored path is 1.1e-5 of the spectrum RMS at 256³ and 6.3e-5 at
+512³ (host build of the kernels), and has not yet been compared with cuFFT's.
+The review of this track and the plan from here are in `docs/R4_PLAN.md`.
 
 ---
 

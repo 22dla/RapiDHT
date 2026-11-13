@@ -8,6 +8,7 @@
 - Цифры производительности и их методика: `docs/benchmarks.md`. Новые замеры — с указанием машины, точности и числа потоков.
 - Результаты прогонов `bench_transform` — JSON в `benchmarks/results/<дата>_<машина>.json` (флаг `--benchmark_out`, команда — в конце `docs/benchmarks.md`). Нужны свежие цифры — сначала читать оттуда, не просить вывод консоли.
 - Главный исследовательский трек — R-1 (3D Hartley Neural Operator для течения в пористой среде).
+- R-4 (факторизованный DHT на GPU против cuFFT) ведётся по `docs/R4_PLAN.md`: шаги по порядку, один шаг — один коммит; замер только через `bash scripts/r4_measure.sh <метка>`, вердикт — `python3 tools/r4_compare.py`.
 
 ## Машины
 | | 💻 Ноутбук | 🖥 Десктоп |
@@ -32,7 +33,7 @@ cmake --preset cpu && cmake --build --preset cpu -j && ctest --preset cpu
 # ноутбук (Windows)
 cmake --preset windows-cpu; cmake --build --preset windows-cpu; ctest --preset windows-cpu
 ```
-Ожидается 90 тестов; без GPU 19 из них пропускаются (`SKIP_IF_NO_GPU()`), на десктопе (CUDA) пропускаются только 2 — `DeviceVolumeIsRejectedWithoutCuda` и `GpuModeIsRejectedWhenNotCompiledIn`, они для сборки без CUDA.
+Ожидается 94 теста; без GPU 21 из них пропускается (`SKIP_IF_NO_GPU()`), на десктопе (CUDA) пропускаются только 2 — `DeviceVolumeIsRejectedWithoutCuda` и `GpuModeIsRejectedWhenNotCompiledIn`, они для сборки без CUDA.
 
 Python-пакет (`pyproject.toml`, scikit-build-core + nanobind; собирается в `build-python/`):
 ```bash
