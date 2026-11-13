@@ -436,12 +436,27 @@ __device__ __forceinline__ void PipelineFill(T* tile, const T (&reg)[kMaxQuads][
 }
 
 /*
+ * Diagnostic modes of the pipelined kernel (R-4 step 1.1, docs/R4_PLAN.md),
+ * chosen by RAPIDHT_R4_ABLATE. Both give a WRONG result and exist only to time
+ * the two halves of the kernel apart:
+ *  - kAblateIo: every global load and store as usual, steps 1-2 and the
+ *    recombination skipped; each line is written back unchanged, so the pass
+ *    is the identity (the host test checks exactly that);
+ *  - kAblateCompute: the first batch is fetched once and computed over and
+ *    over without new loads; only that first result is stored, so that the
+ *    compiler cannot drop the arithmetic.
+ */
+constexpr int kAblateNone = 0;
+constexpr int kAblateIo = 1;
+constexpr int kAblateCompute = 2;
+
+/*
  * Requires n1, n2 and lanes to be multiples of 4 and blockDim.x * kMaxQuads
  * >= n * lanes / 4. Shared memory exactly as FactoredAxisKernelFast.
  */
 template <typename T, int kMaxQuads>
 __global__ void FactoredAxisKernelPipelined(T* data, FactoredAxisTables<T> t, size_t axisStride, size_t laneStride,
-    int lanes, int blocksPerOther, size_t otherStride, int batches, int workStride, bool vec)
+    int lanes, int blocksPerOther, size_t otherStride, int batches, int workStride, bool vec, int ablate)
 {
     extern __shared__ __align__(16) unsigned char sharedPipe[];
     const int n = t.n;
@@ -483,71 +498,73 @@ __global__ void FactoredAxisKernelPipelined(T* data, FactoredAxisTables<T> t, si
 
         // The next batch is fetched while this one is computed.
         const int next = batch + static_cast<int>(gridDim.x);
-        if (next < batches) {
+        if (next < batches && ablate != kAblateCompute) {
             PipelineLoad(batchBase(next), reg, quads, quadsPerRow, axisStride, laneStride, vec);
         }
 
-        // Step 1, 4 frequencies k1 x 4 lines per thread, lines fastest.
-        const int items1 = (n1 / 4) * n2 * laneGroups;
-        for (int it = threadIdx.x; it < items1; it += blockDim.x) {
-            const int lg = it % laneGroups;
-            const int r = it / laneGroups;
-            const int j2 = r % n2;
-            const int kg = r / n2;
-            T acc[4][4] = {};
-            for (int j1 = 0; j1 < n1; ++j1) {
-                T x[4];
-                T c[4];
-                Load4(tile + (n2 * j1 + j2) * lanes + lg * 4, x);
-                Load4(c1s + j1 * n1 + kg * 4, c);
-                RAPIDHT_UNROLL
-                for (int a = 0; a < 4; ++a) {
+        if (ablate != kAblateIo) { // uniform across the block, so the barriers inside are safe
+            // Step 1, 4 frequencies k1 x 4 lines per thread, lines fastest.
+            const int items1 = (n1 / 4) * n2 * laneGroups;
+            for (int it = threadIdx.x; it < items1; it += blockDim.x) {
+                const int lg = it % laneGroups;
+                const int r = it / laneGroups;
+                const int j2 = r % n2;
+                const int kg = r / n2;
+                T acc[4][4] = {};
+                for (int j1 = 0; j1 < n1; ++j1) {
+                    T x[4];
+                    T c[4];
+                    Load4(tile + (n2 * j1 + j2) * lanes + lg * 4, x);
+                    Load4(c1s + j1 * n1 + kg * 4, c);
                     RAPIDHT_UNROLL
-                    for (int b = 0; b < 4; ++b) {
-                        acc[a][b] += c[a] * x[b];
+                    for (int a = 0; a < 4; ++a) {
+                        RAPIDHT_UNROLL
+                        for (int b = 0; b < 4; ++b) {
+                            acc[a][b] += c[a] * x[b];
+                        }
                     }
                 }
-            }
-            RAPIDHT_UNROLL
-            for (int a = 0; a < 4; ++a) {
-                Store4(work + (kg * 4 + a) * workStride + j2 * lanes + lg * 4, acc[a]);
-            }
-        }
-        __syncthreads();
-
-        FactoredTwiddle(work, t, lanes, workStride);
-        __syncthreads();
-
-        // Step 2, 4 frequencies k2 x 4 lines per thread, k1 fastest after the
-        // lines; the result goes to row k1 + N1*k2 of the tile.
-        const int k2Groups = n2 / 4;
-        const int items2 = n1 * k2Groups * laneGroups;
-        for (int it = threadIdx.x; it < items2; it += blockDim.x) {
-            const int lg = it % laneGroups;
-            const int r = it / laneGroups;
-            const int k1 = r % n1;
-            const int kg = r / n1;
-            const T* m = (k1 == n1 / 2) ? chT : c2s; // read as [j2][k2]
-            T acc[4][4] = {};
-            for (int j2 = 0; j2 < n2; ++j2) {
-                T w[4];
-                T c[4];
-                Load4(work + k1 * workStride + j2 * lanes + lg * 4, w);
-                Load4(m + j2 * n2 + kg * 4, c);
                 RAPIDHT_UNROLL
                 for (int a = 0; a < 4; ++a) {
-                    RAPIDHT_UNROLL
-                    for (int b = 0; b < 4; ++b) {
-                        acc[a][b] += c[a] * w[b];
-                    }
+                    Store4(work + (kg * 4 + a) * workStride + j2 * lanes + lg * 4, acc[a]);
                 }
             }
-            RAPIDHT_UNROLL
-            for (int a = 0; a < 4; ++a) {
-                Store4(tile + (k1 + n1 * (kg * 4 + a)) * lanes + lg * 4, acc[a]);
+            __syncthreads();
+
+            FactoredTwiddle(work, t, lanes, workStride);
+            __syncthreads();
+
+            // Step 2, 4 frequencies k2 x 4 lines per thread, k1 fastest after the
+            // lines; the result goes to row k1 + N1*k2 of the tile.
+            const int k2Groups = n2 / 4;
+            const int items2 = n1 * k2Groups * laneGroups;
+            for (int it = threadIdx.x; it < items2; it += blockDim.x) {
+                const int lg = it % laneGroups;
+                const int r = it / laneGroups;
+                const int k1 = r % n1;
+                const int kg = r / n1;
+                const T* m = (k1 == n1 / 2) ? chT : c2s; // read as [j2][k2]
+                T acc[4][4] = {};
+                for (int j2 = 0; j2 < n2; ++j2) {
+                    T w[4];
+                    T c[4];
+                    Load4(work + k1 * workStride + j2 * lanes + lg * 4, w);
+                    Load4(m + j2 * n2 + kg * 4, c);
+                    RAPIDHT_UNROLL
+                    for (int a = 0; a < 4; ++a) {
+                        RAPIDHT_UNROLL
+                        for (int b = 0; b < 4; ++b) {
+                            acc[a][b] += c[a] * w[b];
+                        }
+                    }
+                }
+                RAPIDHT_UNROLL
+                for (int a = 0; a < 4; ++a) {
+                    Store4(tile + (k1 + n1 * (kg * 4 + a)) * lanes + lg * 4, acc[a]);
+                }
             }
+            __syncthreads();
         }
-        __syncthreads();
 
         // Recombination and store, quad by quad. Same formulas as
         // FactoredStore, with (k1, k2) at row k1 + N1*k2.
@@ -557,7 +574,7 @@ __global__ void FactoredAxisKernelPipelined(T* data, FactoredAxisTables<T> t, si
             const int k1 = k % n1;
             const int k2 = k / n1;
             T out[4];
-            if (k1 == 0 || 2 * k1 == n1) {
+            if (ablate == kAblateIo || k1 == 0 || 2 * k1 == n1) {
                 Load4(tile + k * lanes + line, out);
             } else {
                 T a[4];
@@ -583,8 +600,10 @@ __global__ void FactoredAxisKernelPipelined(T* data, FactoredAxisTables<T> t, si
                     }
                 }
             }
-            StoreQuad(base + static_cast<size_t>(k) * axisStride + static_cast<size_t>(line) * laneStride, laneStride,
-                vec, out);
+            if (ablate != kAblateCompute || batch == static_cast<int>(blockIdx.x)) {
+                StoreQuad(base + static_cast<size_t>(k) * axisStride + static_cast<size_t>(line) * laneStride,
+                    laneStride, vec, out);
+            }
         }
     }
 }

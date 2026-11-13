@@ -118,7 +118,7 @@ AxisTables<T> MakeAxisTables(size_t n)
 /// One axis, every block in turn. Lanes: as wide as allowed, at most `maxLanes`.
 template <typename T>
 void RunAxis(T* data, const FactoredAxisTables<T>& t, size_t axisStride, size_t laneStride, size_t laneLength,
-    size_t otherStride, size_t otherLength, Kernel kernel, size_t maxLanes)
+    size_t otherStride, size_t otherLength, Kernel kernel, size_t maxLanes, int ablate = kAblateNone)
 {
     if (t.n <= 1) {
         return;
@@ -141,7 +141,7 @@ void RunAxis(T* data, const FactoredAxisTables<T>& t, size_t axisStride, size_t 
             blockIdx = { static_cast<unsigned>(b), 0, 0 };
             FactoredAxisKernelPipelined<T, kHostMaxQuads>(data, t, axisStride, laneStride, static_cast<int>(lanes),
                 static_cast<int>(blocksPerOther), otherStride, static_cast<int>(batches),
-                static_cast<int>(FactoredWorkStride<T>(static_cast<size_t>(t.n2), lanes)), vec);
+                static_cast<int>(FactoredWorkStride<T>(static_cast<size_t>(t.n2), lanes)), vec, ablate);
         }
         return;
     }
@@ -273,4 +273,46 @@ TEST(FactoredKernels, PipelinedMatchesDefinition_Double)
 TEST(FactoredKernels, PipelinedMatchesDefinition_Float)
 {
     ExpectKernelMatchesDefinition<float>(Kernel::Pipelined, kFastShapes, std::size(kFastShapes), 2e-5);
+}
+
+// The "io only" diagnostic mode of the pipelined kernel (RAPIDHT_R4_ABLATE=io,
+// R-4 step 1.1) must move every value through the same loads and stores as the
+// real pass and put it back where it came from: then the time it measures is
+// the time of the data movement of a real pass, and nothing is skipped. So
+// along each axis the pass is the identity.
+template <typename T>
+void ExpectIoModeIsIdentity()
+{
+    const Shape shapes[] = { { 16, 16, 16 }, { 64, 16, 8 }, { 16, 64, 8 }, { 32, 16, 64 } };
+    for (const Shape& s : shapes) {
+        SCOPED_TRACE(Describe(s));
+        const size_t W = s.width, H = s.height, D = s.depth;
+        std::vector<T> v(W * H * D);
+        for (size_t i = 0; i < v.size(); ++i) {
+            v[i] = static_cast<T>(static_cast<double>((i * 2654435761u) % 1000003) * 1e-3);
+        }
+        const std::vector<T> original = v;
+        const auto tx = MakeAxisTables<T>(W);
+        const auto ty = MakeAxisTables<T>(H);
+        const auto tz = MakeAxisTables<T>(D);
+        const size_t lanes = sizeof(T) == 4 ? 8 : 4;
+        RunAxis(v.data(), tx.view, 1, W, H, W * H, D, Kernel::Pipelined, lanes, kAblateIo);
+        RunAxis(v.data(), ty.view, W, 1, W, W * H, D, Kernel::Pipelined, lanes, kAblateIo);
+        RunAxis(v.data(), tz.view, W * H, 1, W, W, H, Kernel::Pipelined, lanes, kAblateIo);
+        size_t moved = 0;
+        for (size_t i = 0; i < v.size(); ++i) {
+            moved += (v[i] != original[i]) ? 1 : 0;
+        }
+        EXPECT_EQ(moved, 0u);
+    }
+}
+
+TEST(FactoredKernels, PipelinedIoModeIsIdentity_Float)
+{
+    ExpectIoModeIsIdentity<float>();
+}
+
+TEST(FactoredKernels, PipelinedIoModeIsIdentity_Double)
+{
+    ExpectIoModeIsIdentity<double>();
 }

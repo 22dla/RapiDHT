@@ -1,0 +1,32 @@
+tag: s11_compute
+date: 2026-11-13T22:52:44+04:00
+settings: RAPIDHT_R4_ABLATE=compute
+commit: dc100d085e042ee6e45043e90b2f0333d3e90533
+uncommitted:
+   M docs/R4_PLAN.md
+   M src/internal/factored_kernels.cuh
+   M src/kernels.cu
+   M tests/test_factored_kernels.cpp
+  ?? benchmarks/results/2026-11-13_evgeny_r4_s11_compute.meta.txt
+  ?? benchmarks/results/2026-11-13_evgeny_r4_s11_full.json
+  ?? benchmarks/results/2026-11-13_evgeny_r4_s11_full.meta.txt
+  ?? benchmarks/results/2026-11-13_evgeny_r4_s11_full_trace.txt
+  ?? benchmarks/results/2026-11-13_evgeny_r4_s11_io.json
+  ?? benchmarks/results/2026-11-13_evgeny_r4_s11_io.meta.txt
+  ?? benchmarks/results/2026-11-13_evgeny_r4_s11_io_trace.txt
+sources:
+  0db2998e63e05d7e2dcf7b9263e698fea987e8f6d14483cdeb52e8c593c12272  src/internal/factored_kernels.cuh
+  6619847e62fbf69281222bd6215954e284d0f8440ca2104a31da48a72e71f0ac  src/kernels.cu
+  b3dbb4926ffd4489f5ab9f94c27537ee2e8363cedcda36c961159808baed0392  src/backend_cuda.cpp
+  2a1f2ff65835cfd21010734a1bfd515e89dcf28344c3992b69b7aef5e928ca45  src/internal/kernels.h
+  1a375ecd95a67d44792b9ffb3c8e02e8dd84c73ee1baaa6b43f323ce3e10e9ba  benchmarks/bench_transform.cpp
+  bcaca72a7bb8dbc44bb636fc7e4da1065aa5eebc250dde1506437ad4e064c3a0  benchmarks/cufft_baseline.cu
+binaries:
+  -rwxrwxr-x 1 evgeny evgeny 2660320 2026-11-13 22:48 build-bench/benchmarks/bench_transform
+  -rwxrwxr-x 1 evgeny evgeny 1943080 2026-11-13 22:48 build-bench/benchmarks/profile_gpu3d
+gpu:
+  NVIDIA GeForce RTX 3060 Ti, 595.99.02, 50, 8.00 W, 765 MiB
+other processes on the gpu (they add noise; close what you can):
+  79204, /usr/libexec/gnome-remote-desktop-daemon, 134 MiB
+  83029, /usr/bin/ptyxis, 40 MiB
+  83287, /opt/google/chrome/chrome --type=gpu-process --gpu-recent-crash-count=0 --ozone-platform=wayland --render-node-ov

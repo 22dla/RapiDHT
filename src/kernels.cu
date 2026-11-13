@@ -308,6 +308,26 @@ bool FactoredUseV2Kernel()
     return v2;
 }
 
+/// RAPIDHT_R4_ABLATE=io|compute: the diagnostic modes of the pipelined kernel
+/// (R-4 step 1.1). Wrong results by design; never set outside a measurement.
+int FactoredAblateMode()
+{
+    static const int mode = [] {
+        const char* s = std::getenv("RAPIDHT_R4_ABLATE");
+        if (s == nullptr) {
+            return kAblateNone;
+        }
+        if (std::strcmp(s, "io") == 0) {
+            return kAblateIo;
+        }
+        if (std::strcmp(s, "compute") == 0) {
+            return kAblateCompute;
+        }
+        return kAblateNone;
+    }();
+    return mode;
+}
+
 } // namespace
 
 template <typename T>
@@ -365,7 +385,8 @@ void FactoredAxis(T* data, const FactoredAxisTables<T>& tables, size_t axisStrid
             FactoredAxisKernelPipelined<T, kFactoredMaxQuads>
                 <<<static_cast<unsigned int>(grid), kFactoredThreads, sharedBytes>>>(data, tables, axisStride,
                     laneStride, static_cast<int>(lanes), static_cast<int>(blocksPerOther), otherStride,
-                    static_cast<int>(batches), static_cast<int>(FactoredWorkStride<T>(n2, lanes)), vec);
+                    static_cast<int>(batches), static_cast<int>(FactoredWorkStride<T>(n2, lanes)), vec,
+                    FactoredAblateMode());
             RAPIDHT_CUDA_CHECK(cudaGetLastError());
             return;
         }
