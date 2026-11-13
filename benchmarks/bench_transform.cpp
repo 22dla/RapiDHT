@@ -208,6 +208,8 @@ void BM_Cufft(benchmark::State& state, size_t width, size_t height, size_t depth
         }
         state.counters["extraMiB"]
             = static_cast<double>(cufft.ExtraDeviceBytes()) / (1024.0 * 1024.0);
+        state.counters["spectrumMiB"] = static_cast<double>(cufft.SpectrumBytes()) / (1024.0 * 1024.0);
+        state.counters["workspaceMiB"] = static_cast<double>(cufft.WorkspaceBytes()) / (1024.0 * 1024.0);
 
         cudaMemcpy(device, pristine.data(), count * sizeof(float), cudaMemcpyHostToDevice);
         for (auto _ : state) {
@@ -219,6 +221,42 @@ void BM_Cufft(benchmark::State& state, size_t width, size_t height, size_t depth
         return;
     }
 
+    cudaFree(device);
+    state.SetItemsProcessed(static_cast<int64_t>(state.iterations() * count));
+    state.SetBytesProcessed(static_cast<int64_t>(state.iterations() * count * sizeof(float)));
+    state.counters["N"] = static_cast<double>(count);
+}
+
+/*
+ * cuFFT's R2C transform alone, without the conversion to Hartley: the part of
+ * the baseline no conversion pass can remove. The separable transform of this
+ * library (FactoredResidentSeparable, no Bracewell pass) is the like-for-like
+ * opponent of this figure, the true transform the opponent of cuFFT/.
+ */
+void BM_CufftR2C(benchmark::State& state, size_t width, size_t height, size_t depth)
+{
+    const size_t count = ElementCount(width, height, depth);
+    const std::vector<float> pristine = MakeSignal<float>(count);
+
+    float* device = nullptr;
+    if (cudaMalloc(&device, count * sizeof(float)) != cudaSuccess) {
+        state.SkipWithError("cudaMalloc failed");
+        return;
+    }
+    try {
+        rapidht_bench::CufftHartley cufft(static_cast<int>(width), static_cast<int>(height),
+            static_cast<int>(depth));
+        cudaMemcpy(device, pristine.data(), count * sizeof(float), cudaMemcpyHostToDevice);
+        state.counters["extraMiB"]
+            = static_cast<double>(cufft.ExtraDeviceBytes()) / (1024.0 * 1024.0);
+        for (auto _ : state) {
+            cufft.ForwardSpectrumOnly(device);
+        }
+    } catch (const std::exception& error) {
+        cudaFree(device);
+        state.SkipWithError(error.what());
+        return;
+    }
     cudaFree(device);
     state.SetItemsProcessed(static_cast<int64_t>(state.iterations() * count));
     state.SetBytesProcessed(static_cast<int64_t>(state.iterations() * count * sizeof(float)));
@@ -451,6 +489,10 @@ void RegisterCufft(const Extent* extents, size_t n, const char* rank)
         benchmark::RegisterBenchmark(
             ("cuFFT/f32/" + std::string(rank) + "/" + Describe(e)).c_str(),
             [e](benchmark::State& s) { BM_Cufft(s, e.width, e.height, e.depth); })
+            ->Unit(benchmark::kMicrosecond);
+        benchmark::RegisterBenchmark(
+            ("cuFFT_R2C/f32/" + std::string(rank) + "/" + Describe(e)).c_str(),
+            [e](benchmark::State& s) { BM_CufftR2C(s, e.width, e.height, e.depth); })
             ->Unit(benchmark::kMicrosecond);
     }
 #else

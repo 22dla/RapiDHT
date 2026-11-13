@@ -1,0 +1,29 @@
+tag: cufft_pairs
+date: 2026-11-13T22:02:56+04:00
+settings: RAPIDHT_R4_CUFFT_CONVERT=pairs
+commit: 9ea4abd0963075ca3e4c48c407735cd0b5e06768
+uncommitted:
+   M benchmarks/bench_transform.cpp
+   M benchmarks/cufft_baseline.cu
+   M benchmarks/cufft_baseline.h
+   M docs/R4_PLAN.md
+  ?? benchmarks/results/2026-11-13_evgeny_r4_cufft_pairs.meta.txt
+  ?? benchmarks/results/2026-11-13_evgeny_r4_cufft_rows.json
+  ?? benchmarks/results/2026-11-13_evgeny_r4_cufft_rows.meta.txt
+  ?? benchmarks/results/2026-11-13_evgeny_r4_cufft_rows_trace.txt
+sources:
+  18b3185e389897f2b8c27bdc3edbfc31d548fded9323ab1404f8bb34eae786d2  src/internal/factored_kernels.cuh
+  de0ffe2a45c0ec5d4da8cfd701dd2214e16d57c162944523acc7b78184a87577  src/kernels.cu
+  b3dbb4926ffd4489f5ab9f94c27537ee2e8363cedcda36c961159808baed0392  src/backend_cuda.cpp
+  2a1f2ff65835cfd21010734a1bfd515e89dcf28344c3992b69b7aef5e928ca45  src/internal/kernels.h
+  8df4382a8550c79fb0b7bb97cccb2abf89975bd9ea9da8cac18bf98f448ea8db  benchmarks/bench_transform.cpp
+  91d8f8e2c64b6e5a45d7b283005bc92f8a192124005738acf20ba835931297dd  benchmarks/cufft_baseline.cu
+binaries:
+  -rwxrwxr-x 1 evgeny evgeny 2676928 2026-11-13 22:00 build-bench/benchmarks/bench_transform
+  -rwxrwxr-x 1 evgeny evgeny 1938608 2026-11-13 19:53 build-bench/benchmarks/profile_gpu3d
+gpu:
+  NVIDIA GeForce RTX 3060 Ti, 595.99.02, 48, 8.08 W, 660 MiB
+other processes on the gpu (they add noise; close what you can):
+  79204, /usr/libexec/gnome-remote-desktop-daemon, 134 MiB
+  83029, /usr/bin/ptyxis, 40 MiB
+  83287, /opt/google/chrome/chrome --type=gpu-process --gpu-recent-crash-count=0 --ozone-platform=wayland --render-node-ov

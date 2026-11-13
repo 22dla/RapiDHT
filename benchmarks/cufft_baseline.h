@@ -38,9 +38,19 @@ public:
     /// multidimensional Hartley transform in it.
     void Forward(float* deviceInOut);
 
+    /// Only the R2C transform into the internal spectrum buffer, no Hartley
+    /// conversion. The lower bound of what cuFFT spends on this volume: the
+    /// R-4 track measures it to know how much of the baseline is cuFFT itself
+    /// and how much the conversion pass.
+    void ForwardSpectrumOnly(const float* deviceIn);
+
     /// Device memory this baseline needs beyond the caller's volume: the
     /// complex spectrum plus whatever cuFFT asks for as workspace.
     size_t ExtraDeviceBytes() const;
+
+    /// The two parts of ExtraDeviceBytes.
+    size_t SpectrumBytes() const;
+    size_t WorkspaceBytes() const;
 
 private:
     struct Impl;

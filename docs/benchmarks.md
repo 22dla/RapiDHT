@@ -98,6 +98,9 @@ measured in the same run:
 | RapiDHT, matrix | 44.8 ms | 412 GFLOP | 9.2 TFLOP/s | **556 MiB** |
 | cuFFT + conversion | **12.1 ms** | ~9 GFLOP | 0.75 TFLOP/s | 1 028 MiB |
 
+(Measured with the first conversion pass; with the faster one of 2026-11-13 the
+baseline is 10.74 ms — see the R-4 section below.)
+
 **cuFFT is 3.7× faster on the transform.** That is the number to quote. The gap
 narrows at smaller volumes -- 1.35× at 128³ and 2.0× at 256³ -- because an FFT's
 advantage grows with the size of the problem, not shrinks.
@@ -248,15 +251,25 @@ computes the current one, with every shared-memory access laid out against bank
 conflicts, 2026-11-13 (`…_2026-11-13_evgeny_factored_v2.3.json`; v2.2 from the
 same build, `RAPIDHT_FACTORED_KERNEL=v2`, in `…_v2.2_samebuild.json`):
 
-| | matrices | factored v2.2 | factored v2.3 | cuFFT + conversion |
-| --- | ---: | ---: | ---: | ---: |
-| 128³ | 261 µs | 345 µs | 332 µs | **196 µs** |
-| 256³ | 3.02 ms | 2.43 ms | 2.00 ms | **1.51 ms** |
-| 512³ | 44.2 ms | 25.3 ms | 18.0 ms | **12.0 ms** |
-| 512³, separable | — | 22.7 ms | 15.4 ms | — |
-| 512³, f64 | 1 651 ms | **150 ms** | not measured | — |
-| 1024², 2D | 3.04 ms | **0.29 ms** | not measured | — |
-| extra device memory, 512³ f32 | 556 MiB | **32 MiB** | **32 MiB** | 1 028 MiB |
+| | matrices | factored v2.2 | factored v2.3 | cuFFT + conversion | cuFFT R2C alone |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| 128³ | 261 µs | 345 µs | 332 µs | **176 µs** | 133 µs |
+| 256³ | 3.02 ms | 2.43 ms | 2.00 ms | **1.34 ms** | 1.01 ms |
+| 512³ | 44.2 ms | 25.3 ms | 18.0 ms | **10.74 ms** | 8.11 ms |
+| 512³, separable | — | 22.7 ms | 15.4 ms | — | — |
+| 512³, f64 | 1 651 ms | **150 ms** | not measured | — | — |
+| 1024², 2D | 3.04 ms | **0.29 ms** | not measured | — | — |
+| extra device memory, 512³ f32 | 556 MiB | **32 MiB** | **32 MiB** | 1 028 MiB | 1 028 MiB |
+
+The cuFFT columns are from 2026-11-13 (`…_r4_cufft_pairs.json`, R-4 step 0.3).
+Before that the conversion pass looped over the outputs and read every stored
+coefficient twice: 3.87 ms at 512³, and the baseline was quoted as 12.0 ms,
+1.51 ms and 196 µs. The conversion now reads each coefficient once and writes
+both H(k) and H(−k): 2.62 ms, the time of one copy of the volume. The baseline
+is to be beaten at its strongest, so the faster one is the only one kept.
+cuFFT's 1 028 MiB are the half spectrum (514 MiB) plus the workspace
+`cufftGetSize3d` reports (514 MiB); an in-place R2C would need rows padded to
+2(W/2 + 1) floats, which this library's layout does not have.
 
 The 32 MiB are the CUDA memory pool's granularity; the tables themselves are
 a few KiB. Per kernel at 512³ f32 (`RAPIDHT_TRACE_KERNELS=1`, after warm-up),
