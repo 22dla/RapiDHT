@@ -348,6 +348,247 @@ __global__ void FactoredAxisKernelFast(T* data, FactoredAxisTables<T> t, size_t 
     FactoredStore(tile, base, n, n1, n2, lanes, axisStride, laneStride);
 }
 
+/*
+ * v2.3: the register-tiled kernel as a pipeline over many blocks of lines.
+ *
+ * In v2.2 every block did load -> compute -> store once and exited, and with
+ * two blocks to an SM the load of one block could hide behind the arithmetic
+ * of the other only by chance: all three axes stayed at ~7 ms against a
+ * bandwidth bound of ~2.4 ms at 512^3 f32, with the bus and the FMA units both
+ * mostly idle. Here the grid is only as large as fits on the device at once,
+ * each block walks the batches blockIdx.x, blockIdx.x + gridDim.x, ..., and the
+ * global loads of the next batch are issued into registers right after the
+ * current one reaches shared memory -- they are in flight during steps 1 and
+ * 2 and are waited for only at the top of the next iteration. No extra shared
+ * memory, so occupancy stays where it was; the cost is 4 * kMaxQuads registers
+ * a thread. No other block ever touches a batch, so prefetching it before
+ * this block has written the previous one keeps the transform in place.
+ *
+ * Every shared-memory access is also laid out against bank conflicts, the
+ * fast axis included (the x pass of v2.2 was 1.7 ms slower than y and z):
+ *  - a thread moves a quad -- 4 neighbouring lines at one position -- and
+ *    consecutive threads take consecutive quads, so the tile is written and
+ *    read as one contiguous run of 16-byte vectors on every axis;
+ *  - step 2 runs k1 fastest across threads, so the padded work columns spread
+ *    over the banks, and writes its result in output order k = k1 + N1*k2,
+ *    which makes the final store read the tile contiguously (the v2.2 layout,
+ *    row k1*N2 + k2, put consecutive outputs 512 bytes apart: 4-way conflicts).
+ * Along the lane axis a quad is contiguous in global memory when laneStride
+ * is 1 (axes y and z), and then it moves as one vector.
+ */
+
+/// Four values p[0], p[s], p[2s], p[3s]; one vector access when vec (then s is
+/// 1 and p is 16-byte aligned).
+template <typename T>
+__device__ __forceinline__ void LoadQuad(const T* p, size_t s, bool vec, T (&out)[4])
+{
+    if (vec) {
+        Load4(p, out);
+    } else {
+        RAPIDHT_UNROLL
+        for (int j = 0; j < 4; ++j) {
+            out[j] = p[static_cast<size_t>(j) * s];
+        }
+    }
+}
+
+template <typename T>
+__device__ __forceinline__ void StoreQuad(T* p, size_t s, bool vec, const T (&in)[4])
+{
+    if (vec) {
+        Store4(p, in);
+    } else {
+        RAPIDHT_UNROLL
+        for (int j = 0; j < 4; ++j) {
+            p[static_cast<size_t>(j) * s] = in[j];
+        }
+    }
+}
+
+/// Issues this thread's global loads of a batch: quad q = threadIdx.x +
+/// i * blockDim.x is position q / (lanes/4), lines 4 * (q % (lanes/4)) + 0..3.
+template <typename T, int kMaxQuads>
+__device__ __forceinline__ void PipelineLoad(
+    const T* base, T (&reg)[kMaxQuads][4], int quads, int quadsPerRow, size_t axisStride, size_t laneStride, bool vec)
+{
+    RAPIDHT_UNROLL
+    for (int i = 0; i < kMaxQuads; ++i) {
+        const int q = static_cast<int>(threadIdx.x) + i * static_cast<int>(blockDim.x);
+        if (q < quads) {
+            const size_t row = static_cast<size_t>(q / quadsPerRow);
+            const size_t line = static_cast<size_t>(q % quadsPerRow) * 4;
+            LoadQuad(base + row * axisStride + line * laneStride, laneStride, vec, reg[i]);
+        }
+    }
+}
+
+/// Puts the loaded quads into the tile; quad q lands at tile + 4q.
+template <typename T, int kMaxQuads>
+__device__ __forceinline__ void PipelineFill(T* tile, const T (&reg)[kMaxQuads][4], int quads)
+{
+    RAPIDHT_UNROLL
+    for (int i = 0; i < kMaxQuads; ++i) {
+        const int q = static_cast<int>(threadIdx.x) + i * static_cast<int>(blockDim.x);
+        if (q < quads) {
+            Store4(tile + 4 * q, reg[i]);
+        }
+    }
+}
+
+/*
+ * Requires n1, n2 and lanes to be multiples of 4 and blockDim.x * kMaxQuads
+ * >= n * lanes / 4. Shared memory exactly as FactoredAxisKernelFast.
+ */
+template <typename T, int kMaxQuads>
+__global__ void FactoredAxisKernelPipelined(T* data, FactoredAxisTables<T> t, size_t axisStride, size_t laneStride,
+    int lanes, int blocksPerOther, size_t otherStride, int batches, int workStride, bool vec)
+{
+    extern __shared__ __align__(16) unsigned char sharedPipe[];
+    const int n = t.n;
+    const int n1 = t.n1;
+    const int n2 = t.n2;
+    T* tile = reinterpret_cast<T*>(sharedPipe);
+    T* work = tile + n * lanes;
+    T* c1s = work + n1 * workStride;
+    T* c2s = c1s + n1 * n1;
+    T* chT = c2s + n2 * n2;
+
+    for (int i = threadIdx.x; i < n1 * n1; i += blockDim.x) {
+        c1s[i] = t.c1[i];
+    }
+    for (int i = threadIdx.x; i < n2 * n2; i += blockDim.x) {
+        c2s[i] = t.c2[i];
+        chT[(i % n2) * n2 + i / n2] = t.cHalf[i];
+    }
+
+    const int quadsPerRow = lanes / 4;
+    const int quads = n * quadsPerRow;
+    const int laneGroups = lanes / 4;
+    auto batchBase = [&](int batch) -> T* {
+        const int other = batch / blocksPerOther;
+        const int firstLane = (batch % blocksPerOther) * lanes;
+        return data + static_cast<size_t>(other) * otherStride + static_cast<size_t>(firstLane) * laneStride;
+    };
+
+    T reg[kMaxQuads][4];
+    int batch = static_cast<int>(blockIdx.x);
+    if (batch < batches) {
+        PipelineLoad(batchBase(batch), reg, quads, quadsPerRow, axisStride, laneStride, vec);
+    }
+    for (; batch < batches; batch += static_cast<int>(gridDim.x)) {
+        T* base = batchBase(batch);
+        __syncthreads(); // the previous batch's store has finished reading the tile
+        PipelineFill(tile, reg, quads);
+        __syncthreads();
+
+        // The next batch is fetched while this one is computed.
+        const int next = batch + static_cast<int>(gridDim.x);
+        if (next < batches) {
+            PipelineLoad(batchBase(next), reg, quads, quadsPerRow, axisStride, laneStride, vec);
+        }
+
+        // Step 1, 4 frequencies k1 x 4 lines per thread, lines fastest.
+        const int items1 = (n1 / 4) * n2 * laneGroups;
+        for (int it = threadIdx.x; it < items1; it += blockDim.x) {
+            const int lg = it % laneGroups;
+            const int r = it / laneGroups;
+            const int j2 = r % n2;
+            const int kg = r / n2;
+            T acc[4][4] = {};
+            for (int j1 = 0; j1 < n1; ++j1) {
+                T x[4];
+                T c[4];
+                Load4(tile + (n2 * j1 + j2) * lanes + lg * 4, x);
+                Load4(c1s + j1 * n1 + kg * 4, c);
+                RAPIDHT_UNROLL
+                for (int a = 0; a < 4; ++a) {
+                    RAPIDHT_UNROLL
+                    for (int b = 0; b < 4; ++b) {
+                        acc[a][b] += c[a] * x[b];
+                    }
+                }
+            }
+            RAPIDHT_UNROLL
+            for (int a = 0; a < 4; ++a) {
+                Store4(work + (kg * 4 + a) * workStride + j2 * lanes + lg * 4, acc[a]);
+            }
+        }
+        __syncthreads();
+
+        FactoredTwiddle(work, t, lanes, workStride);
+        __syncthreads();
+
+        // Step 2, 4 frequencies k2 x 4 lines per thread, k1 fastest after the
+        // lines; the result goes to row k1 + N1*k2 of the tile.
+        const int k2Groups = n2 / 4;
+        const int items2 = n1 * k2Groups * laneGroups;
+        for (int it = threadIdx.x; it < items2; it += blockDim.x) {
+            const int lg = it % laneGroups;
+            const int r = it / laneGroups;
+            const int k1 = r % n1;
+            const int kg = r / n1;
+            const T* m = (k1 == n1 / 2) ? chT : c2s; // read as [j2][k2]
+            T acc[4][4] = {};
+            for (int j2 = 0; j2 < n2; ++j2) {
+                T w[4];
+                T c[4];
+                Load4(work + k1 * workStride + j2 * lanes + lg * 4, w);
+                Load4(m + j2 * n2 + kg * 4, c);
+                RAPIDHT_UNROLL
+                for (int a = 0; a < 4; ++a) {
+                    RAPIDHT_UNROLL
+                    for (int b = 0; b < 4; ++b) {
+                        acc[a][b] += c[a] * w[b];
+                    }
+                }
+            }
+            RAPIDHT_UNROLL
+            for (int a = 0; a < 4; ++a) {
+                Store4(tile + (k1 + n1 * (kg * 4 + a)) * lanes + lg * 4, acc[a]);
+            }
+        }
+        __syncthreads();
+
+        // Recombination and store, quad by quad. Same formulas as
+        // FactoredStore, with (k1, k2) at row k1 + N1*k2.
+        for (int q = threadIdx.x; q < quads; q += blockDim.x) {
+            const int k = q / quadsPerRow;
+            const int line = (q % quadsPerRow) * 4;
+            const int k1 = k % n1;
+            const int k2 = k / n1;
+            T out[4];
+            if (k1 == 0 || 2 * k1 == n1) {
+                Load4(tile + k * lanes + line, out);
+            } else {
+                T a[4];
+                T b[4];
+                if (2 * k1 < n1) {
+                    const int mk2 = (n2 - k2) % n2;
+                    Load4(tile + k * lanes + line, a);
+                    Load4(tile + ((n1 - k1) + n1 * mk2) * lanes + line, b);
+                    RAPIDHT_UNROLL
+                    for (int j = 0; j < 4; ++j) {
+                        out[j] = a[j] + b[j];
+                    }
+                } else {
+                    // k1 > N1/2: the mirror half of the pair j = N1 - k1, k2' = N2-1-k2.
+                    const int jm = n1 - k1;
+                    const int kb = n2 - 1 - k2;
+                    const int mkb = (n2 - kb) % n2;
+                    Load4(tile + (jm + n1 * mkb) * lanes + line, a);
+                    Load4(tile + (k1 + n1 * kb) * lanes + line, b);
+                    RAPIDHT_UNROLL
+                    for (int j = 0; j < 4; ++j) {
+                        out[j] = a[j] - b[j];
+                    }
+                }
+            }
+            StoreQuad(base + static_cast<size_t>(k) * axisStride + static_cast<size_t>(line) * laneStride, laneStride,
+                vec, out);
+        }
+    }
+}
+
 /// Mirror of an index along an axis of length n: (n - i) mod n.
 __device__ __forceinline__ int MirrorIndex(int i, int n)
 {

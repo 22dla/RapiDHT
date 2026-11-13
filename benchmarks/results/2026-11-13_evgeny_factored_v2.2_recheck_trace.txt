@@ -1,0 +1,10 @@
+[RapiDHT trace] axis-x(width) 9.139 ms, axis-y(height) 6.939 ms, axis-z(depth) 7.520 ms, bracewell 2.620 ms, total 26.220 ms
+[RapiDHT trace] axis-x(width) 9.713 ms, axis-y(height) 7.693 ms, axis-z(depth) 6.979 ms, bracewell 2.895 ms, total 27.279 ms
+[RapiDHT trace] axis-x(width) 9.793 ms, axis-y(height) 6.938 ms, axis-z(depth) 6.979 ms, bracewell 2.923 ms, total 26.631 ms
+[RapiDHT trace] axis-x(width) 8.706 ms, axis-y(height) 6.938 ms, axis-z(depth) 7.268 ms, bracewell 2.622 ms, total 25.534 ms
+[RapiDHT trace] axis-x(width) 8.709 ms, axis-y(height) 6.937 ms, axis-z(depth) 7.273 ms, bracewell 2.617 ms, total 25.537 ms
+[RapiDHT trace] axis-x(width) 9.335 ms, axis-y(height) 7.238 ms, axis-z(depth) 7.490 ms, bracewell 3.460 ms, total 27.522 ms
+[RapiDHT trace] axis-x(width) 8.968 ms, axis-y(height) 7.522 ms, axis-z(depth) 7.250 ms, bracewell 2.615 ms, total 26.356 ms
+f32 factored  512^3  (134217728 elements, 512.0 MiB per buffer)  x5 iterations
+  26.53 ms per transform, 38.7 GFLOP of multiply-add arithmetic, 1.46 TFLOP/s
+  device memory held by the transform: 32 MiB built, 34 MiB after resident use, 546 MiB after a host-pointer call

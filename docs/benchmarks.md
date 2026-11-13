@@ -240,24 +240,37 @@ but does not change the picture.
 `N = N1 * N2` (512 = 32 * 16): 96 multiply-adds per element and axis instead
 of 1 024. Each axis is one kernel that holds a block of lines in shared memory
 and works in place; the Bracewell pass runs in place too. It holds no scratch
-buffer, no matrices and no cuBLAS handle. Resident, f32, median of 5,
-2026-11-06 (`benchmarks/results/2026-11-06_evgeny_factored_v2.2.json`):
+buffer, no matrices and no cuBLAS handle. Resident, f32, median of 7.
+v2.2 -- one block of lines per thread block, 2026-11-06
+(`benchmarks/results/2026-11-06_evgeny_factored_v2.2.json`); v2.3 -- a
+pipelined grid that fetches the next block of lines into registers while it
+computes the current one, with every shared-memory access laid out against bank
+conflicts, 2026-11-13 (`…_2026-11-13_evgeny_factored_v2.3.json`; v2.2 from the
+same build, `RAPIDHT_FACTORED_KERNEL=v2`, in `…_v2.2_samebuild.json`):
 
-| | matrices | factored | cuFFT + conversion |
-| --- | ---: | ---: | ---: |
-| 128³ | 261 µs | 345 µs | **192 µs** |
-| 256³ | 3.02 ms | 2.43 ms | **1.49 ms** |
-| 512³ | 44.2 ms | 25.3 ms | **12.0 ms** |
-| 512³, f64 | 1 651 ms | **150 ms** | — |
-| 1024², 2D | 3.04 ms | **0.29 ms** | — |
-| extra device memory, 512³ f32 | 556 MiB | **32 MiB** | 1 028 MiB |
+| | matrices | factored v2.2 | factored v2.3 | cuFFT + conversion |
+| --- | ---: | ---: | ---: | ---: |
+| 128³ | 261 µs | 345 µs | 332 µs | **196 µs** |
+| 256³ | 3.02 ms | 2.43 ms | 2.00 ms | **1.51 ms** |
+| 512³ | 44.2 ms | 25.3 ms | 18.0 ms | **12.0 ms** |
+| 512³, separable | — | 22.7 ms | 15.4 ms | — |
+| 512³, f64 | 1 651 ms | **150 ms** | not measured | — |
+| 1024², 2D | 3.04 ms | **0.29 ms** | not measured | — |
+| extra device memory, 512³ f32 | 556 MiB | **32 MiB** | **32 MiB** | 1 028 MiB |
 
 The 32 MiB are the CUDA memory pool's granularity; the tables themselves are
-a few KiB. Per kernel at 512³ f32 (`RAPIDHT_TRACE_KERNELS=1`, after warm-up):
-fastest axis 8.6 ms, the other two 6.9 ms each, Bracewell 2.6 ms -- against
-about 2.4 ms for one read and one write of the volume. The axes are still
-latency-bound, not bandwidth- or FMA-bound (1.4 TFLOP/s); see R-4 in the
-backlog for the plan.
+a few KiB. Per kernel at 512³ f32 (`RAPIDHT_TRACE_KERNELS=1`, after warm-up),
+against about 2.4 ms for one read and one write of the volume:
+
+| | x (fastest) | y | z | Bracewell |
+| --- | ---: | ---: | ---: | ---: |
+| v2.2 | 8.6 ms | 6.9 ms | 6.9 ms | 2.6 ms |
+| v2.3 | 3.9–4.3 ms | 5.1–5.7 ms | 5.9–6.3 ms | 2.6 ms |
+
+Bracewell already runs at the bus limit. In v2.3 the fastest axis is the
+quickest -- its 8-way bank conflicts are gone -- and y and z, whose blocks of
+lines are 32-byte strips of rows far apart in memory, are now the slow ones;
+see R-4 in the backlog for the plan.
 
 ---
 

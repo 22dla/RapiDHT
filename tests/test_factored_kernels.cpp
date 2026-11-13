@@ -20,6 +20,7 @@
 #include <gtest/gtest.h>
 
 #include <cstddef>
+#include <cstdint>
 #include <cstring>
 #include <iterator>
 #include <string>
@@ -36,6 +37,7 @@ struct HostDim3 {
 HostDim3 threadIdx;
 HostDim3 blockIdx;
 HostDim3 blockDim;
+HostDim3 gridDim;
 } // namespace
 
 struct float4 {
@@ -67,6 +69,7 @@ namespace RapiDHT {
 // The kernels declare these extern; one buffer each is enough for one block.
 alignas(16) unsigned char sharedRaw[1 << 20];
 alignas(16) unsigned char sharedFast[1 << 20];
+alignas(16) unsigned char sharedPipe[1 << 20];
 } // namespace RapiDHT
 
 using namespace RapiDHT;
@@ -75,7 +78,16 @@ using namespace rapidht_test;
 namespace {
 
 enum class Kernel { Generic,
-    Fast };
+    Fast,
+    Pipelined };
+
+// Registers a thread holds for the next batch: with one thread to a block it
+// has to hold the whole tile, 512 values at most in the shapes below.
+constexpr int kHostMaxQuads = 128;
+
+// Fewer blocks than batches, so that every block runs the pipeline over
+// several batches, including a ragged last round.
+constexpr size_t kHostGrid = 3;
 
 template <typename T>
 struct AxisTables {
@@ -118,6 +130,21 @@ void RunAxis(T* data, const FactoredAxisTables<T>& t, size_t axisStride, size_t 
     const size_t blocksPerOther = laneLength / lanes;
     blockDim = { 1, 1, 1 };
     threadIdx = { 0, 0, 0 };
+    if (kernel == Kernel::Pipelined) {
+        const size_t batches = blocksPerOther * otherLength;
+        const size_t grid = batches < kHostGrid ? batches : kHostGrid;
+        gridDim = { static_cast<unsigned>(grid), 1, 1 };
+        // The device path moves quads as vectors exactly when this holds; the
+        // host buffers are 16-byte aligned like cudaMalloc's.
+        const bool vec = laneStride == 1 && axisStride % 4 == 0 && otherStride % 4 == 0;
+        for (size_t b = 0; b < grid; ++b) {
+            blockIdx = { static_cast<unsigned>(b), 0, 0 };
+            FactoredAxisKernelPipelined<T, kHostMaxQuads>(data, t, axisStride, laneStride, static_cast<int>(lanes),
+                static_cast<int>(blocksPerOther), otherStride, static_cast<int>(batches),
+                static_cast<int>(FactoredWorkStride<T>(static_cast<size_t>(t.n2), lanes)), vec);
+        }
+        return;
+    }
     for (size_t b = 0; b < blocksPerOther * otherLength; ++b) {
         blockIdx = { static_cast<unsigned>(b), 0, 0 };
         if (kernel == Kernel::Fast) {
@@ -136,10 +163,13 @@ template <typename T>
 std::vector<double> RunTransform(const std::vector<double>& input, size_t W, size_t H, size_t D, Kernel kernel)
 {
     std::vector<T> v(input.begin(), input.end());
+    if (reinterpret_cast<uintptr_t>(v.data()) % 16 != 0) {
+        ADD_FAILURE() << "the vector paths need a 16-byte aligned buffer";
+    }
     const auto tx = MakeAxisTables<T>(W);
     const auto ty = MakeAxisTables<T>(H);
     const auto tz = MakeAxisTables<T>(D);
-    const size_t maxLanes = (kernel == Kernel::Fast) ? (sizeof(T) == 4 ? 8 : 4) : 16;
+    const size_t maxLanes = (kernel == Kernel::Generic) ? 16 : (sizeof(T) == 4 ? 8 : 4);
     RunAxis(v.data(), tx.view, 1, W, H, W * H, D, kernel, maxLanes);
     RunAxis(v.data(), ty.view, W, 1, W, W * H, D, kernel, maxLanes);
     RunAxis(v.data(), tz.view, W * H, 1, W, W, H, kernel, maxLanes);
@@ -233,4 +263,14 @@ TEST(FactoredKernels, FastMatchesDefinition_Double)
 TEST(FactoredKernels, FastMatchesDefinition_Float)
 {
     ExpectKernelMatchesDefinition<float>(Kernel::Fast, kFastShapes, std::size(kFastShapes), 2e-5);
+}
+
+TEST(FactoredKernels, PipelinedMatchesDefinition_Double)
+{
+    ExpectKernelMatchesDefinition<double>(Kernel::Pipelined, kFastShapes, std::size(kFastShapes), 1e-11);
+}
+
+TEST(FactoredKernels, PipelinedMatchesDefinition_Float)
+{
+    ExpectKernelMatchesDefinition<float>(Kernel::Pipelined, kFastShapes, std::size(kFastShapes), 2e-5);
 }

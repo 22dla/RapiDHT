@@ -13,6 +13,10 @@
 
 #include "device_launch_parameters.h"
 
+#include <cstdint>
+#include <cstdlib>
+#include <cstring>
+
 // ------------------------------ Kernels ------------------------------
 
 namespace RapiDHT {
@@ -285,6 +289,27 @@ void InitializeHartleyMatrix(float* deviceMatrix, size_t height)
     RAPIDHT_CUDA_CHECK(cudaDeviceSynchronize());
 }
 
+namespace {
+
+// v2.3 pipelined kernel: threads per block and the most quads (4 values) a
+// thread holds in registers for the next batch -- 8 covers every length up to
+// 2048 at the widths the launcher picks.
+constexpr int kFactoredThreads = 256;
+constexpr int kFactoredMaxQuads = 8;
+
+/// RAPIDHT_FACTORED_KERNEL=v2 keeps the one-batch-per-block kernel of v2.2,
+/// so that both can be timed from the same build.
+bool FactoredUseV2Kernel()
+{
+    static const bool v2 = [] {
+        const char* s = std::getenv("RAPIDHT_FACTORED_KERNEL");
+        return s != nullptr && std::strcmp(s, "v2") == 0;
+    }();
+    return v2;
+}
+
+} // namespace
+
 template <typename T>
 void FactoredAxis(T* data, const FactoredAxisTables<T>& tables, size_t axisStride, size_t laneStride,
     size_t laneLength, size_t otherStride, size_t otherLength)
@@ -313,6 +338,36 @@ void FactoredAxis(T* data, const FactoredAxisTables<T>& tables, size_t axisStrid
         };
         if (lanes > 4 && bytesFor(lanes) > static_cast<size_t>(optIn)) {
             lanes = 4;
+        }
+        const size_t quadsPerThread = (n * lanes / 4 + kFactoredThreads - 1) / kFactoredThreads;
+        if (lanes >= 4 && bytesFor(lanes) <= static_cast<size_t>(optIn) && quadsPerThread <= kFactoredMaxQuads
+            && !FactoredUseV2Kernel()) {
+            // v2.3: a pipelined grid of as many blocks as fit at once.
+            const size_t sharedBytes = bytesFor(lanes);
+            const auto kernel = FactoredAxisKernelPipelined<T, kFactoredMaxQuads>;
+            if (sharedBytes > 48 * 1024) {
+                RAPIDHT_CUDA_CHECK(cudaFuncSetAttribute(
+                    kernel, cudaFuncAttributeMaxDynamicSharedMemorySize, static_cast<int>(sharedBytes)));
+            }
+            int perSm = 0;
+            int sms = 1;
+            RAPIDHT_CUDA_CHECK(cudaOccupancyMaxActiveBlocksPerMultiprocessor(
+                &perSm, kernel, kFactoredThreads, sharedBytes));
+            RAPIDHT_CUDA_CHECK(cudaDeviceGetAttribute(&sms, cudaDevAttrMultiProcessorCount, device));
+            const size_t blocksPerOther = laneLength / lanes;
+            const size_t batches = blocksPerOther * otherLength;
+            const size_t resident = static_cast<size_t>(perSm > 0 ? perSm : 1) * static_cast<size_t>(sms);
+            const size_t grid = batches < resident ? batches : resident;
+            // A quad of lines is one vector access when the lines are
+            // neighbours in memory and every offset keeps 16-byte alignment.
+            const bool vec = laneStride == 1 && axisStride % 4 == 0 && otherStride % 4 == 0
+                          && reinterpret_cast<uintptr_t>(data) % 16 == 0;
+            FactoredAxisKernelPipelined<T, kFactoredMaxQuads>
+                <<<static_cast<unsigned int>(grid), kFactoredThreads, sharedBytes>>>(data, tables, axisStride,
+                    laneStride, static_cast<int>(lanes), static_cast<int>(blocksPerOther), otherStride,
+                    static_cast<int>(batches), static_cast<int>(FactoredWorkStride<T>(n2, lanes)), vec);
+            RAPIDHT_CUDA_CHECK(cudaGetLastError());
+            return;
         }
         if (lanes >= 4 && bytesFor(lanes) <= static_cast<size_t>(optIn)) {
             const size_t sharedBytes = bytesFor(lanes);
