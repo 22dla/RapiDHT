@@ -108,27 +108,44 @@ def compare(base: dict[str, dict[str, float]], new: dict[str, dict[str, float]])
 TRACE = re.compile(r"(axis-[xyz])\([a-z]+\) ([0-9.]+) ms|(bracewell) ([0-9.]+) ms|(total) ([0-9.]+) ms")
 
 
+SIZE = re.compile(r"factored\s+(\d+)\^3")
+
+
 def load_trace(path: str) -> dict[str, dict[str, float]]:
-    """'n=512' (or '' when lines carry no prefix) -> kernel -> median ms over the lines of the file."""
+    """'n=512' -> kernel -> median ms over the lines of the file.
+
+    r4_measure.sh prefixes every line with n=<size>. Older traces (one size per
+    file, no prefix) get the size from profile_gpu3d's summary line, so both
+    kinds compare against each other.
+    """
     samples: dict[str, dict[str, list[float]]] = {}
+    unlabelled: dict[str, list[float]] = {}
+    size = ""
     with open(path, encoding="utf-8") as handle:
         for line in handle:
+            found = SIZE.search(line)
+            if found and "[RapiDHT trace]" not in line and not line.startswith("n="):
+                size = f"n={found.group(1)}"
             if "[RapiDHT trace]" not in line:
                 continue
             key = line.split("[RapiDHT trace]")[0].strip()
             for match in TRACE.finditer(line):
                 kernel = match.group(1) or match.group(3) or match.group(5)
                 value = float(match.group(2) or match.group(4) or match.group(6))
-                samples.setdefault(key, {}).setdefault(kernel, []).append(value)
+                target = samples.setdefault(key, {}) if key else unlabelled
+                target.setdefault(kernel, []).append(value)
+    if unlabelled:
+        samples.setdefault(size, {}).update(unlabelled)
     return {key: {k: statistics.median(v) for k, v in kernels.items()} for key, kernels in samples.items()}
 
 
 def compare_traces(base_path: str, new_path: str) -> None:
     base, new = load_trace(base_path), load_trace(new_path)
     print("\nПо ядрам, медиана по строкам трассы, мс:")
-    for key in new:
-        if key not in base:
-            continue
+    shared = [key for key in new if key in base]
+    if not shared:
+        print("  у трасс нет общего размера — сравнивать нечего")
+    for key in shared:
         print(f"  {key or '(без метки размера)'}")
         for kernel, value in new[key].items():
             if kernel in base[key]:
