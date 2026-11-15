@@ -289,14 +289,18 @@ void HartleyTransform<T>::FactoredOnDevice(T* deviceData, bool separable)
         Direction axis;
         size_t axisStride, laneStride, laneLength, otherStride, otherLength;
     };
+    // The fastest axis goes last (R-4 step 3.1): the separable transform does
+    // not depend on the order, and with x last the Bracewell combination can
+    // be folded into that pass -- the mirror in x lies inside each line, so a
+    // block needs only the four lines (y, z), (-y, z), (y, -z), (-y, -z).
     const Geometry passes[] = {
-        { Direction::Y, 1, W, H, W * H, D }, // along the fastest axis
-        { Direction::X, W, 1, W, W * H, D },
         { Direction::Z, W * H, 1, W, W, H },
+        { Direction::X, W, 1, W, W * H, D },
+        { Direction::Y, 1, W, H, W * H, D }, // along the fastest axis
     };
     // Named by memory layout, not by the historical Direction names: "x" is
     // the fastest axis (Width), "z" the slowest.
-    const char* const passNames[] = { "axis-x(width)", "axis-y(height)", "axis-z(depth)" };
+    const char* const passNames[] = { "axis-z(depth)", "axis-y(height)", "axis-x(width)" };
     int passIndex = 0;
 
     for (const Geometry& g : passes) {
