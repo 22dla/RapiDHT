@@ -16,6 +16,8 @@
 #include <cstdint>
 #include <cstdlib>
 #include <cstring>
+#include <utility>
+#include <vector>
 
 // ------------------------------ Kernels ------------------------------
 
@@ -328,6 +330,49 @@ int FactoredAblateMode()
     return mode;
 }
 
+/// RAPIDHT_R4_LANES=4|8|16|32: batch width of the pipelined kernel on every
+/// axis, for the per-axis sweep of R-4 step 2.4. Clamped by the same limits as
+/// the automatic choice; 0 (unset) keeps the automatic choice.
+size_t FactoredForcedLanes()
+{
+    static const size_t lanes = [] {
+        const char* s = std::getenv("RAPIDHT_R4_LANES");
+        const long v = s != nullptr ? std::strtol(s, nullptr, 10) : 0;
+        return (v == 4 || v == 8 || v == 16 || v == 32) ? static_cast<size_t>(v) : size_t { 0 };
+    }();
+    return lanes;
+}
+
+/*
+ * What FactoredAxis asks the driver, asked once (R-4 step 2.3). The shared
+ * memory limit, the SM count, the occupancy of a kernel at a given shared size
+ * and the opt-in to more than 48 KiB do not change while the device stays the
+ * same, but they were queried on every call of every axis -- four or five
+ * driver calls in front of a kernel that runs 50 us at 128^3. One cache per
+ * host thread, so no lock; keyed by device, so switching devices stays right.
+ */
+struct FactoredDeviceInfo {
+    int device = -1;
+    int optIn = 48 * 1024;
+    int sms = 1;
+    size_t pipelinedSharedOptIn = 48 * 1024; ///< largest size the attribute is set to
+    std::vector<std::pair<size_t, int>> pipelinedBlocksPerSm; ///< shared bytes -> blocks per SM
+    size_t fastSharedOptIn = 48 * 1024;
+};
+
+template <typename T>
+FactoredDeviceInfo& FactoredInfo(int device)
+{
+    thread_local FactoredDeviceInfo info;
+    if (info.device != device) {
+        info = FactoredDeviceInfo {};
+        info.device = device;
+        RAPIDHT_CUDA_CHECK(cudaDeviceGetAttribute(&info.optIn, cudaDevAttrMaxSharedMemoryPerBlockOptin, device));
+        RAPIDHT_CUDA_CHECK(cudaDeviceGetAttribute(&info.sms, cudaDevAttrMultiProcessorCount, device));
+    }
+    return info;
+}
+
 } // namespace
 
 template <typename T>
@@ -342,9 +387,9 @@ void FactoredAxis(T* data, const FactoredAxisTables<T>& tables, size_t axisStrid
     const size_t n2 = static_cast<size_t>(tables.n2);
 
     int device = 0;
-    int optIn = 48 * 1024;
     RAPIDHT_CUDA_CHECK(cudaGetDevice(&device));
-    RAPIDHT_CUDA_CHECK(cudaDeviceGetAttribute(&optIn, cudaDevAttrMaxSharedMemoryPerBlockOptin, device));
+    FactoredDeviceInfo& info = FactoredInfo<T>(device);
+    const int optIn = info.optIn;
 
     // The register-tiled kernel wherever its multiples of 4 hold: 8 lines per
     // block in float, 4 in double, for two blocks per SM at n = 512.
@@ -374,21 +419,43 @@ void FactoredAxis(T* data, const FactoredAxisTables<T>& tables, size_t axisStrid
                    && (n * lanes * 2 / 4 + kFactoredThreads - 1) / kFactoredThreads <= kFactoredMaxQuads) {
                 lanes *= 2;
             }
+            if (FactoredForcedLanes() != 0) {
+                auto fits = [&](size_t l) {
+                    return l >= 4 && l <= laneLength && bytesFor(l) <= static_cast<size_t>(optIn)
+                        && (n * l / 4 + kFactoredThreads - 1) / kFactoredThreads <= kFactoredMaxQuads;
+                };
+                size_t forced = FactoredForcedLanes();
+                while (forced > 4 && !fits(forced)) {
+                    forced /= 2;
+                }
+                if (fits(forced)) {
+                    lanes = forced;
+                }
+            }
             // v2.3: a pipelined grid of as many blocks as fit at once.
             const size_t sharedBytes = bytesFor(lanes);
             const auto kernel = FactoredAxisKernelPipelined<T, kFactoredMaxQuads>;
-            if (sharedBytes > 48 * 1024) {
+            if (sharedBytes > info.pipelinedSharedOptIn) {
                 RAPIDHT_CUDA_CHECK(cudaFuncSetAttribute(
                     kernel, cudaFuncAttributeMaxDynamicSharedMemorySize, static_cast<int>(sharedBytes)));
+                info.pipelinedSharedOptIn = sharedBytes;
             }
             int perSm = 0;
-            int sms = 1;
-            RAPIDHT_CUDA_CHECK(cudaOccupancyMaxActiveBlocksPerMultiprocessor(
-                &perSm, kernel, kFactoredThreads, sharedBytes));
-            RAPIDHT_CUDA_CHECK(cudaDeviceGetAttribute(&sms, cudaDevAttrMultiProcessorCount, device));
+            for (const auto& known : info.pipelinedBlocksPerSm) {
+                if (known.first == sharedBytes) {
+                    perSm = known.second;
+                }
+            }
+            if (perSm == 0) {
+                RAPIDHT_CUDA_CHECK(cudaOccupancyMaxActiveBlocksPerMultiprocessor(
+                    &perSm, kernel, kFactoredThreads, sharedBytes));
+                perSm = perSm > 0 ? perSm : 1;
+                info.pipelinedBlocksPerSm.emplace_back(sharedBytes, perSm);
+            }
+            const int sms = info.sms;
             const size_t blocksPerOther = laneLength / lanes;
             const size_t batches = blocksPerOther * otherLength;
-            const size_t resident = static_cast<size_t>(perSm > 0 ? perSm : 1) * static_cast<size_t>(sms);
+            const size_t resident = static_cast<size_t>(perSm) * static_cast<size_t>(sms);
             const size_t grid = batches < resident ? batches : resident;
             // A quad of lines is one vector access when the lines are
             // neighbours in memory and every offset keeps 16-byte alignment.
@@ -404,9 +471,10 @@ void FactoredAxis(T* data, const FactoredAxisTables<T>& tables, size_t axisStrid
         }
         if (lanes >= 4 && bytesFor(lanes) <= static_cast<size_t>(optIn)) {
             const size_t sharedBytes = bytesFor(lanes);
-            if (sharedBytes > 48 * 1024) {
+            if (sharedBytes > info.fastSharedOptIn) {
                 RAPIDHT_CUDA_CHECK(cudaFuncSetAttribute(FactoredAxisKernelFast<T>,
                     cudaFuncAttributeMaxDynamicSharedMemorySize, static_cast<int>(sharedBytes)));
+                info.fastSharedOptIn = sharedBytes;
             }
             const size_t blocksPerOther = laneLength / lanes;
             FactoredAxisKernelFast<T><<<static_cast<unsigned int>(blocksPerOther * otherLength), 256, sharedBytes>>>(
