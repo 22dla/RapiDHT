@@ -360,8 +360,12 @@ void FactoredAxis(T* data, const FactoredAxisTables<T>& tables, size_t axisStrid
             lanes = 4;
         }
         const size_t quadsPerThread = (n * lanes / 4 + kFactoredThreads - 1) / kFactoredThreads;
-        if (lanes >= 4 && bytesFor(lanes) <= static_cast<size_t>(optIn) && quadsPerThread <= kFactoredMaxQuads
-            && !FactoredUseV2Kernel()) {
+        // Double stays on the v2 kernel: the pipelined one holds the next
+        // batch in registers, 168 of them a thread in double, so one block
+        // fits on an SM and it is 8.5-42 % slower than v2 at 128^3-512^3
+        // (R-4 step 2.0, benchmarks/results/2026-11-15_*_r4_s20_f64_*.json).
+        if (sizeof(T) == 4 && lanes >= 4 && bytesFor(lanes) <= static_cast<size_t>(optIn)
+            && quadsPerThread <= kFactoredMaxQuads && !FactoredUseV2Kernel()) {
             // v2.3: a pipelined grid of as many blocks as fit at once.
             const size_t sharedBytes = bytesFor(lanes);
             const auto kernel = FactoredAxisKernelPipelined<T, kFactoredMaxQuads>;

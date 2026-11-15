@@ -260,7 +260,7 @@ same build, `RAPIDHT_FACTORED_KERNEL=v2`, in `…_v2.2_samebuild.json`):
 | 256³ | 3.02 ms | 2.43 ms | 2.00 ms | **1.34 ms** | 1.01 ms |
 | 512³ | 44.2 ms | 25.3 ms | 18.0 ms | **10.74 ms** | 8.11 ms |
 | 512³, separable | — | 22.7 ms | 15.4 ms | — | — |
-| 512³, f64 | 1 651 ms | **150 ms** | 164 ms | — | — |
+| 512³, f64 | 1 651 ms | **150 ms** | 150 ms (v2 kernel, see below) | — | — |
 | 1024², 2D | 3.04 ms | 0.29 ms | **0.156 ms** | — | — |
 | extra device memory, 512³ f32 | 556 MiB | **32 MiB** | **32 MiB** | 1 028 MiB | 1 028 MiB |
 
@@ -299,8 +299,11 @@ is the yardstick for the others:
 | v2.3, 512³ | 3.97 ms | 5.11 ms | 6.09 ms | 2.62 ms |
 | v2.3, 1024³ | 50.9 ms | 58.6 ms | 66.4 ms | 21.3 ms |
 
-In double v2.3 is slower than v2 (164 against 150 ms at 512³, 2.09 against
-1.52 ms at 128³; two different days, backlog R-4 plan step 2.0). In 2D float
+In double the pipelined kernel is slower than v2 (164 against 151 ms at 512³,
+2.11 against 1.48 ms at 128³, same build, `…_r4_s20_f64_{v23,v2}.json`): it
+needs 168 registers a thread in double, so one block fits on an SM. Since
+2026-11-15 double runs the v2 kernel and float the pipelined one (R-4 plan
+step 2.0). In 2D float
 it is 13–47 % faster than v2.
 
 The axes differ only from 512³ up; at 128³ and 256³ all three take the same
