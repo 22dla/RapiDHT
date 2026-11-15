@@ -364,11 +364,13 @@ struct FactoredDeviceInfo {
     int device = -1;
     int optIn = 48 * 1024;
     int sms = 1;
-    size_t pipelinedSharedOptIn = 48 * 1024; ///< largest size the attribute is set to
-    std::vector<std::pair<size_t, int>> pipelinedBlocksPerSm; ///< shared bytes -> blocks per SM
     size_t fastSharedOptIn = 48 * 1024;
-    size_t fusedSharedOptIn = 48 * 1024; ///< the same two for the fused last pass
-    std::vector<std::pair<size_t, int>> fusedBlocksPerSm;
+    /// Per pipelined kernel variant (kFactoredSlots of them): the largest
+    /// dynamic shared size its attribute is set to, and shared bytes -> blocks
+    /// per SM.
+    size_t slotSharedOptIn[8] = { 48 * 1024, 48 * 1024, 48 * 1024, 48 * 1024, 48 * 1024, 48 * 1024, 48 * 1024,
+        48 * 1024 };
+    std::vector<std::pair<size_t, int>> slotBlocksPerSm[8];
 };
 
 template <typename T>
@@ -382,6 +384,136 @@ FactoredDeviceInfo& FactoredInfo(int device)
         RAPIDHT_CUDA_CHECK(cudaDeviceGetAttribute(&info.sms, cudaDevAttrMultiProcessorCount, device));
     }
     return info;
+}
+
+/// Most 4 x 4 output tiles a thread holds in the in-place steps (kItems).
+constexpr size_t kFactoredMaxItems = 2;
+
+/// Shared memory of the pipelined kernels. Through a work buffer (v2.3):
+/// tile, work, C1, C2 and the transposed half-shift matrix. In place (4B):
+/// the tile in the padded layout and the tables.
+template <typename T>
+size_t PipelinedSharedBytes(size_t n, size_t n1, size_t n2, size_t lanes, bool inPlace)
+{
+    return ((inPlace ? 0 : n * lanes) + n1 * FactoredWorkStride<T>(n2, lanes) + n1 * n1 + 2 * n2 * n2) * sizeof(T);
+}
+
+/// Whether a batch of `lanes` lines of length n fits the pipelined kernels
+/// through a work buffer: the shared memory and the prefetch registers.
+template <typename T>
+bool PipelinedFits(size_t n, size_t n1, size_t n2, size_t lanes, int optIn)
+{
+    return lanes >= 4 && PipelinedSharedBytes<T>(n, n1, n2, lanes, false) <= static_cast<size_t>(optIn)
+        && (n * lanes / 4 + kFactoredThreads - 1) / kFactoredThreads <= kFactoredMaxQuads;
+}
+
+/// Blocks of `kernel` resident on one SM at this shared size, asked once.
+template <typename Kernel>
+int FactoredBlocksPerSm(FactoredDeviceInfo& info, int slot, Kernel kernel, size_t sharedBytes)
+{
+    if (sharedBytes > info.slotSharedOptIn[slot]) {
+        RAPIDHT_CUDA_CHECK(
+            cudaFuncSetAttribute(kernel, cudaFuncAttributeMaxDynamicSharedMemorySize, static_cast<int>(sharedBytes)));
+        info.slotSharedOptIn[slot] = sharedBytes;
+    }
+    for (const auto& known : info.slotBlocksPerSm[slot]) {
+        if (known.first == sharedBytes) {
+            return known.second;
+        }
+    }
+    int perSm = 0;
+    RAPIDHT_CUDA_CHECK(cudaOccupancyMaxActiveBlocksPerMultiprocessor(&perSm, kernel, kFactoredThreads, sharedBytes));
+    perSm = perSm > 0 ? perSm : 1;
+    info.slotBlocksPerSm[slot].emplace_back(sharedBytes, perSm);
+    return perSm;
+}
+
+/*
+ * Which variant of the pipelined kernels runs a pass (R-4 step 4B): the steps
+ * through a work buffer (items = 0, v2.3) or in place with `items` tiles a
+ * thread, built for `minBlocks` blocks to an SM. No variant wins everywhere
+ * (benchmarks/results/2026-11-15_*_r4_s4b*, f32, sm_86), so the choice is a
+ * table, like the batch widths of step 2.4:
+ *  - below n = 512 the work buffer, except z at 256: in place there frees the
+ *    shared memory for a second block (0.47 -> 0.41 ms);
+ *  - from n = 512 in place everywhere. z takes 16 lines, two tiles a thread
+ *    (116 registers, 41 instead of 74 KiB, two blocks to an SM: 5.2 -> 4.3 ms);
+ *    x, the fused pass, two blocks capped at 128 registers (3.96 -> 3.79);
+ *    y one block with 140 registers (4.50 -> 3.96) -- capped to two blocks it
+ *    takes 6.71 ms, with no spill (STACK 0), cause not measured.
+ * Slot: the index of the variant in FactoredDeviceInfo's caches, 0-3 for the
+ * axis kernel and 4-7 for the fused pass.
+ */
+struct FactoredPath {
+    int items;
+    int minBlocks;
+    int slot;
+};
+
+FactoredPath FactoredPathFor(size_t n, size_t lanes, int axis) // axis 0 = x, 1 = y, 2 = z
+{
+    const size_t items = (n * lanes / 16 + kFactoredThreads - 1) / kFactoredThreads;
+    const bool inPlace = items <= kFactoredMaxItems && (n >= 512 || (axis == 2 && n == 256));
+    if (!inPlace) {
+        return { 0, 0, 0 };
+    }
+    if (items == 2) {
+        return { 2, 1, 3 };
+    }
+    return axis == 1 ? FactoredPath { 1, 1, 1 } : FactoredPath { 1, 2, 2 };
+}
+
+template <typename T, int kItems, int kMinBlocks>
+void LaunchPipelinedAxis(FactoredDeviceInfo& info, int slot, size_t batches, size_t sharedBytes, T* data,
+    const FactoredAxisTables<T>& tables, size_t axisStride, size_t laneStride, size_t lanes, size_t blocksPerOther,
+    size_t otherStride, int workStride, bool vec)
+{
+    int perSm = 0;
+    if constexpr (kItems == 0) {
+        perSm = FactoredBlocksPerSm(info, slot, FactoredAxisKernelPipelined<T, kFactoredMaxQuads>, sharedBytes);
+    } else {
+        perSm = FactoredBlocksPerSm(
+            info, slot, FactoredAxisKernelInPlace<T, kFactoredMaxQuads, kItems, kMinBlocks>, sharedBytes);
+    }
+    const size_t resident = static_cast<size_t>(perSm) * static_cast<size_t>(info.sms);
+    const unsigned int grid = static_cast<unsigned int>(batches < resident ? batches : resident);
+    if constexpr (kItems == 0) {
+        FactoredAxisKernelPipelined<T, kFactoredMaxQuads><<<grid, kFactoredThreads, sharedBytes>>>(data, tables,
+            axisStride, laneStride, static_cast<int>(lanes), static_cast<int>(blocksPerOther), otherStride,
+            static_cast<int>(batches), workStride, vec, FactoredAblateMode());
+    } else {
+        FactoredAxisKernelInPlace<T, kFactoredMaxQuads, kItems, kMinBlocks><<<grid, kFactoredThreads, sharedBytes>>>(
+            data, tables, axisStride, laneStride, static_cast<int>(lanes), static_cast<int>(blocksPerOther),
+            otherStride, static_cast<int>(batches), workStride, vec, FactoredAblateMode());
+    }
+    RAPIDHT_CUDA_CHECK(cudaGetLastError());
+}
+
+template <typename T, int kItems, int kMinBlocks>
+void LaunchFusedLast(FactoredDeviceInfo& info, int slot, size_t batches, size_t sharedBytes, T* data,
+    const FactoredAxisTables<T>& tables, size_t H, size_t D, size_t groupsY, size_t groups, size_t lanes,
+    int workStride)
+{
+    int perSm = 0;
+    if constexpr (kItems == 0) {
+        perSm = FactoredBlocksPerSm(info, slot, FactoredLastAxisBracewellKernel<T, kFactoredMaxQuads>, sharedBytes);
+    } else {
+        perSm = FactoredBlocksPerSm(
+            info, slot, FactoredLastAxisBracewellKernelInPlace<T, kFactoredMaxQuads, kItems, kMinBlocks>, sharedBytes);
+    }
+    const size_t resident = static_cast<size_t>(perSm) * static_cast<size_t>(info.sms);
+    const unsigned int grid = static_cast<unsigned int>(batches < resident ? batches : resident);
+    if constexpr (kItems == 0) {
+        FactoredLastAxisBracewellKernel<T, kFactoredMaxQuads><<<grid, kFactoredThreads, sharedBytes>>>(data, tables,
+            static_cast<int>(H), static_cast<int>(D), static_cast<int>(groupsY), static_cast<int>(groups),
+            static_cast<int>(lanes), static_cast<int>(batches), workStride);
+    } else {
+        FactoredLastAxisBracewellKernelInPlace<T, kFactoredMaxQuads, kItems, kMinBlocks>
+            <<<grid, kFactoredThreads, sharedBytes>>>(data, tables, static_cast<int>(H), static_cast<int>(D),
+                static_cast<int>(groupsY), static_cast<int>(groups), static_cast<int>(lanes),
+                static_cast<int>(batches), workStride);
+    }
+    RAPIDHT_CUDA_CHECK(cudaGetLastError());
 }
 
 } // namespace
@@ -424,54 +556,40 @@ void FactoredAxis(T* data, const FactoredAxisTables<T>& tables, size_t axisStrid
             && quadsPerThread <= kFactoredMaxQuads && !FactoredUseV2Kernel()) {
             // The width the sweep found best for this axis and length, halved
             // until it fits the shared memory, the lane axis and the registers
-            // the next batch is fetched into (R-4 steps 2.2 and 2.4).
-            auto fits = [&](size_t l) {
-                return l >= 4 && l <= laneLength && bytesFor(l) <= static_cast<size_t>(optIn)
-                    && (n * l / 4 + kFactoredThreads - 1) / kFactoredThreads <= kFactoredMaxQuads;
-            };
+            // (R-4 steps 2.2, 2.4); then the variant of the kernel (step 4B).
             size_t preferred = FactoredPreferredLanes(n, axisStride, laneLength);
-            while (preferred > 4 && !fits(preferred)) {
+            while (preferred > 4 && !(preferred <= laneLength && PipelinedFits<T>(n, n1, n2, preferred, optIn))) {
                 preferred /= 2;
             }
-            if (fits(preferred)) {
+            if (preferred <= laneLength && PipelinedFits<T>(n, n1, n2, preferred, optIn)) {
                 lanes = preferred;
             }
-            // v2.3: a pipelined grid of as many blocks as fit at once.
-            const size_t sharedBytes = bytesFor(lanes);
-            const auto kernel = FactoredAxisKernelPipelined<T, kFactoredMaxQuads>;
-            if (sharedBytes > info.pipelinedSharedOptIn) {
-                RAPIDHT_CUDA_CHECK(cudaFuncSetAttribute(
-                    kernel, cudaFuncAttributeMaxDynamicSharedMemorySize, static_cast<int>(sharedBytes)));
-                info.pipelinedSharedOptIn = sharedBytes;
-            }
-            int perSm = 0;
-            for (const auto& known : info.pipelinedBlocksPerSm) {
-                if (known.first == sharedBytes) {
-                    perSm = known.second;
+            if (PipelinedFits<T>(n, n1, n2, lanes, optIn)) {
+                const int axis = axisStride == 1 ? 0 : (axisStride == laneLength ? 1 : 2);
+                const FactoredPath path = FactoredPathFor(n, lanes, axis);
+                const size_t sharedBytes = PipelinedSharedBytes<T>(n, n1, n2, lanes, path.items != 0);
+                const size_t blocksPerOther = laneLength / lanes;
+                const size_t batches = blocksPerOther * otherLength;
+                // A quad of lines is one vector access when the lines are
+                // neighbours in memory and every offset keeps 16-byte alignment.
+                const bool vec = laneStride == 1 && axisStride % 4 == 0 && otherStride % 4 == 0
+                              && reinterpret_cast<uintptr_t>(data) % 16 == 0;
+                const int ws = static_cast<int>(FactoredWorkStride<T>(n2, lanes));
+                if (path.items == 0) {
+                    LaunchPipelinedAxis<T, 0, 0>(info, path.slot, batches, sharedBytes, data, tables, axisStride,
+                        laneStride, lanes, blocksPerOther, otherStride, ws, vec);
+                } else if (path.items == 2) {
+                    LaunchPipelinedAxis<T, 2, 1>(info, path.slot, batches, sharedBytes, data, tables, axisStride,
+                        laneStride, lanes, blocksPerOther, otherStride, ws, vec);
+                } else if (path.minBlocks == 1) {
+                    LaunchPipelinedAxis<T, 1, 1>(info, path.slot, batches, sharedBytes, data, tables, axisStride,
+                        laneStride, lanes, blocksPerOther, otherStride, ws, vec);
+                } else {
+                    LaunchPipelinedAxis<T, 1, 2>(info, path.slot, batches, sharedBytes, data, tables, axisStride,
+                        laneStride, lanes, blocksPerOther, otherStride, ws, vec);
                 }
+                return;
             }
-            if (perSm == 0) {
-                RAPIDHT_CUDA_CHECK(cudaOccupancyMaxActiveBlocksPerMultiprocessor(
-                    &perSm, kernel, kFactoredThreads, sharedBytes));
-                perSm = perSm > 0 ? perSm : 1;
-                info.pipelinedBlocksPerSm.emplace_back(sharedBytes, perSm);
-            }
-            const int sms = info.sms;
-            const size_t blocksPerOther = laneLength / lanes;
-            const size_t batches = blocksPerOther * otherLength;
-            const size_t resident = static_cast<size_t>(perSm) * static_cast<size_t>(sms);
-            const size_t grid = batches < resident ? batches : resident;
-            // A quad of lines is one vector access when the lines are
-            // neighbours in memory and every offset keeps 16-byte alignment.
-            const bool vec = laneStride == 1 && axisStride % 4 == 0 && otherStride % 4 == 0
-                          && reinterpret_cast<uintptr_t>(data) % 16 == 0;
-            FactoredAxisKernelPipelined<T, kFactoredMaxQuads>
-                <<<static_cast<unsigned int>(grid), kFactoredThreads, sharedBytes>>>(data, tables, axisStride,
-                    laneStride, static_cast<int>(lanes), static_cast<int>(blocksPerOther), otherStride,
-                    static_cast<int>(batches), static_cast<int>(FactoredWorkStride<T>(n2, lanes)), vec,
-                    FactoredAblateMode());
-            RAPIDHT_CUDA_CHECK(cudaGetLastError());
-            return;
         }
         if (lanes >= 4 && bytesFor(lanes) <= static_cast<size_t>(optIn)) {
             const size_t sharedBytes = bytesFor(lanes);
@@ -520,53 +638,34 @@ bool FactoredLastAxisBracewell(T* data, const FactoredAxisTables<T>& tables, siz
     int device = 0;
     RAPIDHT_CUDA_CHECK(cudaGetDevice(&device));
     FactoredDeviceInfo& info = FactoredInfo<T>(device);
-    const size_t optIn = static_cast<size_t>(info.optIn);
 
     const size_t groupsY = H / 2 + 1; // orbits (y, -y); 1 when H = 1
     const size_t groupsZ = D / 2 + 1; // orbits (z, -z); 1 in 2D
     const size_t groups = groupsY * groupsZ;
-    auto bytesFor = [&](size_t l) {
-        return (n * l + n1 * FactoredWorkStride<T>(n2, l) + n1 * n1 + 2 * n2 * n2) * sizeof(T);
-    };
-    auto fits = [&](size_t l) {
-        return bytesFor(l) <= optIn && (n * l / 4 + kFactoredThreads - 1) / kFactoredThreads <= kFactoredMaxQuads;
-    };
     // The width the x pass would take (step 2.4), no wider than the groups
-    // need, then halved until it fits.
+    // need, halved until it fits; then the variant of the kernel (step 4B).
     size_t lanes = FactoredPreferredLanes(n, 1, H);
-    while (lanes > 4 && (lanes / 4 > groups || !fits(lanes))) {
+    while (lanes > 4 && (lanes / 4 > groups || !PipelinedFits<T>(n, n1, n2, lanes, info.optIn))) {
         lanes /= 2;
     }
-    if (!fits(lanes)) {
+    if (!PipelinedFits<T>(n, n1, n2, lanes, info.optIn)) {
         return false;
     }
+    const FactoredPath path = FactoredPathFor(n, lanes, 0);
+    const int slot = path.slot + 4;
     const size_t perBatch = lanes / 4;
     const size_t batches = (groups + perBatch - 1) / perBatch;
-    const size_t sharedBytes = bytesFor(lanes);
-    const auto kernel = FactoredLastAxisBracewellKernel<T, kFactoredMaxQuads>;
-    if (sharedBytes > info.fusedSharedOptIn) {
-        RAPIDHT_CUDA_CHECK(
-            cudaFuncSetAttribute(kernel, cudaFuncAttributeMaxDynamicSharedMemorySize, static_cast<int>(sharedBytes)));
-        info.fusedSharedOptIn = sharedBytes;
+    const size_t sharedBytes = PipelinedSharedBytes<T>(n, n1, n2, lanes, path.items != 0);
+    const int ws = static_cast<int>(FactoredWorkStride<T>(n2, lanes));
+    if (path.items == 0) {
+        LaunchFusedLast<T, 0, 0>(info, slot, batches, sharedBytes, data, tables, H, D, groupsY, groups, lanes, ws);
+    } else if (path.items == 2) {
+        LaunchFusedLast<T, 2, 1>(info, slot, batches, sharedBytes, data, tables, H, D, groupsY, groups, lanes, ws);
+    } else if (path.minBlocks == 1) {
+        LaunchFusedLast<T, 1, 1>(info, slot, batches, sharedBytes, data, tables, H, D, groupsY, groups, lanes, ws);
+    } else {
+        LaunchFusedLast<T, 1, 2>(info, slot, batches, sharedBytes, data, tables, H, D, groupsY, groups, lanes, ws);
     }
-    int perSm = 0;
-    for (const auto& known : info.fusedBlocksPerSm) {
-        if (known.first == sharedBytes) {
-            perSm = known.second;
-        }
-    }
-    if (perSm == 0) {
-        RAPIDHT_CUDA_CHECK(cudaOccupancyMaxActiveBlocksPerMultiprocessor(&perSm, kernel, kFactoredThreads, sharedBytes));
-        perSm = perSm > 0 ? perSm : 1;
-        info.fusedBlocksPerSm.emplace_back(sharedBytes, perSm);
-    }
-    const size_t resident = static_cast<size_t>(perSm) * static_cast<size_t>(info.sms);
-    const size_t grid = batches < resident ? batches : resident;
-    FactoredLastAxisBracewellKernel<T, kFactoredMaxQuads><<<static_cast<unsigned int>(grid), kFactoredThreads,
-        sharedBytes>>>(data, tables, static_cast<int>(H), static_cast<int>(D), static_cast<int>(groupsY),
-        static_cast<int>(groups), static_cast<int>(lanes), static_cast<int>(batches),
-        static_cast<int>(FactoredWorkStride<T>(n2, lanes)));
-    RAPIDHT_CUDA_CHECK(cudaGetLastError());
     return true;
 }
 

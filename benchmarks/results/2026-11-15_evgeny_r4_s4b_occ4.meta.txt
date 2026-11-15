@@ -1,0 +1,32 @@
+tag: s4b_occ4
+date: 2026-11-15T20:42:33+04:00
+settings: RAPIDHT_R4_4B=occ4
+commit: e8ec2c446394db37960dcc9b7ccc9268e72f7121
+uncommitted:
+   M .gitignore
+   M docs/R4_PLAN.md
+   M src/internal/factored_kernels.cuh
+   M src/kernels.cu
+   M tests/test_factored_kernels.cpp
+  ?? benchmarks/results/2026-11-15_evgeny_r4_s4b.json
+  ?? benchmarks/results/2026-11-15_evgeny_r4_s4b.meta.txt
+  ?? benchmarks/results/2026-11-15_evgeny_r4_s4b_a.json
+  ?? benchmarks/results/2026-11-15_evgeny_r4_s4b_a.meta.txt
+  ?? benchmarks/results/2026-11-15_evgeny_r4_s4b_a_trace.txt
+  ?? benchmarks/results/2026-11-15_evgeny_r4_s4b_occ4.meta.txt
+  ?? benchmarks/results/2026-11-15_evgeny_r4_s4b_trace.txt
+sources:
+  f768153f0aeb557d2cffdacc374d39f24dec3b56b254f8f290b6692a9e9446b0  src/internal/factored_kernels.cuh
+  cf776d80449cacd57cd5026015632ec0d3d32ef20a8ded06d9e62014a37edcda  src/kernels.cu
+  00219f6acfe6d833b60361ba32e0e33aadb91e124e238d5bc2ae6a6de9771ecb  src/backend_cuda.cpp
+  36501266c19eb17add2cdbf0afc3085348713f02e60222c38822340b3d91775f  src/internal/kernels.h
+  1a375ecd95a67d44792b9ffb3c8e02e8dd84c73ee1baaa6b43f323ce3e10e9ba  benchmarks/bench_transform.cpp
+  bcaca72a7bb8dbc44bb636fc7e4da1065aa5eebc250dde1506437ad4e064c3a0  benchmarks/cufft_baseline.cu
+binaries:
+  -rwxrwxr-x 1 evgeny evgeny 1656512 2026-11-15 20:39 build-bench/benchmarks/bench_transform
+  -rwxrwxr-x 1 evgeny evgeny  967960 2026-11-15 20:39 build-bench/benchmarks/profile_gpu3d
+gpu:
+  NVIDIA GeForce RTX 3060 Ti, 595.99.02, 49, 8.62 W, 553 MiB
+other processes on the gpu (they add noise; close what you can):
+  4529, /usr/libexec/gnome-remote-desktop-daemon, 134 MiB
+  10293, /usr/bin/ptyxis, 37 MiB

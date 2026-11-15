@@ -63,6 +63,7 @@ inline double2 make_double2(double x, double y)
 #define __shared__
 #define __align__(n) // the buffers below carry the alignment
 #define __syncthreads() ((void)0)
+#define __launch_bounds__(...)
 
 // Device code calls the CUDA built-in min(int, int).
 using std::min;
@@ -83,13 +84,18 @@ namespace {
 
 enum class Kernel { Generic,
     Fast,
-    Pipelined };
+    Pipelined, // through a work buffer (v2.3)
+    InPlace }; // the same steps in place (R-4 step 4B)
 
 // Registers a thread holds for the next batch: with one thread to a block it
 // has to hold the whole batch -- up to 32 lines of n = 32 in the wide-batch
 // tests, 1 024 values. Too few and the rest of the batch is never loaded; the
 // device launcher checks the same bound against kFactoredMaxQuads.
 constexpr int kHostMaxQuads = 256;
+
+// Likewise the 4 x 4 output tiles a thread holds across the in-place steps
+// (R-4 step 4B): n * lanes / 16 of them, 64 for 32 lines of n = 32.
+constexpr int kHostItems = 64;
 
 // Fewer blocks than batches, so that every block runs the pipeline over
 // several batches, including a ragged last round.
@@ -136,7 +142,7 @@ void RunAxis(T* data, const FactoredAxisTables<T>& t, size_t axisStride, size_t 
     const size_t blocksPerOther = laneLength / lanes;
     blockDim = { 1, 1, 1 };
     threadIdx = { 0, 0, 0 };
-    if (kernel == Kernel::Pipelined) {
+    if (kernel == Kernel::Pipelined || kernel == Kernel::InPlace) {
         const size_t batches = blocksPerOther * otherLength;
         const size_t grid = batches < kHostGrid ? batches : kHostGrid;
         gridDim = { static_cast<unsigned>(grid), 1, 1 };
@@ -145,9 +151,15 @@ void RunAxis(T* data, const FactoredAxisTables<T>& t, size_t axisStride, size_t 
         const bool vec = laneStride == 1 && axisStride % 4 == 0 && otherStride % 4 == 0;
         for (size_t b = 0; b < grid; ++b) {
             blockIdx = { static_cast<unsigned>(b), 0, 0 };
-            FactoredAxisKernelPipelined<T, kHostMaxQuads>(data, t, axisStride, laneStride, static_cast<int>(lanes),
-                static_cast<int>(blocksPerOther), otherStride, static_cast<int>(batches),
-                static_cast<int>(FactoredWorkStride<T>(static_cast<size_t>(t.n2), lanes)), vec, ablate);
+            const int ws = static_cast<int>(FactoredWorkStride<T>(static_cast<size_t>(t.n2), lanes));
+            if (kernel == Kernel::InPlace) {
+                FactoredAxisKernelInPlace<T, kHostMaxQuads, kHostItems, 1>(data, t, axisStride, laneStride,
+                    static_cast<int>(lanes), static_cast<int>(blocksPerOther), otherStride, static_cast<int>(batches),
+                    ws, vec, ablate);
+            } else {
+                FactoredAxisKernelPipelined<T, kHostMaxQuads>(data, t, axisStride, laneStride, static_cast<int>(lanes),
+                    static_cast<int>(blocksPerOther), otherStride, static_cast<int>(batches), ws, vec, ablate);
+            }
         }
         return;
     }
@@ -283,13 +295,23 @@ TEST(FactoredKernels, PipelinedMatchesDefinition_Float)
     ExpectKernelMatchesDefinition<float>(Kernel::Pipelined, kFastShapes, std::size(kFastShapes), 2e-5);
 }
 
+TEST(FactoredKernels, InPlaceMatchesDefinition_Double)
+{
+    ExpectKernelMatchesDefinition<double>(Kernel::InPlace, kFastShapes, std::size(kFastShapes), 1e-11);
+}
+
+TEST(FactoredKernels, InPlaceMatchesDefinition_Float)
+{
+    ExpectKernelMatchesDefinition<float>(Kernel::InPlace, kFastShapes, std::size(kFastShapes), 2e-5);
+}
+
 // The "io only" diagnostic mode of the pipelined kernel (RAPIDHT_R4_ABLATE=io,
 // R-4 step 1.1) must move every value through the same loads and stores as the
 // real pass and put it back where it came from: then the time it measures is
 // the time of the data movement of a real pass, and nothing is skipped. So
 // along each axis the pass is the identity.
 template <typename T>
-void ExpectIoModeIsIdentity()
+void ExpectIoModeIsIdentity(Kernel kernel)
 {
     const Shape shapes[] = { { 16, 16, 16 }, { 64, 16, 8 }, { 16, 64, 8 }, { 32, 16, 64 } };
     for (const Shape& s : shapes) {
@@ -304,9 +326,9 @@ void ExpectIoModeIsIdentity()
         const auto ty = MakeAxisTables<T>(H);
         const auto tz = MakeAxisTables<T>(D);
         const size_t lanes = sizeof(T) == 4 ? 8 : 4;
-        RunAxis(v.data(), tx.view, 1, W, H, W * H, D, Kernel::Pipelined, lanes, kAblateIo);
-        RunAxis(v.data(), ty.view, W, 1, W, W * H, D, Kernel::Pipelined, lanes, kAblateIo);
-        RunAxis(v.data(), tz.view, W * H, 1, W, W, H, Kernel::Pipelined, lanes, kAblateIo);
+        RunAxis(v.data(), tx.view, 1, W, H, W * H, D, kernel, lanes, kAblateIo);
+        RunAxis(v.data(), ty.view, W, 1, W, W * H, D, kernel, lanes, kAblateIo);
+        RunAxis(v.data(), tz.view, W * H, 1, W, W, H, kernel, lanes, kAblateIo);
         size_t moved = 0;
         for (size_t i = 0; i < v.size(); ++i) {
             moved += (v[i] != original[i]) ? 1 : 0;
@@ -317,12 +339,14 @@ void ExpectIoModeIsIdentity()
 
 TEST(FactoredKernels, PipelinedIoModeIsIdentity_Float)
 {
-    ExpectIoModeIsIdentity<float>();
+    ExpectIoModeIsIdentity<float>(Kernel::Pipelined);
+    ExpectIoModeIsIdentity<float>(Kernel::InPlace);
 }
 
 TEST(FactoredKernels, PipelinedIoModeIsIdentity_Double)
 {
-    ExpectIoModeIsIdentity<double>();
+    ExpectIoModeIsIdentity<double>(Kernel::Pipelined);
+    ExpectIoModeIsIdentity<double>(Kernel::InPlace);
 }
 
 // Wide batches (R-4 step 2.2): on short axes the launcher gives the pipelined
@@ -342,9 +366,11 @@ void ExpectWideBatchesMatchDefinition(double tolerance)
         const auto input = MakeSignal(dims.Total());
         const auto expected = ReferenceDht(input, dims); // O(N^2): once per shape
         for (const size_t lanes : { size_t { 16 }, size_t { 32 } }) {
-            SCOPED_TRACE(Describe(s) + ", " + std::to_string(lanes) + " lines");
-            ExpectClose(
-                RunTransform<T>(input, s.width, s.height, s.depth, Kernel::Pipelined, lanes), expected, tolerance);
+            for (const Kernel kernel : { Kernel::Pipelined, Kernel::InPlace }) {
+                SCOPED_TRACE(Describe(s) + ", " + std::to_string(lanes) + " lines"
+                             + (kernel == Kernel::InPlace ? ", in place" : ""));
+                ExpectClose(RunTransform<T>(input, s.width, s.height, s.depth, kernel, lanes), expected, tolerance);
+            }
         }
     }
 }
@@ -365,7 +391,8 @@ TEST(FactoredKernels, PipelinedWideBatchesMatchDefinition_Double)
 // is not a multiple of the batch, so that the last batch is padded; every
 // batch width the launcher can pick.
 template <typename T>
-std::vector<double> RunFusedTransform(const std::vector<double>& input, size_t W, size_t H, size_t D, size_t lanes)
+std::vector<double> RunFusedTransform(
+    const std::vector<double>& input, size_t W, size_t H, size_t D, size_t lanes, bool inPlace)
 {
     std::vector<T> v(input.begin(), input.end());
     const auto tx = MakeAxisTables<T>(W);
@@ -385,9 +412,16 @@ std::vector<double> RunFusedTransform(const std::vector<double>& input, size_t W
     gridDim = { static_cast<unsigned>(grid), 1, 1 };
     for (size_t b = 0; b < grid; ++b) {
         blockIdx = { static_cast<unsigned>(b), 0, 0 };
-        FactoredLastAxisBracewellKernel<T, kHostMaxQuads>(v.data(), tx.view, static_cast<int>(H),
-            static_cast<int>(D), static_cast<int>(groupsY), static_cast<int>(groups), static_cast<int>(lanes),
-            static_cast<int>(batches), static_cast<int>(FactoredWorkStride<T>(static_cast<size_t>(tx.view.n2), lanes)));
+        const int ws = static_cast<int>(FactoredWorkStride<T>(static_cast<size_t>(tx.view.n2), lanes));
+        if (inPlace) {
+            FactoredLastAxisBracewellKernelInPlace<T, kHostMaxQuads, kHostItems, 1>(v.data(), tx.view,
+                static_cast<int>(H), static_cast<int>(D), static_cast<int>(groupsY), static_cast<int>(groups),
+                static_cast<int>(lanes), static_cast<int>(batches), ws);
+        } else {
+            FactoredLastAxisBracewellKernel<T, kHostMaxQuads>(v.data(), tx.view, static_cast<int>(H),
+                static_cast<int>(D), static_cast<int>(groupsY), static_cast<int>(groups), static_cast<int>(lanes),
+                static_cast<int>(batches), ws);
+        }
     }
     return std::vector<double>(v.begin(), v.end());
 }
@@ -401,8 +435,10 @@ void ExpectFusedLastPassMatchesDefinition(double tolerance)
         const auto input = MakeSignal(dims.Total());
         const auto expected = ReferenceDht(input, dims);
         for (const size_t lanes : { size_t { 4 }, size_t { 8 }, size_t { 16 }, size_t { 32 } }) {
-            SCOPED_TRACE(Describe(s) + ", " + std::to_string(lanes) + " lines");
-            ExpectClose(RunFusedTransform<T>(input, s.width, s.height, s.depth, lanes), expected, tolerance);
+            for (const bool inPlace : { false, true }) {
+                SCOPED_TRACE(Describe(s) + ", " + std::to_string(lanes) + " lines" + (inPlace ? ", in place" : ""));
+                ExpectClose(RunFusedTransform<T>(input, s.width, s.height, s.depth, lanes, inPlace), expected, tolerance);
+            }
         }
     }
 }

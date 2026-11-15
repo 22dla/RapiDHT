@@ -321,6 +321,11 @@ With the Bracewell combination folded into the last pass along x (groups of
 four mirror lines per quad; step 3.3, `…_r4_s33_{a,b}.json`, back to back):
 157 µs, 1.36 ms and 13.8 ms — **0.90, 1.02 and 1.29 times cuFFT** with its
 conversion. At 128³ the factored transform is now faster than cuFFT.
+With steps 1-2 done in place in registers where that wins (no work buffer,
+so more blocks fit an SM; chosen per axis and length, step 4B,
+`…_r4_s4bh{_a,}.json`, back to back): 158 µs, 1.27 ms and 12.36 ms — **0.90,
+0.95 and 1.15 times cuFFT**. At 128³ and 256³ the factored transform is faster
+than cuFFT with its conversion.
 
 The axes differ only from 512³ up; at 128³ and 256³ all three take the same
 time (2.3 and 1.7 Bracewell passes).

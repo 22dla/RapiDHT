@@ -484,6 +484,24 @@ __device__ __forceinline__ void PipelineFill(T* tile, const T (&reg)[kMaxQuads][
     }
 }
 
+/// PipelineFill into the padded layout of FactoredComputeTile: quad q is
+/// element idx = q / (lanes/4) = N2*j1 + j2, lines 4 * (q % (lanes/4)) + 0..3,
+/// at j1 * workStride + j2 * lanes + 4 * (q % (lanes/4)).
+template <typename T, int kMaxQuads>
+__device__ __forceinline__ void PipelineFillPadded(
+    T* tile, const T (&reg)[kMaxQuads][4], int quads, Pow2 quadsPerRow, Pow2 n2P, int lanes, int workStride)
+{
+    RAPIDHT_UNROLL
+    for (int i = 0; i < kMaxQuads; ++i) {
+        const int q = static_cast<int>(threadIdx.x) + i * static_cast<int>(blockDim.x);
+        if (q < quads) {
+            const int idx = q >> quadsPerRow.shift;
+            const int lg = q & quadsPerRow.mask;
+            Store4(tile + (idx >> n2P.shift) * workStride + (idx & n2P.mask) * lanes + lg * 4, reg[i]);
+        }
+    }
+}
+
 /*
  * Diagnostic modes of the pipelined kernel (R-4 step 1.1, docs/R4_PLAN.md),
  * chosen by RAPIDHT_R4_ABLATE. Both give a WRONG result and exist only to time
@@ -500,13 +518,14 @@ constexpr int kAblateIo = 1;
 constexpr int kAblateCompute = 2;
 
 /*
- * Steps 1-2 of the pipelined kernels on a filled tile: step 1 into work, the
+ * Steps 1-2 of the pipelined kernels on a filled tile, through a work buffer
+ * (v2.3 and step 3.3; kItems = 0 below): step 1 into work, the
  * twiddle in work, step 2 back into the tile at row k1 + N1*k2. Ends with a
  * barrier, so the tile is ready to be read. Shared by the axis kernel and the
  * fused last pass so that both run exactly the same arithmetic.
  */
 template <typename T>
-__device__ __forceinline__ void FactoredComputeTile(T* tile, T* work, const T* c1s, const T* c2s, const T* chT,
+__device__ __forceinline__ void FactoredComputeTileWork(T* tile, T* work, const T* c1s, const T* c2s, const T* chT,
     const FactoredAxisTables<T>& t, int lanes, Pow2 lanesP, Pow2 n1P, Pow2 n2P, Pow2 quadsPerRow, int workStride)
 {
     const int n1 = t.n1;
@@ -573,6 +592,132 @@ __device__ __forceinline__ void FactoredComputeTile(T* tile, T* work, const T* c
     __syncthreads();
 }
 
+/*
+ * Steps 1-2 of the pipelined kernels, in place in the tile (R-4 step 4B).
+ *
+ * Each thread owns at most kItems 4 x 4 output tiles of a step, so it can hold
+ * all of them in registers: every thread computes, a barrier, every thread
+ * writes over the tile. The separate work buffer of v2.3 -- 16 KiB of the
+ * 39 KiB a block took at 512^3 f32 -- is gone. The launcher picks kItems so
+ * that n * lanes / 16 <= kItems * blockDim.x.
+ *
+ * Layout: on entry element (j1, j2) of lane l is at j1 * workStride + j2 *
+ * lanes + l (PipelineFillPadded); step 1 writes row k1 in the same padded
+ * layout, which keeps the column reads of step 2 free of bank conflicts; step 2
+ * writes row k1 + N1*k2 at (k1 + N1*k2) * lanes + l, unpadded, which is what
+ * FactoredRecombineQuad reads. Ends with a barrier.
+ */
+template <typename T, int kItems>
+__device__ __forceinline__ void FactoredComputeTile(T* tile, const T* c1s, const T* c2s, const T* chT,
+    const FactoredAxisTables<T>& t, int lanes, Pow2 lanesP, Pow2 n1P, Pow2 n2P, Pow2 quadsPerRow, int workStride)
+{
+    const int n1 = t.n1;
+    const int n2 = t.n2;
+    T acc[kItems][4][4];
+
+    // Step 1, 4 frequencies k1 x 4 lines per item, lines fastest.
+    const int items1 = ((n1 >> 2) << n2P.shift) << quadsPerRow.shift;
+    RAPIDHT_UNROLL
+    for (int s = 0; s < kItems; ++s) {
+        const int it = static_cast<int>(threadIdx.x) + s * static_cast<int>(blockDim.x);
+        RAPIDHT_UNROLL
+        for (int a = 0; a < 4; ++a) {
+            RAPIDHT_UNROLL
+            for (int b = 0; b < 4; ++b) {
+                acc[s][a][b] = T(0);
+            }
+        }
+        if (it < items1) {
+            const int lg = it & quadsPerRow.mask;
+            const int r = it >> quadsPerRow.shift;
+            const int j2 = r & n2P.mask;
+            const int kg = r >> n2P.shift;
+            for (int j1 = 0; j1 < n1; ++j1) {
+                T x[4];
+                T c[4];
+                Load4(tile + j1 * workStride + j2 * lanes + lg * 4, x);
+                Load4(c1s + j1 * n1 + kg * 4, c);
+                RAPIDHT_UNROLL
+                for (int a = 0; a < 4; ++a) {
+                    RAPIDHT_UNROLL
+                    for (int b = 0; b < 4; ++b) {
+                        acc[s][a][b] += c[a] * x[b];
+                    }
+                }
+            }
+        }
+    }
+    __syncthreads(); // every read of the input is done
+    RAPIDHT_UNROLL
+    for (int s = 0; s < kItems; ++s) {
+        const int it = static_cast<int>(threadIdx.x) + s * static_cast<int>(blockDim.x);
+        if (it < items1) {
+            const int lg = it & quadsPerRow.mask;
+            const int r = it >> quadsPerRow.shift;
+            const int j2 = r & n2P.mask;
+            const int kg = r >> n2P.shift;
+            RAPIDHT_UNROLL
+            for (int a = 0; a < 4; ++a) {
+                Store4(tile + (kg * 4 + a) * workStride + j2 * lanes + lg * 4, acc[s][a]);
+            }
+        }
+    }
+    __syncthreads();
+
+    FactoredTwiddlePow2(tile, t, lanesP, n2P, workStride);
+    __syncthreads();
+
+    // Step 2, 4 frequencies k2 x 4 lines per item, k1 fastest after the lines.
+    const int items2 = ((n2 >> 2) << n1P.shift) << quadsPerRow.shift;
+    RAPIDHT_UNROLL
+    for (int s = 0; s < kItems; ++s) {
+        const int it = static_cast<int>(threadIdx.x) + s * static_cast<int>(blockDim.x);
+        RAPIDHT_UNROLL
+        for (int a = 0; a < 4; ++a) {
+            RAPIDHT_UNROLL
+            for (int b = 0; b < 4; ++b) {
+                acc[s][a][b] = T(0);
+            }
+        }
+        if (it < items2) {
+            const int lg = it & quadsPerRow.mask;
+            const int r = it >> quadsPerRow.shift;
+            const int k1 = r & n1P.mask;
+            const int kg = r >> n1P.shift;
+            const T* m = (k1 == n1 / 2) ? chT : c2s; // read as [j2][k2]
+            for (int j2 = 0; j2 < n2; ++j2) {
+                T w[4];
+                T c[4];
+                Load4(tile + k1 * workStride + j2 * lanes + lg * 4, w);
+                Load4(m + j2 * n2 + kg * 4, c);
+                RAPIDHT_UNROLL
+                for (int a = 0; a < 4; ++a) {
+                    RAPIDHT_UNROLL
+                    for (int b = 0; b < 4; ++b) {
+                        acc[s][a][b] += c[a] * w[b];
+                    }
+                }
+            }
+        }
+    }
+    __syncthreads(); // every read of step 1's result is done
+    RAPIDHT_UNROLL
+    for (int s = 0; s < kItems; ++s) {
+        const int it = static_cast<int>(threadIdx.x) + s * static_cast<int>(blockDim.x);
+        if (it < items2) {
+            const int lg = it & quadsPerRow.mask;
+            const int r = it >> quadsPerRow.shift;
+            const int k1 = r & n1P.mask;
+            const int kg = r >> n1P.shift;
+            RAPIDHT_UNROLL
+            for (int a = 0; a < 4; ++a) {
+                Store4(tile + (k1 + n1 * (kg * 4 + a)) * lanes + lg * 4, acc[s][a]);
+            }
+        }
+    }
+    __syncthreads();
+}
+
 /// The recombination of one quad (row k, lines line..line+3) of a tile that
 /// holds step 2's result at row k1 + N1*k2 -- the formulas of FactoredStore.
 template <typename T>
@@ -613,16 +758,18 @@ __device__ __forceinline__ void FactoredRecombineQuad(
  * Requires n1, n2 and lanes to be multiples of 4 and blockDim.x * kMaxQuads
  * >= n * lanes / 4. Shared memory exactly as FactoredAxisKernelFast.
  */
-template <typename T, int kMaxQuads>
-__global__ void FactoredAxisKernelPipelined(T* data, FactoredAxisTables<T> t, size_t axisStride, size_t laneStride,
+template <typename T, int kMaxQuads, int kItems>
+__device__ __forceinline__ void PipelinedAxisBody(T* data, FactoredAxisTables<T> t, size_t axisStride, size_t laneStride,
     int lanes, int blocksPerOther, size_t otherStride, int batches, int workStride, bool vec, int ablate)
 {
     extern __shared__ __align__(16) unsigned char sharedPipe[];
     const int n = t.n;
     const int n1 = t.n1;
     const int n2 = t.n2;
+    // kItems = 0: tile | work | tables (v2.3). In place: the tile alone,
+    // n1 * workStride >= n * lanes, then the tables.
     T* tile = reinterpret_cast<T*>(sharedPipe);
-    T* work = tile + n * lanes;
+    T* work = kItems == 0 ? tile + n * lanes : tile;
     T* c1s = work + n1 * workStride;
     T* c2s = c1s + n1 * n1;
     T* chT = c2s + n2 * n2;
@@ -655,7 +802,11 @@ __global__ void FactoredAxisKernelPipelined(T* data, FactoredAxisTables<T> t, si
     for (; batch < batches; batch += static_cast<int>(gridDim.x)) {
         T* base = batchBase(batch);
         __syncthreads(); // the previous batch's store has finished reading the tile
-        PipelineFill(tile, reg, quads);
+        if constexpr (kItems == 0) {
+            PipelineFill(tile, reg, quads);
+        } else {
+            PipelineFillPadded(tile, reg, quads, quadsPerRow, n2P, lanes, workStride);
+        }
         __syncthreads();
 
         // The next batch is fetched while this one is computed.
@@ -665,7 +816,12 @@ __global__ void FactoredAxisKernelPipelined(T* data, FactoredAxisTables<T> t, si
         }
 
         if (ablate != kAblateIo) { // uniform across the block, so the barriers inside are safe
-            FactoredComputeTile(tile, work, c1s, c2s, chT, t, lanes, lanesP, n1P, n2P, quadsPerRow, workStride);
+            if constexpr (kItems == 0) {
+                FactoredComputeTileWork(tile, work, c1s, c2s, chT, t, lanes, lanesP, n1P, n2P, quadsPerRow, workStride);
+            } else {
+                FactoredComputeTile<T, kItems>(
+                    tile, c1s, c2s, chT, t, lanes, lanesP, n1P, n2P, quadsPerRow, workStride);
+            }
         }
 
         // Recombination and store, quad by quad. Same formulas as
@@ -674,8 +830,12 @@ __global__ void FactoredAxisKernelPipelined(T* data, FactoredAxisTables<T> t, si
             const int k = q >> quadsPerRow.shift;
             const int line = (q & quadsPerRow.mask) * 4;
             T out[4];
-            if (ablate == kAblateIo) {
-                Load4(tile + k * lanes + line, out);
+            if (ablate == kAblateIo) { // the tile is as filled
+                if constexpr (kItems == 0) {
+                    Load4(tile + k * lanes + line, out);
+                } else {
+                    Load4(tile + (k >> n2P.shift) * workStride + (k & n2P.mask) * lanes + line, out);
+                }
             } else {
                 FactoredRecombineQuad(tile, k, line, lanes, n1, n2, n1P, n2P, out);
             }
@@ -685,6 +845,27 @@ __global__ void FactoredAxisKernelPipelined(T* data, FactoredAxisTables<T> t, si
             }
         }
     }
+}
+
+/// The pipelined axis kernel of v2.3 (work buffer): no launch bounds, so the
+/// compiler allocates registers exactly as it did before step 4B.
+template <typename T, int kMaxQuads>
+__global__ void FactoredAxisKernelPipelined(T* data, FactoredAxisTables<T> t, size_t axisStride, size_t laneStride,
+    int lanes, int blocksPerOther, size_t otherStride, int batches, int workStride, bool vec, int ablate)
+{
+    PipelinedAxisBody<T, kMaxQuads, 0>(
+        data, t, axisStride, laneStride, lanes, blocksPerOther, otherStride, batches, workStride, vec, ablate);
+}
+
+/// The same with the steps in place (R-4 step 4B), kItems tiles a thread,
+/// built for kMinBlocks blocks to an SM.
+template <typename T, int kMaxQuads, int kItems, int kMinBlocks>
+__global__ void __launch_bounds__(256, kMinBlocks) FactoredAxisKernelInPlace(T* data, FactoredAxisTables<T> t,
+    size_t axisStride, size_t laneStride, int lanes, int blocksPerOther, size_t otherStride, int batches,
+    int workStride, bool vec, int ablate)
+{
+    PipelinedAxisBody<T, kMaxQuads, kItems>(
+        data, t, axisStride, laneStride, lanes, blocksPerOther, otherStride, batches, workStride, vec, ablate);
 }
 
 /*
@@ -706,8 +887,9 @@ __global__ void FactoredAxisKernelPipelined(T* data, FactoredAxisTables<T> t, si
  *    bits and are stored several times with the same values.
  *  - The last batch is padded by repeating the last group, which again only
  *    stores equal values twice -- no mask, no divergence.
- *  - The recombination goes to work, and the combination reads work and
- *    writes global memory, so all eight terms are read before any store.
+ *  - The combination reads rows i and -i -- from work after a barrier, or
+ *    recombined straight from the tile in place -- and writes global memory,
+ *    so all eight terms are read before any store.
  *
  * Requires n1, n2 multiples of 4, lanes = 4 * groupsPerBatch (a power of
  * two) and blockDim.x * kMaxQuads >= n * groupsPerBatch.
@@ -739,8 +921,8 @@ __device__ __forceinline__ void GroupLoad(const T* data, int batch, T (&reg)[kMa
     }
 }
 
-template <typename T, int kMaxQuads>
-__global__ void FactoredLastAxisBracewellKernel(T* data, FactoredAxisTables<T> t, int H, int D, int groupsY,
+template <typename T, int kMaxQuads, int kItems>
+__device__ __forceinline__ void FusedLastBody(T* data, FactoredAxisTables<T> t, int H, int D, int groupsY,
     int groups, int lanes, int batches, int workStride)
 {
     extern __shared__ __align__(16) unsigned char sharedPipe[];
@@ -748,7 +930,7 @@ __global__ void FactoredLastAxisBracewellKernel(T* data, FactoredAxisTables<T> t
     const int n1 = t.n1;
     const int n2 = t.n2;
     T* tile = reinterpret_cast<T*>(sharedPipe);
-    T* work = tile + n * lanes;
+    T* work = kItems == 0 ? tile + n * lanes : tile; // as in PipelinedAxisBody
     T* c1s = work + n1 * workStride;
     T* c2s = c1s + n1 * n1;
     T* chT = c2s + n2 * n2;
@@ -775,8 +957,12 @@ __global__ void FactoredLastAxisBracewellKernel(T* data, FactoredAxisTables<T> t
         GroupLoad(data, batch, reg, quads, quadsPerRow, n, H, D, groupsY, groups);
     }
     for (; batch < batches; batch += static_cast<int>(gridDim.x)) {
-        __syncthreads(); // the previous batch's combination has finished reading work
-        PipelineFill(tile, reg, quads);
+        __syncthreads(); // the previous batch's combination has finished reading the tile
+        if constexpr (kItems == 0) {
+            PipelineFill(tile, reg, quads);
+        } else {
+            PipelineFillPadded(tile, reg, quads, quadsPerRow, n2P, lanes, workStride);
+        }
         __syncthreads();
 
         const int next = batch + static_cast<int>(gridDim.x);
@@ -784,28 +970,38 @@ __global__ void FactoredLastAxisBracewellKernel(T* data, FactoredAxisTables<T> t
             GroupLoad(data, next, reg, quads, quadsPerRow, n, H, D, groupsY, groups);
         }
 
-        FactoredComputeTile(tile, work, c1s, c2s, chT, t, lanes, lanesP, n1P, n2P, quadsPerRow, workStride);
-
-        // Recombination into work, row k at work + k * lanes (n * lanes fits:
-        // the work buffer holds n1 * workStride >= n1 * n2 * lanes values).
-        for (int q = threadIdx.x; q < quads; q += blockDim.x) {
-            const int k = q >> quadsPerRow.shift;
-            const int line = (q & quadsPerRow.mask) * 4;
-            T out[4];
-            FactoredRecombineQuad(tile, k, line, lanes, n1, n2, n1P, n2P, out);
-            Store4(work + k * lanes + line, out);
+        if constexpr (kItems == 0) {
+            FactoredComputeTileWork(tile, work, c1s, c2s, chT, t, lanes, lanesP, n1P, n2P, quadsPerRow, workStride);
+            // Recombination into work, row k at work + k * lanes (n * lanes
+            // fits: work holds n1 * workStride >= n1 * n2 * lanes values).
+            for (int q = threadIdx.x; q < quads; q += blockDim.x) {
+                const int k = q >> quadsPerRow.shift;
+                const int line = (q & quadsPerRow.mask) * 4;
+                T out[4];
+                FactoredRecombineQuad(tile, k, line, lanes, n1, n2, n1P, n2P, out);
+                Store4(work + k * lanes + line, out);
+            }
+            __syncthreads();
+        } else {
+            FactoredComputeTile<T, kItems>(tile, c1s, c2s, chT, t, lanes, lanesP, n1P, n2P, quadsPerRow, workStride);
         }
-        __syncthreads();
 
         // Bracewell within each group, and the store.
         for (int q = threadIdx.x; q < quads; q += blockDim.x) {
             const int i = q >> quadsPerRow.shift;
             const int lg = q & quadsPerRow.mask;
             const int mi = (n - i) & nP.mask;
+            // Both recombined rows straight from the tile: two more shared
+            // loads instead of a pass through a work buffer and a barrier.
             T s[4];
             T sm[4];
-            Load4(work + i * lanes + lg * 4, s);
-            Load4(work + mi * lanes + lg * 4, sm);
+            if constexpr (kItems == 0) {
+                Load4(work + i * lanes + lg * 4, s);
+                Load4(work + mi * lanes + lg * 4, sm);
+            } else {
+                FactoredRecombineQuad(tile, i, lg * 4, lanes, n1, n2, n1P, n2P, s);
+                FactoredRecombineQuad(tile, mi, lg * 4, lanes, n1, n2, n1P, n2P, sm);
+            }
             const int g = min((batch << quadsPerRow.shift) + lg, groups - 1);
             RAPIDHT_UNROLL
             for (int m = 0; m < 4; ++m) {
@@ -814,6 +1010,22 @@ __global__ void FactoredLastAxisBracewellKernel(T* data, FactoredAxisTables<T> t
             }
         }
     }
+}
+
+/// The fused last pass through a work buffer (step 3.3), no launch bounds.
+template <typename T, int kMaxQuads>
+__global__ void FactoredLastAxisBracewellKernel(T* data, FactoredAxisTables<T> t, int H, int D, int groupsY,
+    int groups, int lanes, int batches, int workStride)
+{
+    FusedLastBody<T, kMaxQuads, 0>(data, t, H, D, groupsY, groups, lanes, batches, workStride);
+}
+
+/// The fused last pass with the steps in place (step 4B).
+template <typename T, int kMaxQuads, int kItems, int kMinBlocks>
+__global__ void __launch_bounds__(256, kMinBlocks) FactoredLastAxisBracewellKernelInPlace(T* data,
+    FactoredAxisTables<T> t, int H, int D, int groupsY, int groups, int lanes, int batches, int workStride)
+{
+    FusedLastBody<T, kMaxQuads, kItems>(data, t, H, D, groupsY, groups, lanes, batches, workStride);
 }
 
 /// Mirror of an index along an axis of length n: (n - i) mod n.
