@@ -33,8 +33,8 @@
       "name": "cuda",
       "inherits": "base",
       "displayName": "CPU + CUDA",
-      "description": "Adds the GPU backend. Needs a toolkit that accepts your C++ compiler; if it does not, configuring says so and what to do.",
-      "cacheVariables": { "RAPIDHT_WITH_CUDA": "ON" }
+      "description": "Adds the GPU backend, compiled for the card in this machine (native). Needs a toolkit that accepts your C++ compiler and a GPU at configure time; CI and portable builds use plain cmake, which defaults to all-major.",
+      "cacheVariables": { "RAPIDHT_WITH_CUDA": "ON", "CMAKE_CUDA_ARCHITECTURES": "native" }
     },
     {
       "name": "bench",

@@ -20,6 +20,7 @@
 Пресеты в `CMakePresets.json` разделены условием по ОС: `windows-cpu` виден только на Windows, `cpu`/`cuda`/`bench`/`dev` — только на Linux.
 - `windows-cpu` — MSVC через Ninja: генератор Visual Studio не пишет `compile_commands.json`, без которого clangd не видит include-пути. Нужен `ninja` в PATH (`winget install Ninja-build.Ninja`); из терминала — только Developer PowerShell for VS 2022, VS Code поднимает окружение сам. VS Code копирует базу в корень (`"cmake.copyCompileCommands"` в `.vscode/settings.json`).
 - На Linux конфигурация сама кладёт в корень симлинк на `compile_commands.json` активной сборки.
+- Пресеты `cuda`, `bench`, `dev` собирают код устройства под установленную карту (`CMAKE_CUDA_ARCHITECTURES=native`, на десктопе — sm_86); без пресета по умолчанию `all-major`, в нём нет sm_86, и RTX 3060 Ti исполняет код sm_80 — на 128³ это на 19 % медленнее (R-4, шаг 2.0а). Цифры для сравнения снимаются только сборкой под `native`.
 - Компилятор для CUDA-сборки подбирается сам (`cmake/CudaHostCompiler.cmake`, подключён до `project()`): если nvcc не принимает системный `c++`, берётся самый новый установленный `g++-N`, который он принимает, и парный `gcc-N` — всё собирается одним GCC (смешение двух даёт ошибку линковки `__cxa_call_terminate` только в Release). На десктопе CUDA 12.4 не принимает GCC 15 → выбирается `g++-13`. Явно заданный компилятор (`-DCMAKE_CXX_COMPILER`, `CXX`, пресет, toolchain-файл) не трогается. `CMakeUserPresets.json` не нужен.
 
 ## Сборка и тесты

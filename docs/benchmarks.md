@@ -264,6 +264,13 @@ same build, `RAPIDHT_FACTORED_KERNEL=v2`, in `…_v2.2_samebuild.json`):
 | 1024², 2D | 3.04 ms | 0.29 ms | **0.156 ms** | — | — |
 | extra device memory, 512³ f32 | 556 MiB | **32 MiB** | **32 MiB** | 1 028 MiB | 1 028 MiB |
 
+Device code: until 2026-11-14 every GPU figure in this file was taken with the
+`all-major` build, which has no sm_86 code, so the RTX 3060 Ti ran the sm_80
+kernels. From 2026-11-15 the `cuda`, `bench` and `dev` presets build for the
+card in the machine (`native`); on sm_86 the factored path is 19 % faster at
+128³, 3.8 % at 512³ and 4.1 % slower at 256³ (its z axis, R-4 step 2.0a), and
+cuFFT, which ships its own kernels, is unchanged.
+
 The cuFFT columns are from 2026-11-13 (`…_r4_cufft_pairs.json`, R-4 step 0.3).
 Before that the conversion pass looped over the outputs and read every stored
 coefficient twice: 3.87 ms at 512³, and the baseline was quoted as 12.0 ms,

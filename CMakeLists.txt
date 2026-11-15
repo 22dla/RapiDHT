@@ -54,7 +54,10 @@ if(RAPIDHT_WITH_CUDA)
     # a single .cu file.
     #
     # Override for a local build with -DCMAKE_CUDA_ARCHITECTURES=native, or an
-    # explicit list such as "86".
+    # explicit list such as "86". The cuda, bench and dev presets do: all-major
+    # has no sm_86 code, so an RTX 30xx runs the sm_80 build, which leaves the
+    # doubled FP32 rate of 8.6 unused -- 19 % slower at 128^3 in the factored
+    # path (R-4 step 2.0a, docs/R4_PLAN.md).
     if(NOT DEFINED CMAKE_CUDA_ARCHITECTURES AND CMAKE_VERSION VERSION_GREATER_EQUAL 3.23)
         set(CMAKE_CUDA_ARCHITECTURES all-major)
     endif()
