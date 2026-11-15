@@ -313,6 +313,10 @@ conversion. Axis x at 512³ takes 2.99 ms, 1.14 times a copy of the volume.
 With wider batches on short axes (32 lines at n = 128, 16 at 256; step 2.2,
 `…_r4_s22.json`): 210 µs and 1.64 ms at 128³ and 256³ — 1.19 and 1.22 times
 cuFFT; 512³ unchanged at 15.8 ms (1.48 times).
+With the batch width chosen per axis from a sweep of 4/8/16/32 lines (z 16;
+x 16 up to n = 256, else 8; y 16 at 128, else 8; step 2.4,
+`…_r4_s24_{a2,b2}.json`, measured back to back): 189 µs, 1.57 ms and 15.3 ms
+at 128³, 256³ and 512³ — 1.07, 1.18 and 1.43 times cuFFT with its conversion.
 
 The axes differ only from 512³ up; at 128³ and 256³ all three take the same
 time (2.3 and 1.7 Bracewell passes).

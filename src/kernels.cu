@@ -330,17 +330,26 @@ int FactoredAblateMode()
     return mode;
 }
 
-/// RAPIDHT_R4_LANES=4|8|16|32: batch width of the pipelined kernel on every
-/// axis, for the per-axis sweep of R-4 step 2.4. Clamped by the same limits as
-/// the automatic choice; 0 (unset) keeps the automatic choice.
-size_t FactoredForcedLanes()
+/*
+ * Batch width of the pipelined kernel by axis and length, from the sweep of
+ * R-4 step 2.4 (benchmarks/results/2026-11-15_*_r4_s24_L{4,8,16,32}_trace.txt,
+ * 512^3 / 256^3 / 128^3 f32, sm_86). The best width differs by axis, not only
+ * by length: along z (lines a plane apart) 16 lines win at every size, along y
+ * (lines a row apart) 8 win from n = 256 and 16 lose 27 % there, along x
+ * (contiguous lines, batches spread over rows) 16 win up to n = 256 and lose
+ * 37 % at 512. 4 lines are always the slowest -- 3x at 512^3 on y and z.
+ */
+size_t FactoredPreferredLanes(size_t n, size_t axisStride, size_t laneLength)
 {
-    static const size_t lanes = [] {
-        const char* s = std::getenv("RAPIDHT_R4_LANES");
-        const long v = s != nullptr ? std::strtol(s, nullptr, 10) : 0;
-        return (v == 4 || v == 8 || v == 16 || v == 32) ? static_cast<size_t>(v) : size_t { 0 };
-    }();
-    return lanes;
+    const bool alongX = axisStride == 1;
+    const bool alongY = !alongX && axisStride == laneLength;
+    if (alongX) {
+        return n <= 256 ? 16 : 8;
+    }
+    if (alongY) {
+        return n <= 128 ? 16 : 8;
+    }
+    return 16;
 }
 
 /*
@@ -411,26 +420,19 @@ void FactoredAxis(T* data, const FactoredAxisTables<T>& tables, size_t axisStrid
         // (R-4 step 2.0, benchmarks/results/2026-11-15_*_r4_s20_f64_*.json).
         if (sizeof(T) == 4 && lanes >= 4 && bytesFor(lanes) <= static_cast<size_t>(optIn)
             && quadsPerThread <= kFactoredMaxQuads && !FactoredUseV2Kernel()) {
-            // Short axes get wider batches: 8 lines of n = 128 are 1 024 values,
-            // a quarter of what 256 threads need to be busy in step 1. Widen
-            // until a batch holds 4 096 values, as at n = 512 -- 32 lines at
-            // n = 128, 16 at 256, unchanged from 512 up (R-4 step 2.2).
-            while (n * lanes * 2 <= 4096 && lanes * 2 <= laneLength && bytesFor(lanes * 2) <= static_cast<size_t>(optIn)
-                   && (n * lanes * 2 / 4 + kFactoredThreads - 1) / kFactoredThreads <= kFactoredMaxQuads) {
-                lanes *= 2;
+            // The width the sweep found best for this axis and length, halved
+            // until it fits the shared memory, the lane axis and the registers
+            // the next batch is fetched into (R-4 steps 2.2 and 2.4).
+            auto fits = [&](size_t l) {
+                return l >= 4 && l <= laneLength && bytesFor(l) <= static_cast<size_t>(optIn)
+                    && (n * l / 4 + kFactoredThreads - 1) / kFactoredThreads <= kFactoredMaxQuads;
+            };
+            size_t preferred = FactoredPreferredLanes(n, axisStride, laneLength);
+            while (preferred > 4 && !fits(preferred)) {
+                preferred /= 2;
             }
-            if (FactoredForcedLanes() != 0) {
-                auto fits = [&](size_t l) {
-                    return l >= 4 && l <= laneLength && bytesFor(l) <= static_cast<size_t>(optIn)
-                        && (n * l / 4 + kFactoredThreads - 1) / kFactoredThreads <= kFactoredMaxQuads;
-                };
-                size_t forced = FactoredForcedLanes();
-                while (forced > 4 && !fits(forced)) {
-                    forced /= 2;
-                }
-                if (fits(forced)) {
-                    lanes = forced;
-                }
+            if (fits(preferred)) {
+                lanes = preferred;
             }
             // v2.3: a pipelined grid of as many blocks as fit at once.
             const size_t sharedBytes = bytesFor(lanes);
