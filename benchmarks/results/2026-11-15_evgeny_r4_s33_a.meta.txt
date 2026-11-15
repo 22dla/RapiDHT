@@ -1,0 +1,24 @@
+tag: s33_a
+date: 2026-11-15T20:17:59+04:00
+settings: (none)
+commit: 20694d38ed22e62aadf56289349561c739e83bfb
+uncommitted:
+   M docs/R4_PLAN.md
+   M tools/r4_compare.py
+  ?? benchmarks/results/2026-11-15_evgeny_r4_s12.ncu-rep
+  ?? benchmarks/results/2026-11-15_evgeny_r4_s33_a.meta.txt
+sources:
+  7e24fe77226de730381090fe68570eeb209b3cce49edbfc8c32f8cbe60709c4f  src/internal/factored_kernels.cuh
+  fbafb03c2e19885b1bcfa9414047dc8299c6778e8394f7b7bf5745864255e68b  src/kernels.cu
+  018af76779b0127ba79cbe5ad0a3769f7d059d8d085de70a97f4ac769a3d280f  src/backend_cuda.cpp
+  2a1f2ff65835cfd21010734a1bfd515e89dcf28344c3992b69b7aef5e928ca45  src/internal/kernels.h
+  1a375ecd95a67d44792b9ffb3c8e02e8dd84c73ee1baaa6b43f323ce3e10e9ba  benchmarks/bench_transform.cpp
+  bcaca72a7bb8dbc44bb636fc7e4da1065aa5eebc250dde1506437ad4e064c3a0  benchmarks/cufft_baseline.cu
+binaries:
+  -rwxrwxr-x 1 evgeny evgeny 1199480 2026-11-15 20:17 build-bench/benchmarks/bench_transform
+  -rwxrwxr-x 1 evgeny evgeny  506832 2026-11-15 20:17 build-bench/benchmarks/profile_gpu3d
+gpu:
+  NVIDIA GeForce RTX 3060 Ti, 595.99.02, 33, 7.46 W, 465 MiB
+other processes on the gpu (they add noise; close what you can):
+  4529, /usr/libexec/gnome-remote-desktop-daemon, 134 MiB
+  10293, /usr/bin/ptyxis, 37 MiB

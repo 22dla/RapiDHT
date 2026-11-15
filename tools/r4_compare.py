@@ -151,6 +151,11 @@ def compare_traces(base_path: str, new_path: str) -> None:
             if kernel in base[key]:
                 old = base[key][kernel]
                 print(f"    {kernel:<10} {old:8.3f} -> {value:8.3f}  ({(value / old - 1) * 100:+6.1f} %)")
+        # Step 3.3 folds the Bracewell pass into the x pass: compare the pair.
+        if "bracewell" in base[key] and "bracewell" not in new[key] and "axis-x" in new[key]:
+            old = base[key]["axis-x"] + base[key]["bracewell"]
+            value = new[key]["axis-x"]
+            print(f"    {'x+brace':<10} {old:8.3f} -> {value:8.3f}  ({(value / old - 1) * 100:+6.1f} %)  (x and Bracewell in one pass)")
 
 
 def main() -> None:

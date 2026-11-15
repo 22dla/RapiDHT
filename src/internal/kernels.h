@@ -91,6 +91,17 @@ template <typename T>
 void FactoredAxis(T* data, const FactoredAxisTables<T>& tables, size_t axisStride, size_t laneStride,
     size_t laneLength, size_t otherStride, size_t otherLength);
 
+/**
+ * The last pass along x (the fastest axis) of a true 2D or 3D transform with
+ * the Bracewell correction folded in (R-4 step 3.3): call it after the z and y
+ * passes, in place of FactoredAxis along x and BracewellInPlace*. Width is
+ * tables.n; D is 1 in 2D. Returns false, launching nothing, where the fused
+ * kernel does not apply (double, width < 16, shared memory) -- the caller then
+ * takes the two separate steps.
+ */
+template <typename T>
+bool FactoredLastAxisBracewell(T* data, const FactoredAxisTables<T>& tables, size_t H, size_t D);
+
 /// The Bracewell correction in place, one thread per orbit of mirror images
 /// (the CPU backend's scheme), so no second buffer is needed.
 template <typename T>

@@ -367,6 +367,8 @@ struct FactoredDeviceInfo {
     size_t pipelinedSharedOptIn = 48 * 1024; ///< largest size the attribute is set to
     std::vector<std::pair<size_t, int>> pipelinedBlocksPerSm; ///< shared bytes -> blocks per SM
     size_t fastSharedOptIn = 48 * 1024;
+    size_t fusedSharedOptIn = 48 * 1024; ///< the same two for the fused last pass
+    std::vector<std::pair<size_t, int>> fusedBlocksPerSm;
 };
 
 template <typename T>
@@ -505,6 +507,70 @@ void FactoredAxis(T* data, const FactoredAxisTables<T>& tables, size_t axisStrid
 }
 
 template <typename T>
+bool FactoredLastAxisBracewell(T* data, const FactoredAxisTables<T>& tables, size_t H, size_t D)
+{
+    const size_t n = static_cast<size_t>(tables.n);
+    const size_t n1 = static_cast<size_t>(tables.n1);
+    const size_t n2 = static_cast<size_t>(tables.n2);
+    // Float only, like the pipelined kernel it is built on (double stays on
+    // v2, R-4 step 2.0); n1, n2 >= 4 for the 4 x 4 register tiles.
+    if (sizeof(T) != 4 || n1 < 4 || n2 < 4 || FactoredUseV2Kernel()) {
+        return false;
+    }
+    int device = 0;
+    RAPIDHT_CUDA_CHECK(cudaGetDevice(&device));
+    FactoredDeviceInfo& info = FactoredInfo<T>(device);
+    const size_t optIn = static_cast<size_t>(info.optIn);
+
+    const size_t groupsY = H / 2 + 1; // orbits (y, -y); 1 when H = 1
+    const size_t groupsZ = D / 2 + 1; // orbits (z, -z); 1 in 2D
+    const size_t groups = groupsY * groupsZ;
+    auto bytesFor = [&](size_t l) {
+        return (n * l + n1 * FactoredWorkStride<T>(n2, l) + n1 * n1 + 2 * n2 * n2) * sizeof(T);
+    };
+    auto fits = [&](size_t l) {
+        return bytesFor(l) <= optIn && (n * l / 4 + kFactoredThreads - 1) / kFactoredThreads <= kFactoredMaxQuads;
+    };
+    // The width the x pass would take (step 2.4), no wider than the groups
+    // need, then halved until it fits.
+    size_t lanes = FactoredPreferredLanes(n, 1, H);
+    while (lanes > 4 && (lanes / 4 > groups || !fits(lanes))) {
+        lanes /= 2;
+    }
+    if (!fits(lanes)) {
+        return false;
+    }
+    const size_t perBatch = lanes / 4;
+    const size_t batches = (groups + perBatch - 1) / perBatch;
+    const size_t sharedBytes = bytesFor(lanes);
+    const auto kernel = FactoredLastAxisBracewellKernel<T, kFactoredMaxQuads>;
+    if (sharedBytes > info.fusedSharedOptIn) {
+        RAPIDHT_CUDA_CHECK(
+            cudaFuncSetAttribute(kernel, cudaFuncAttributeMaxDynamicSharedMemorySize, static_cast<int>(sharedBytes)));
+        info.fusedSharedOptIn = sharedBytes;
+    }
+    int perSm = 0;
+    for (const auto& known : info.fusedBlocksPerSm) {
+        if (known.first == sharedBytes) {
+            perSm = known.second;
+        }
+    }
+    if (perSm == 0) {
+        RAPIDHT_CUDA_CHECK(cudaOccupancyMaxActiveBlocksPerMultiprocessor(&perSm, kernel, kFactoredThreads, sharedBytes));
+        perSm = perSm > 0 ? perSm : 1;
+        info.fusedBlocksPerSm.emplace_back(sharedBytes, perSm);
+    }
+    const size_t resident = static_cast<size_t>(perSm) * static_cast<size_t>(info.sms);
+    const size_t grid = batches < resident ? batches : resident;
+    FactoredLastAxisBracewellKernel<T, kFactoredMaxQuads><<<static_cast<unsigned int>(grid), kFactoredThreads,
+        sharedBytes>>>(data, tables, static_cast<int>(H), static_cast<int>(D), static_cast<int>(groupsY),
+        static_cast<int>(groups), static_cast<int>(lanes), static_cast<int>(batches),
+        static_cast<int>(FactoredWorkStride<T>(n2, lanes)));
+    RAPIDHT_CUDA_CHECK(cudaGetLastError());
+    return true;
+}
+
+template <typename T>
 void BracewellInPlace2D(T* data, int W, int H)
 {
     const dim3 block(32, 8);
@@ -525,6 +591,8 @@ void BracewellInPlace3D(T* data, int W, int H, int D)
 template void FactoredAxis<float>(float*, const FactoredAxisTables<float>&, size_t, size_t, size_t, size_t, size_t);
 template void FactoredAxis<double>(
     double*, const FactoredAxisTables<double>&, size_t, size_t, size_t, size_t, size_t);
+template bool FactoredLastAxisBracewell<float>(float*, const FactoredAxisTables<float>&, size_t, size_t);
+template bool FactoredLastAxisBracewell<double>(double*, const FactoredAxisTables<double>&, size_t, size_t);
 template void BracewellInPlace2D<float>(float*, int, int);
 template void BracewellInPlace2D<double>(double*, int, int);
 template void BracewellInPlace3D<float>(float*, int, int, int);

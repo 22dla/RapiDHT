@@ -19,6 +19,7 @@
 
 #include <gtest/gtest.h>
 
+#include <algorithm>
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
@@ -62,6 +63,9 @@ inline double2 make_double2(double x, double y)
 #define __shared__
 #define __align__(n) // the buffers below carry the alignment
 #define __syncthreads() ((void)0)
+
+// Device code calls the CUDA built-in min(int, int).
+using std::min;
 
 #include "internal/factored_kernels.cuh"
 
@@ -353,4 +357,62 @@ TEST(FactoredKernels, PipelinedWideBatchesMatchDefinition_Float)
 TEST(FactoredKernels, PipelinedWideBatchesMatchDefinition_Double)
 {
     ExpectWideBatchesMatchDefinition<double>(1e-11);
+}
+
+// The fused last pass (R-4 step 3.3): z and y as before, then x with the
+// Bracewell combination folded in, groups of four mirror lines to a quad.
+// Shapes where groups degenerate (H = 2, D = 2, 2D) and where the group count
+// is not a multiple of the batch, so that the last batch is padded; every
+// batch width the launcher can pick.
+template <typename T>
+std::vector<double> RunFusedTransform(const std::vector<double>& input, size_t W, size_t H, size_t D, size_t lanes)
+{
+    std::vector<T> v(input.begin(), input.end());
+    const auto tx = MakeAxisTables<T>(W);
+    const auto ty = MakeAxisTables<T>(H);
+    const auto tz = MakeAxisTables<T>(D);
+    RunAxis(v.data(), tz.view, W * H, 1, W, W, H, Kernel::Generic, 16);
+    RunAxis(v.data(), ty.view, W, 1, W, W * H, D, Kernel::Generic, 16);
+
+    const size_t groupsY = H / 2 + 1; // 1 when H = 1
+    const size_t groupsZ = D / 2 + 1; // 1 in 2D
+    const size_t groups = groupsY * groupsZ;
+    const size_t perBatch = lanes / 4;
+    const size_t batches = (groups + perBatch - 1) / perBatch;
+    const size_t grid = batches < kHostGrid ? batches : kHostGrid;
+    blockDim = { 1, 1, 1 };
+    threadIdx = { 0, 0, 0 };
+    gridDim = { static_cast<unsigned>(grid), 1, 1 };
+    for (size_t b = 0; b < grid; ++b) {
+        blockIdx = { static_cast<unsigned>(b), 0, 0 };
+        FactoredLastAxisBracewellKernel<T, kHostMaxQuads>(v.data(), tx.view, static_cast<int>(H),
+            static_cast<int>(D), static_cast<int>(groupsY), static_cast<int>(groups), static_cast<int>(lanes),
+            static_cast<int>(batches), static_cast<int>(FactoredWorkStride<T>(static_cast<size_t>(tx.view.n2), lanes)));
+    }
+    return std::vector<double>(v.begin(), v.end());
+}
+
+template <typename T>
+void ExpectFusedLastPassMatchesDefinition(double tolerance)
+{
+    const Shape shapes[] = { { 16, 8, 32 }, { 32, 4, 8 }, { 16, 2, 16 }, { 16, 16, 2 }, { 32, 16, 1 }, { 16, 2, 1 } };
+    for (const Shape& s : shapes) {
+        const Dims dims = Dims::Of(s.width, s.height, s.depth == 1 ? 0 : s.depth);
+        const auto input = MakeSignal(dims.Total());
+        const auto expected = ReferenceDht(input, dims);
+        for (const size_t lanes : { size_t { 4 }, size_t { 8 }, size_t { 16 }, size_t { 32 } }) {
+            SCOPED_TRACE(Describe(s) + ", " + std::to_string(lanes) + " lines");
+            ExpectClose(RunFusedTransform<T>(input, s.width, s.height, s.depth, lanes), expected, tolerance);
+        }
+    }
+}
+
+TEST(FactoredKernels, FusedLastPassMatchesDefinition_Float)
+{
+    ExpectFusedLastPassMatchesDefinition<float>(2e-5);
+}
+
+TEST(FactoredKernels, FusedLastPassMatchesDefinition_Double)
+{
+    ExpectFusedLastPassMatchesDefinition<double>(1e-11);
 }

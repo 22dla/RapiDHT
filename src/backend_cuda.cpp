@@ -17,6 +17,7 @@
 
 #include <cstdio>
 #include <cstdlib>
+#include <iterator>
 
 namespace RapiDHT {
 
@@ -302,6 +303,7 @@ void HartleyTransform<T>::FactoredOnDevice(T* deviceData, bool separable)
     // the fastest axis (Width), "z" the slowest.
     const char* const passNames[] = { "axis-z(depth)", "axis-y(height)", "axis-x(width)" };
     int passIndex = 0;
+    bool bracewellDone = false;
 
     for (const Geometry& g : passes) {
         const char* passName = passNames[passIndex++];
@@ -326,10 +328,18 @@ void HartleyTransform<T>::FactoredOnDevice(T* deviceData, bool separable)
         tables.n1 = static_cast<int>(n1);
         tables.n2 = static_cast<int>(n2);
 
+        // The x pass of a true 2D or 3D transform takes the Bracewell
+        // combination along (R-4 step 3.3): its groups of four mirror lines
+        // hold every term, which saves a whole pass over the volume.
+        const bool last = &g == &passes[std::size(passes) - 1];
+        if (last && !separable && Height() > 0 && FactoredLastAxisBracewell(deviceData, tables, H, D)) {
+            bracewellDone = true;
+            continue;
+        }
         FactoredAxis(deviceData, tables, g.axisStride, g.laneStride, g.laneLength, g.otherStride, g.otherLength);
     }
 
-    if (!separable) {
+    if (!separable && !bracewellDone) {
         trace.Mark("bracewell");
         if (Depth() > 0) {
             BracewellInPlace3D(deviceData, static_cast<int>(W), static_cast<int>(H), static_cast<int>(D));

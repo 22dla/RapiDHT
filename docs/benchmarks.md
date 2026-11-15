@@ -317,6 +317,10 @@ With the batch width chosen per axis from a sweep of 4/8/16/32 lines (z 16;
 x 16 up to n = 256, else 8; y 16 at 128, else 8; step 2.4,
 `…_r4_s24_{a2,b2}.json`, measured back to back): 189 µs, 1.57 ms and 15.3 ms
 at 128³, 256³ and 512³ — 1.07, 1.18 and 1.43 times cuFFT with its conversion.
+With the Bracewell combination folded into the last pass along x (groups of
+four mirror lines per quad; step 3.3, `…_r4_s33_{a,b}.json`, back to back):
+157 µs, 1.36 ms and 13.8 ms — **0.90, 1.02 and 1.29 times cuFFT** with its
+conversion. At 128³ the factored transform is now faster than cuFFT.
 
 The axes differ only from 512³ up; at 128³ and 256³ all three take the same
 time (2.3 and 1.7 Bracewell passes).
