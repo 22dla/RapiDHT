@@ -306,6 +306,11 @@ needs 168 registers a thread in double, so one block fits on an SM. Since
 step 2.0). In 2D float
 it is 13–47 % faster than v2.
 
+Since then, on the sm_86 build, with every division in the pipelined kernel
+replaced by shifts (R-4 step 2.1, `…_r4_s21.json`): 238 µs, 1.89 ms and
+15.8 ms at 128³, 256³ and 512³ — 1.36, 1.41 and 1.47 times cuFFT with its
+conversion. Axis x at 512³ takes 2.99 ms, 1.14 times a copy of the volume.
+
 The axes differ only from 512³ up; at 128³ and 256³ all three take the same
 time (2.3 and 1.7 Bracewell passes).
 

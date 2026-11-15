@@ -377,6 +377,55 @@ __global__ void FactoredAxisKernelFast(T* data, FactoredAxisTables<T> t, size_t 
  * is 1 (axes y and z), and then it moves as one vector.
  */
 
+/*
+ * Index arithmetic of the pipelined kernel (R-4 step 2.1). Every extent it
+ * divides by -- n, N1, N2, the lines of a batch, the batches along a lane axis
+ * -- is a power of two, but nvcc turns x / y and x % y into a shift and a mask
+ * only when y is a compile-time constant; otherwise each is a sequence of a
+ * dozen or more integer instructions. Nsight Compute showed the integer pipe
+ * as the busiest one in this kernel (39 % on axis x, 512^3 f32, step 1.2), so
+ * the shifts are worked out once per thread and used everywhere below.
+ */
+struct Pow2 {
+    int shift; ///< log2 of the extent
+    int mask; ///< extent - 1
+};
+
+/// For a power of two x >= 1.
+__device__ __forceinline__ Pow2 MakePow2(int x)
+{
+    int shift = 0;
+    while ((1 << shift) < x) {
+        ++shift;
+    }
+    return { shift, x - 1 };
+}
+
+/// FactoredTwiddle with the divisions replaced by shifts; same formulas.
+template <typename T>
+__device__ void FactoredTwiddlePow2(T* work, const FactoredAxisTables<T>& t, Pow2 lanes, Pow2 n2, int workStride)
+{
+    const int n1 = t.n1;
+    const int pairCount = (n1 / 2 > 1) ? (n1 / 2 - 1) : 0;
+    const int count = (pairCount << n2.shift) << lanes.shift;
+    for (int e = threadIdx.x; e < count; e += blockDim.x) {
+        const int lane = e & lanes.mask;
+        const int r = e >> lanes.shift;
+        const int k1 = 1 + (r >> n2.shift);
+        const int j2 = r & n2.mask;
+        const int m1 = n1 - k1;
+        const int at = (k1 << n2.shift) + j2;
+        const T c = t.twC[at];
+        const T d = t.twD[at];
+        T& p = work[k1 * workStride + (j2 << lanes.shift) + lane];
+        T& q = work[m1 * workStride + (j2 << lanes.shift) + lane];
+        const T yp = p;
+        const T ym = q;
+        p = d * yp + c * ym;
+        q = c * yp - d * ym;
+    }
+}
+
 /// Four values p[0], p[s], p[2s], p[3s]; one vector access when vec (then s is
 /// 1 and p is 16-byte aligned).
 template <typename T>
@@ -409,14 +458,14 @@ __device__ __forceinline__ void StoreQuad(T* p, size_t s, bool vec, const T (&in
 /// i * blockDim.x is position q / (lanes/4), lines 4 * (q % (lanes/4)) + 0..3.
 template <typename T, int kMaxQuads>
 __device__ __forceinline__ void PipelineLoad(
-    const T* base, T (&reg)[kMaxQuads][4], int quads, int quadsPerRow, size_t axisStride, size_t laneStride, bool vec)
+    const T* base, T (&reg)[kMaxQuads][4], int quads, Pow2 quadsPerRow, size_t axisStride, size_t laneStride, bool vec)
 {
     RAPIDHT_UNROLL
     for (int i = 0; i < kMaxQuads; ++i) {
         const int q = static_cast<int>(threadIdx.x) + i * static_cast<int>(blockDim.x);
         if (q < quads) {
-            const size_t row = static_cast<size_t>(q / quadsPerRow);
-            const size_t line = static_cast<size_t>(q % quadsPerRow) * 4;
+            const size_t row = static_cast<size_t>(q >> quadsPerRow.shift);
+            const size_t line = static_cast<size_t>(q & quadsPerRow.mask) * 4;
             LoadQuad(base + row * axisStride + line * laneStride, laneStride, vec, reg[i]);
         }
     }
@@ -476,12 +525,15 @@ __global__ void FactoredAxisKernelPipelined(T* data, FactoredAxisTables<T> t, si
         chT[(i % n2) * n2 + i / n2] = t.cHalf[i];
     }
 
-    const int quadsPerRow = lanes / 4;
-    const int quads = n * quadsPerRow;
-    const int laneGroups = lanes / 4;
+    const Pow2 lanesP = MakePow2(lanes);
+    const Pow2 n1P = MakePow2(n1);
+    const Pow2 n2P = MakePow2(n2);
+    const Pow2 quadsPerRow = MakePow2(lanes / 4); // also the lane groups of steps 1-2
+    const Pow2 batchP = MakePow2(blocksPerOther);
+    const int quads = n << quadsPerRow.shift;
     auto batchBase = [&](int batch) -> T* {
-        const int other = batch / blocksPerOther;
-        const int firstLane = (batch % blocksPerOther) * lanes;
+        const int other = batch >> batchP.shift;
+        const int firstLane = (batch & batchP.mask) << lanesP.shift;
         return data + static_cast<size_t>(other) * otherStride + static_cast<size_t>(firstLane) * laneStride;
     };
 
@@ -504,12 +556,12 @@ __global__ void FactoredAxisKernelPipelined(T* data, FactoredAxisTables<T> t, si
 
         if (ablate != kAblateIo) { // uniform across the block, so the barriers inside are safe
             // Step 1, 4 frequencies k1 x 4 lines per thread, lines fastest.
-            const int items1 = (n1 / 4) * n2 * laneGroups;
+            const int items1 = ((n1 >> 2) << n2P.shift) << quadsPerRow.shift;
             for (int it = threadIdx.x; it < items1; it += blockDim.x) {
-                const int lg = it % laneGroups;
-                const int r = it / laneGroups;
-                const int j2 = r % n2;
-                const int kg = r / n2;
+                const int lg = it & quadsPerRow.mask;
+                const int r = it >> quadsPerRow.shift;
+                const int j2 = r & n2P.mask;
+                const int kg = r >> n2P.shift;
                 T acc[4][4] = {};
                 for (int j1 = 0; j1 < n1; ++j1) {
                     T x[4];
@@ -531,18 +583,17 @@ __global__ void FactoredAxisKernelPipelined(T* data, FactoredAxisTables<T> t, si
             }
             __syncthreads();
 
-            FactoredTwiddle(work, t, lanes, workStride);
+            FactoredTwiddlePow2(work, t, lanesP, n2P, workStride);
             __syncthreads();
 
             // Step 2, 4 frequencies k2 x 4 lines per thread, k1 fastest after the
             // lines; the result goes to row k1 + N1*k2 of the tile.
-            const int k2Groups = n2 / 4;
-            const int items2 = n1 * k2Groups * laneGroups;
+            const int items2 = ((n2 >> 2) << n1P.shift) << quadsPerRow.shift;
             for (int it = threadIdx.x; it < items2; it += blockDim.x) {
-                const int lg = it % laneGroups;
-                const int r = it / laneGroups;
-                const int k1 = r % n1;
-                const int kg = r / n1;
+                const int lg = it & quadsPerRow.mask;
+                const int r = it >> quadsPerRow.shift;
+                const int k1 = r & n1P.mask;
+                const int kg = r >> n1P.shift;
                 const T* m = (k1 == n1 / 2) ? chT : c2s; // read as [j2][k2]
                 T acc[4][4] = {};
                 for (int j2 = 0; j2 < n2; ++j2) {
@@ -569,10 +620,10 @@ __global__ void FactoredAxisKernelPipelined(T* data, FactoredAxisTables<T> t, si
         // Recombination and store, quad by quad. Same formulas as
         // FactoredStore, with (k1, k2) at row k1 + N1*k2.
         for (int q = threadIdx.x; q < quads; q += blockDim.x) {
-            const int k = q / quadsPerRow;
-            const int line = (q % quadsPerRow) * 4;
-            const int k1 = k % n1;
-            const int k2 = k / n1;
+            const int k = q >> quadsPerRow.shift;
+            const int line = (q & quadsPerRow.mask) * 4;
+            const int k1 = k & n1P.mask;
+            const int k2 = k >> n1P.shift;
             T out[4];
             if (ablate == kAblateIo || k1 == 0 || 2 * k1 == n1) {
                 Load4(tile + k * lanes + line, out);
@@ -580,7 +631,7 @@ __global__ void FactoredAxisKernelPipelined(T* data, FactoredAxisTables<T> t, si
                 T a[4];
                 T b[4];
                 if (2 * k1 < n1) {
-                    const int mk2 = (n2 - k2) % n2;
+                    const int mk2 = (n2 - k2) & n2P.mask;
                     Load4(tile + k * lanes + line, a);
                     Load4(tile + ((n1 - k1) + n1 * mk2) * lanes + line, b);
                     RAPIDHT_UNROLL
@@ -591,7 +642,7 @@ __global__ void FactoredAxisKernelPipelined(T* data, FactoredAxisTables<T> t, si
                     // k1 > N1/2: the mirror half of the pair j = N1 - k1, k2' = N2-1-k2.
                     const int jm = n1 - k1;
                     const int kb = n2 - 1 - k2;
-                    const int mkb = (n2 - kb) % n2;
+                    const int mkb = (n2 - kb) & n2P.mask;
                     Load4(tile + (jm + n1 * mkb) * lanes + line, a);
                     Load4(tile + (k1 + n1 * kb) * lanes + line, b);
                     RAPIDHT_UNROLL
