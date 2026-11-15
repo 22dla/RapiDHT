@@ -1,0 +1,7 @@
+ELF file    1: profile_gpu3d.1.sm_50.cubin
+ELF file    2: profile_gpu3d.2.sm_60.cubin
+ELF file    3: profile_gpu3d.3.sm_70.cubin
+ELF file    4: profile_gpu3d.4.sm_80.cubin
+ELF file    5: profile_gpu3d.5.sm_90.cubin
+ls: cannot access '/usr/local/cuda*/bin/ncu': No such file or directory
+ls: cannot access '/opt/nvidia/nsight-compute/*/ncu': No such file or directory
