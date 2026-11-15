@@ -366,6 +366,14 @@ void FactoredAxis(T* data, const FactoredAxisTables<T>& tables, size_t axisStrid
         // (R-4 step 2.0, benchmarks/results/2026-11-15_*_r4_s20_f64_*.json).
         if (sizeof(T) == 4 && lanes >= 4 && bytesFor(lanes) <= static_cast<size_t>(optIn)
             && quadsPerThread <= kFactoredMaxQuads && !FactoredUseV2Kernel()) {
+            // Short axes get wider batches: 8 lines of n = 128 are 1 024 values,
+            // a quarter of what 256 threads need to be busy in step 1. Widen
+            // until a batch holds 4 096 values, as at n = 512 -- 32 lines at
+            // n = 128, 16 at 256, unchanged from 512 up (R-4 step 2.2).
+            while (n * lanes * 2 <= 4096 && lanes * 2 <= laneLength && bytesFor(lanes * 2) <= static_cast<size_t>(optIn)
+                   && (n * lanes * 2 / 4 + kFactoredThreads - 1) / kFactoredThreads <= kFactoredMaxQuads) {
+                lanes *= 2;
+            }
             // v2.3: a pipelined grid of as many blocks as fit at once.
             const size_t sharedBytes = bytesFor(lanes);
             const auto kernel = FactoredAxisKernelPipelined<T, kFactoredMaxQuads>;

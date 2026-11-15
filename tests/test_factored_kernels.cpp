@@ -82,8 +82,10 @@ enum class Kernel { Generic,
     Pipelined };
 
 // Registers a thread holds for the next batch: with one thread to a block it
-// has to hold the whole tile, 512 values at most in the shapes below.
-constexpr int kHostMaxQuads = 128;
+// has to hold the whole batch -- up to 32 lines of n = 32 in the wide-batch
+// tests, 1 024 values. Too few and the rest of the batch is never loaded; the
+// device launcher checks the same bound against kFactoredMaxQuads.
+constexpr int kHostMaxQuads = 256;
 
 // Fewer blocks than batches, so that every block runs the pipeline over
 // several batches, including a ragged last round.
@@ -160,7 +162,8 @@ void RunAxis(T* data, const FactoredAxisTables<T>& t, size_t axisStride, size_t 
 
 /// The whole of FactoredOnDevice: three axes, then the in-place Bracewell.
 template <typename T>
-std::vector<double> RunTransform(const std::vector<double>& input, size_t W, size_t H, size_t D, Kernel kernel)
+std::vector<double> RunTransform(
+    const std::vector<double>& input, size_t W, size_t H, size_t D, Kernel kernel, size_t lanesOverride = 0)
 {
     std::vector<T> v(input.begin(), input.end());
     if (reinterpret_cast<uintptr_t>(v.data()) % 16 != 0) {
@@ -170,9 +173,10 @@ std::vector<double> RunTransform(const std::vector<double>& input, size_t W, siz
     const auto ty = MakeAxisTables<T>(H);
     const auto tz = MakeAxisTables<T>(D);
     const size_t maxLanes = (kernel == Kernel::Generic) ? 16 : (sizeof(T) == 4 ? 8 : 4);
-    RunAxis(v.data(), tx.view, 1, W, H, W * H, D, kernel, maxLanes);
-    RunAxis(v.data(), ty.view, W, 1, W, W * H, D, kernel, maxLanes);
-    RunAxis(v.data(), tz.view, W * H, 1, W, W, H, kernel, maxLanes);
+    const size_t lanes = lanesOverride != 0 ? lanesOverride : maxLanes;
+    RunAxis(v.data(), tx.view, 1, W, H, W * H, D, kernel, lanes);
+    RunAxis(v.data(), ty.view, W, 1, W, W * H, D, kernel, lanes);
+    RunAxis(v.data(), tz.view, W * H, 1, W, W, H, kernel, lanes);
 
     blockDim = { 1, 1, 1 };
     threadIdx = { 0, 0, 0 };
@@ -315,4 +319,38 @@ TEST(FactoredKernels, PipelinedIoModeIsIdentity_Float)
 TEST(FactoredKernels, PipelinedIoModeIsIdentity_Double)
 {
     ExpectIoModeIsIdentity<double>();
+}
+
+// Wide batches (R-4 step 2.2): on short axes the launcher gives the pipelined
+// kernel 16 or 32 lines to a batch. RunAxis halves the width where a lane axis
+// is shorter, so each shape reaches 32 lines on one pass and 16 on another;
+// the second one also has 32 lines of n = 32 (1 024 values) in one batch.
+const Shape kWideShapes[] = {
+    { 16, 32, 16 },
+    { 32, 32, 16 },
+};
+
+template <typename T>
+void ExpectWideBatchesMatchDefinition(double tolerance)
+{
+    for (const Shape& s : kWideShapes) {
+        const Dims dims = Dims::Of(s.width, s.height, s.depth);
+        const auto input = MakeSignal(dims.Total());
+        const auto expected = ReferenceDht(input, dims); // O(N^2): once per shape
+        for (const size_t lanes : { size_t { 16 }, size_t { 32 } }) {
+            SCOPED_TRACE(Describe(s) + ", " + std::to_string(lanes) + " lines");
+            ExpectClose(
+                RunTransform<T>(input, s.width, s.height, s.depth, Kernel::Pipelined, lanes), expected, tolerance);
+        }
+    }
+}
+
+TEST(FactoredKernels, PipelinedWideBatchesMatchDefinition_Float)
+{
+    ExpectWideBatchesMatchDefinition<float>(2e-5);
+}
+
+TEST(FactoredKernels, PipelinedWideBatchesMatchDefinition_Double)
+{
+    ExpectWideBatchesMatchDefinition<double>(1e-11);
 }
