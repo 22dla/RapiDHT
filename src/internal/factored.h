@@ -80,6 +80,31 @@ FactoredTables<T> MakeFactoredTables(size_t n);
 template <typename T>
 void FactoredDhtLanes(T* tile, T* work, size_t lanes, const FactoredTables<T>& tables);
 
+/**
+ * @brief The last pass of a true 2D or 3D transform: the DHT along x of a
+ * group of mirror lines, with the Bracewell combination folded in (R-4 step 3.2).
+ *
+ * After the separable passes along z and y, the true transform at (i, y, z) is
+ *
+ *   H(i,y,z) = 1/2 [S(-i,y,z) + S(i,-y,z) + S(i,y,-z) - S(-i,-y,-z)],
+ *
+ * S being the separable result once x is done too. Every term lies in one of
+ * the lines (y, z), (-y, z), (y, -z), (-y, -z), and the mirror in x stays
+ * inside the line, so a group of these four lines is closed: the x pass and the
+ * combination need nothing from outside it. This is what lets a GPU block do
+ * both in one visit instead of a separate Bracewell pass over the volume.
+ *
+ * Where a mirror coincides with its line (y = 0 or H/2, z = 0 or D/2, and z = 0
+ * throughout in 2D) the caller fills the lanes with copies of the same line;
+ * the copies come out identical, so writing any of them back is right.
+ *
+ * @param tile  4 * n values in the block layout, element idx of lane l at
+ *              [idx * 4 + l]; lanes 0..3 are (y, z), (-y, z), (y, -z), (-y, -z).
+ * @param work  scratch of the same size.
+ */
+template <typename T>
+void FactoredDhtBracewellGroup(T* tile, T* work, const FactoredTables<T>& tables);
+
 } // namespace internal
 } // namespace RapiDHT
 

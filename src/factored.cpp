@@ -168,12 +168,37 @@ void FactoredDhtLanes(T* tile, T* work, size_t lanes, const FactoredTables<T>& t
     }
 }
 
+template <typename T>
+void FactoredDhtBracewellGroup(T* tile, T* work, const FactoredTables<T>& tables)
+{
+    constexpr size_t kLanes = 4;
+    const size_t n = tables.split.n;
+    FactoredDhtLanes(tile, work, kLanes, tables);
+
+    // Lane l = a + 2*b holds (+-y, +-z), a and b choosing the mirror; the
+    // partner with y mirrored is l ^ 1, with z mirrored l ^ 2, with both l ^ 3.
+    const T half = static_cast<T>(0.5);
+    for (size_t i = 0; i < n; ++i) {
+        const size_t mi = (n - i) % n;
+        for (size_t l = 0; l < kLanes; ++l) {
+            work[i * kLanes + l] = half
+                                 * (tile[mi * kLanes + l] + tile[i * kLanes + (l ^ 1)] + tile[i * kLanes + (l ^ 2)]
+                                     - tile[mi * kLanes + (l ^ 3)]);
+        }
+    }
+    for (size_t i = 0; i < n * kLanes; ++i) {
+        tile[i] = work[i];
+    }
+}
+
 template struct FactoredTables<float>;
 template struct FactoredTables<double>;
 template FactoredTables<float> MakeFactoredTables<float>(size_t);
 template FactoredTables<double> MakeFactoredTables<double>(size_t);
 template void FactoredDhtLanes<float>(float*, float*, size_t, const FactoredTables<float>&);
 template void FactoredDhtLanes<double>(double*, double*, size_t, const FactoredTables<double>&);
+template void FactoredDhtBracewellGroup<float>(float*, float*, const FactoredTables<float>&);
+template void FactoredDhtBracewellGroup<double>(double*, double*, const FactoredTables<double>&);
 
 } // namespace internal
 } // namespace RapiDHT

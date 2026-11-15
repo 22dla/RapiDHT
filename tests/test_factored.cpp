@@ -133,3 +133,99 @@ TEST(Factored, TrueThreeDimensionalTransformMatchesDefinition)
     }
     ExpectClose(truth, ReferenceDht(input, dims), 1e-10);
 }
+
+namespace {
+
+/// The factored DHT along one axis of v, line by line, in T.
+template <typename T>
+void FactoredAlongAxis(std::vector<T>& v, const Dims& dims, int axis)
+{
+    const size_t extents[3] = { dims.width, dims.height, dims.depth };
+    const size_t strides[3] = { 1, dims.width, dims.width * dims.height };
+    const size_t n = extents[axis];
+    if (n <= 1) {
+        return;
+    }
+    const auto tables = MakeFactoredTables<T>(n);
+    std::vector<T> tile(n), work(n);
+    for (size_t base = 0; base < dims.Total(); ++base) {
+        if ((base / strides[axis]) % n != 0) {
+            continue;
+        }
+        for (size_t i = 0; i < n; ++i) {
+            tile[i] = v[base + i * strides[axis]];
+        }
+        FactoredDhtLanes(tile.data(), work.data(), 1, tables);
+        for (size_t i = 0; i < n; ++i) {
+            v[base + i * strides[axis]] = tile[i];
+        }
+    }
+}
+
+/// The path the fused last pass will take on the GPU: z, then y, then x by
+/// groups of four mirror lines with the Bracewell combination folded in.
+/// Every (y, z) belongs to exactly one group, (y, z) with y <= H/2, z <= D/2.
+template <typename T>
+std::vector<double> FusedTransform(const std::vector<double>& input, const Dims& dims)
+{
+    std::vector<T> v(input.begin(), input.end());
+    FactoredAlongAxis(v, dims, 2);
+    FactoredAlongAxis(v, dims, 1);
+
+    const size_t W = dims.width, H = dims.height, D = dims.depth;
+    const auto tables = MakeFactoredTables<T>(W);
+    std::vector<T> tile(4 * W), work(4 * W);
+    for (size_t z = 0; z <= D / 2; ++z) {
+        for (size_t y = 0; y <= H / 2; ++y) {
+            const size_t my = (H - y) % H, mz = (D - z) % D;
+            const size_t rows[4] = { W * (y + H * z), W * (my + H * z), W * (y + H * mz), W * (my + H * mz) };
+            for (size_t i = 0; i < W; ++i) {
+                for (size_t l = 0; l < 4; ++l) {
+                    tile[i * 4 + l] = v[rows[l] + i];
+                }
+            }
+            FactoredDhtBracewellGroup(tile.data(), work.data(), tables);
+            for (size_t i = 0; i < W; ++i) {
+                for (size_t l = 0; l < 4; ++l) {
+                    v[rows[l] + i] = tile[i * 4 + l];
+                }
+            }
+        }
+    }
+    return std::vector<double>(v.begin(), v.end());
+}
+
+template <typename T>
+void ExpectFusedMatchesDefinition(double tolerance)
+{
+    // Non-cubic, every axis split differently; then the shapes where a mirror
+    // group degenerates: H = 2 (every y is its own mirror), D = 2, the 2D case
+    // (D = 1, groups of two lines) and W = 2 (shortest line).
+    const Dims shapes[] = {
+        Dims::Of(16, 8, 32),
+        Dims::Of(32, 4, 8),
+        Dims::Of(8, 2, 16),
+        Dims::Of(16, 16, 2),
+        Dims::Of(32, 16, 0),
+        Dims::Of(64, 2, 0),
+        Dims::Of(2, 8, 4),
+    };
+    for (const Dims& dims : shapes) {
+        SCOPED_TRACE(std::to_string(dims.width) + "x" + std::to_string(dims.height) + "x"
+                     + std::to_string(dims.depth));
+        const auto input = MakeSignal(dims.Total());
+        ExpectClose(FusedTransform<T>(input, dims), ReferenceDht(input, dims), tolerance);
+    }
+}
+
+} // namespace
+
+TEST(Factored, FusedBracewellGroupMatchesDefinition_Double)
+{
+    ExpectFusedMatchesDefinition<double>(1e-11);
+}
+
+TEST(Factored, FusedBracewellGroupMatchesDefinition_Float)
+{
+    ExpectFusedMatchesDefinition<float>(2e-5);
+}
