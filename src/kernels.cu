@@ -450,6 +450,20 @@ struct FactoredPath {
     int slot;
 };
 
+/*
+ * Step 4A, the twiddle inside step 1 (FactoredStep1Order), by variant: two
+ * A-B runs (benchmarks/results/2026-11-15_*_r4_s4a*, f32, sm_86) found it
+ * wins on the fused pass through the work buffer (80 instead of 90 registers,
+ * three blocks to an SM: x -17..-21 % at 128^3 and 256^3) and on the axis
+ * kernel with two tiles a thread (z at 512^3, -7 %), but costs the axis kernel
+ * through the work buffer 21 % (y at 256^3; ncu, flushing caches, showed the
+ * opposite, cause not found) and the one-tile kernels in place 3 %.
+ */
+constexpr bool FactoredFoldsTwiddle(bool fused, int items)
+{
+    return fused ? items == 0 : items == 2;
+}
+
 FactoredPath FactoredPathFor(size_t n, size_t lanes, int axis) // axis 0 = x, 1 = y, 2 = z
 {
     const size_t items = (n * lanes / 16 + kFactoredThreads - 1) / kFactoredThreads;
@@ -470,19 +484,22 @@ void LaunchPipelinedAxis(FactoredDeviceInfo& info, int slot, size_t batches, siz
 {
     int perSm = 0;
     if constexpr (kItems == 0) {
-        perSm = FactoredBlocksPerSm(info, slot, FactoredAxisKernelPipelined<T, kFactoredMaxQuads>, sharedBytes);
+        perSm = FactoredBlocksPerSm(info, slot,
+            FactoredAxisKernelPipelined<T, kFactoredMaxQuads, FactoredFoldsTwiddle(false, kItems)>, sharedBytes);
     } else {
         perSm = FactoredBlocksPerSm(
-            info, slot, FactoredAxisKernelInPlace<T, kFactoredMaxQuads, kItems, kMinBlocks>, sharedBytes);
+            info, slot,
+            FactoredAxisKernelInPlace<T, kFactoredMaxQuads, kItems, kMinBlocks, FactoredFoldsTwiddle(false, kItems)>,
+            sharedBytes);
     }
     const size_t resident = static_cast<size_t>(perSm) * static_cast<size_t>(info.sms);
     const unsigned int grid = static_cast<unsigned int>(batches < resident ? batches : resident);
     if constexpr (kItems == 0) {
-        FactoredAxisKernelPipelined<T, kFactoredMaxQuads><<<grid, kFactoredThreads, sharedBytes>>>(data, tables,
+        FactoredAxisKernelPipelined<T, kFactoredMaxQuads, FactoredFoldsTwiddle(false, kItems)><<<grid, kFactoredThreads, sharedBytes>>>(data, tables,
             axisStride, laneStride, static_cast<int>(lanes), static_cast<int>(blocksPerOther), otherStride,
             static_cast<int>(batches), workStride, vec, FactoredAblateMode());
     } else {
-        FactoredAxisKernelInPlace<T, kFactoredMaxQuads, kItems, kMinBlocks><<<grid, kFactoredThreads, sharedBytes>>>(
+        FactoredAxisKernelInPlace<T, kFactoredMaxQuads, kItems, kMinBlocks, FactoredFoldsTwiddle(false, kItems)><<<grid, kFactoredThreads, sharedBytes>>>(
             data, tables, axisStride, laneStride, static_cast<int>(lanes), static_cast<int>(blocksPerOther),
             otherStride, static_cast<int>(batches), workStride, vec, FactoredAblateMode());
     }
@@ -496,22 +513,26 @@ void LaunchFusedLast(FactoredDeviceInfo& info, int slot, size_t batches, size_t 
 {
     int perSm = 0;
     if constexpr (kItems == 0) {
-        perSm = FactoredBlocksPerSm(info, slot, FactoredLastAxisBracewellKernel<T, kFactoredMaxQuads>, sharedBytes);
+        perSm = FactoredBlocksPerSm(info, slot,
+            FactoredLastAxisBracewellKernel<T, kFactoredMaxQuads, FactoredFoldsTwiddle(true, kItems)>, sharedBytes);
     } else {
         perSm = FactoredBlocksPerSm(
-            info, slot, FactoredLastAxisBracewellKernelInPlace<T, kFactoredMaxQuads, kItems, kMinBlocks>, sharedBytes);
+            info, slot,
+            FactoredLastAxisBracewellKernelInPlace<T, kFactoredMaxQuads, kItems, kMinBlocks,
+                FactoredFoldsTwiddle(true, kItems)>,
+            sharedBytes);
     }
     const size_t resident = static_cast<size_t>(perSm) * static_cast<size_t>(info.sms);
     const unsigned int grid = static_cast<unsigned int>(batches < resident ? batches : resident);
     if constexpr (kItems == 0) {
-        FactoredLastAxisBracewellKernel<T, kFactoredMaxQuads><<<grid, kFactoredThreads, sharedBytes>>>(data, tables,
+        FactoredLastAxisBracewellKernel<T, kFactoredMaxQuads, FactoredFoldsTwiddle(true, kItems)><<<grid, kFactoredThreads, sharedBytes>>>(data, tables,
             static_cast<int>(H), static_cast<int>(D), static_cast<int>(groupsY), static_cast<int>(groups),
             static_cast<int>(lanes), static_cast<int>(batches), workStride);
     } else {
-        FactoredLastAxisBracewellKernelInPlace<T, kFactoredMaxQuads, kItems, kMinBlocks>
-            <<<grid, kFactoredThreads, sharedBytes>>>(data, tables, static_cast<int>(H), static_cast<int>(D),
-                static_cast<int>(groupsY), static_cast<int>(groups), static_cast<int>(lanes),
-                static_cast<int>(batches), workStride);
+        FactoredLastAxisBracewellKernelInPlace<T, kFactoredMaxQuads, kItems, kMinBlocks,
+            FactoredFoldsTwiddle(true, kItems)><<<grid, kFactoredThreads, sharedBytes>>>(data, tables, static_cast<int>(H), static_cast<int>(D),
+            static_cast<int>(groupsY), static_cast<int>(groups), static_cast<int>(lanes),
+            static_cast<int>(batches), workStride);
     }
     RAPIDHT_CUDA_CHECK(cudaGetLastError());
 }

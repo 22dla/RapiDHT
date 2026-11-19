@@ -85,7 +85,9 @@ namespace {
 enum class Kernel { Generic,
     Fast,
     Pipelined, // through a work buffer (v2.3)
-    InPlace }; // the same steps in place (R-4 step 4B)
+    InPlace, // the same steps in place (R-4 step 4B)
+    PipelinedFold, // and each with the twiddle inside step 1 (step 4A)
+    InPlaceFold };
 
 // Registers a thread holds for the next batch: with one thread to a block it
 // has to hold the whole batch -- up to 32 lines of n = 32 in the wide-batch
@@ -142,7 +144,7 @@ void RunAxis(T* data, const FactoredAxisTables<T>& t, size_t axisStride, size_t 
     const size_t blocksPerOther = laneLength / lanes;
     blockDim = { 1, 1, 1 };
     threadIdx = { 0, 0, 0 };
-    if (kernel == Kernel::Pipelined || kernel == Kernel::InPlace) {
+    if (kernel != Kernel::Generic && kernel != Kernel::Fast) {
         const size_t batches = blocksPerOther * otherLength;
         const size_t grid = batches < kHostGrid ? batches : kHostGrid;
         gridDim = { static_cast<unsigned>(grid), 1, 1 };
@@ -152,13 +154,21 @@ void RunAxis(T* data, const FactoredAxisTables<T>& t, size_t axisStride, size_t 
         for (size_t b = 0; b < grid; ++b) {
             blockIdx = { static_cast<unsigned>(b), 0, 0 };
             const int ws = static_cast<int>(FactoredWorkStride<T>(static_cast<size_t>(t.n2), lanes));
+            const int lanesI = static_cast<int>(lanes);
+            const int perOther = static_cast<int>(blocksPerOther);
+            const int batchesI = static_cast<int>(batches);
             if (kernel == Kernel::InPlace) {
-                FactoredAxisKernelInPlace<T, kHostMaxQuads, kHostItems, 1>(data, t, axisStride, laneStride,
-                    static_cast<int>(lanes), static_cast<int>(blocksPerOther), otherStride, static_cast<int>(batches),
-                    ws, vec, ablate);
+                FactoredAxisKernelInPlace<T, kHostMaxQuads, kHostItems, 1, false>(
+                    data, t, axisStride, laneStride, lanesI, perOther, otherStride, batchesI, ws, vec, ablate);
+            } else if (kernel == Kernel::InPlaceFold) {
+                FactoredAxisKernelInPlace<T, kHostMaxQuads, kHostItems, 1, true>(
+                    data, t, axisStride, laneStride, lanesI, perOther, otherStride, batchesI, ws, vec, ablate);
+            } else if (kernel == Kernel::PipelinedFold) {
+                FactoredAxisKernelPipelined<T, kHostMaxQuads, true>(
+                    data, t, axisStride, laneStride, lanesI, perOther, otherStride, batchesI, ws, vec, ablate);
             } else {
-                FactoredAxisKernelPipelined<T, kHostMaxQuads>(data, t, axisStride, laneStride, static_cast<int>(lanes),
-                    static_cast<int>(blocksPerOther), otherStride, static_cast<int>(batches), ws, vec, ablate);
+                FactoredAxisKernelPipelined<T, kHostMaxQuads, false>(
+                    data, t, axisStride, laneStride, lanesI, perOther, otherStride, batchesI, ws, vec, ablate);
             }
         }
         return;
@@ -305,6 +315,18 @@ TEST(FactoredKernels, InPlaceMatchesDefinition_Float)
     ExpectKernelMatchesDefinition<float>(Kernel::InPlace, kFastShapes, std::size(kFastShapes), 2e-5);
 }
 
+TEST(FactoredKernels, FoldedTwiddleMatchesDefinition_Double)
+{
+    ExpectKernelMatchesDefinition<double>(Kernel::PipelinedFold, kFastShapes, std::size(kFastShapes), 1e-11);
+    ExpectKernelMatchesDefinition<double>(Kernel::InPlaceFold, kFastShapes, std::size(kFastShapes), 1e-11);
+}
+
+TEST(FactoredKernels, FoldedTwiddleMatchesDefinition_Float)
+{
+    ExpectKernelMatchesDefinition<float>(Kernel::PipelinedFold, kFastShapes, std::size(kFastShapes), 2e-5);
+    ExpectKernelMatchesDefinition<float>(Kernel::InPlaceFold, kFastShapes, std::size(kFastShapes), 2e-5);
+}
+
 // The "io only" diagnostic mode of the pipelined kernel (RAPIDHT_R4_ABLATE=io,
 // R-4 step 1.1) must move every value through the same loads and stores as the
 // real pass and put it back where it came from: then the time it measures is
@@ -366,9 +388,10 @@ void ExpectWideBatchesMatchDefinition(double tolerance)
         const auto input = MakeSignal(dims.Total());
         const auto expected = ReferenceDht(input, dims); // O(N^2): once per shape
         for (const size_t lanes : { size_t { 16 }, size_t { 32 } }) {
-            for (const Kernel kernel : { Kernel::Pipelined, Kernel::InPlace }) {
-                SCOPED_TRACE(Describe(s) + ", " + std::to_string(lanes) + " lines"
-                             + (kernel == Kernel::InPlace ? ", in place" : ""));
+            for (const Kernel kernel :
+                { Kernel::Pipelined, Kernel::InPlace, Kernel::PipelinedFold, Kernel::InPlaceFold }) {
+                SCOPED_TRACE(Describe(s) + ", " + std::to_string(lanes) + " lines, variant "
+                             + std::to_string(static_cast<int>(kernel)));
                 ExpectClose(RunTransform<T>(input, s.width, s.height, s.depth, kernel, lanes), expected, tolerance);
             }
         }
@@ -392,7 +415,7 @@ TEST(FactoredKernels, PipelinedWideBatchesMatchDefinition_Double)
 // batch width the launcher can pick.
 template <typename T>
 std::vector<double> RunFusedTransform(
-    const std::vector<double>& input, size_t W, size_t H, size_t D, size_t lanes, bool inPlace)
+    const std::vector<double>& input, size_t W, size_t H, size_t D, size_t lanes, bool inPlace, bool fold)
 {
     std::vector<T> v(input.begin(), input.end());
     const auto tx = MakeAxisTables<T>(W);
@@ -413,14 +436,22 @@ std::vector<double> RunFusedTransform(
     for (size_t b = 0; b < grid; ++b) {
         blockIdx = { static_cast<unsigned>(b), 0, 0 };
         const int ws = static_cast<int>(FactoredWorkStride<T>(static_cast<size_t>(tx.view.n2), lanes));
-        if (inPlace) {
-            FactoredLastAxisBracewellKernelInPlace<T, kHostMaxQuads, kHostItems, 1>(v.data(), tx.view,
-                static_cast<int>(H), static_cast<int>(D), static_cast<int>(groupsY), static_cast<int>(groups),
-                static_cast<int>(lanes), static_cast<int>(batches), ws);
+        const int Hi = static_cast<int>(H);
+        const int Di = static_cast<int>(D);
+        const int gy = static_cast<int>(groupsY);
+        const int gs = static_cast<int>(groups);
+        const int li = static_cast<int>(lanes);
+        const int bi = static_cast<int>(batches);
+        if (inPlace && fold) {
+            FactoredLastAxisBracewellKernelInPlace<T, kHostMaxQuads, kHostItems, 1, true>(
+                v.data(), tx.view, Hi, Di, gy, gs, li, bi, ws);
+        } else if (inPlace) {
+            FactoredLastAxisBracewellKernelInPlace<T, kHostMaxQuads, kHostItems, 1, false>(
+                v.data(), tx.view, Hi, Di, gy, gs, li, bi, ws);
+        } else if (fold) {
+            FactoredLastAxisBracewellKernel<T, kHostMaxQuads, true>(v.data(), tx.view, Hi, Di, gy, gs, li, bi, ws);
         } else {
-            FactoredLastAxisBracewellKernel<T, kHostMaxQuads>(v.data(), tx.view, static_cast<int>(H),
-                static_cast<int>(D), static_cast<int>(groupsY), static_cast<int>(groups), static_cast<int>(lanes),
-                static_cast<int>(batches), ws);
+            FactoredLastAxisBracewellKernel<T, kHostMaxQuads, false>(v.data(), tx.view, Hi, Di, gy, gs, li, bi, ws);
         }
     }
     return std::vector<double>(v.begin(), v.end());
@@ -436,8 +467,12 @@ void ExpectFusedLastPassMatchesDefinition(double tolerance)
         const auto expected = ReferenceDht(input, dims);
         for (const size_t lanes : { size_t { 4 }, size_t { 8 }, size_t { 16 }, size_t { 32 } }) {
             for (const bool inPlace : { false, true }) {
-                SCOPED_TRACE(Describe(s) + ", " + std::to_string(lanes) + " lines" + (inPlace ? ", in place" : ""));
-                ExpectClose(RunFusedTransform<T>(input, s.width, s.height, s.depth, lanes, inPlace), expected, tolerance);
+                for (const bool fold : { false, true }) {
+                    SCOPED_TRACE(Describe(s) + ", " + std::to_string(lanes) + " lines" + (inPlace ? ", in place" : "")
+                                 + (fold ? ", twiddle in step 1" : ""));
+                    ExpectClose(RunFusedTransform<T>(input, s.width, s.height, s.depth, lanes, inPlace, fold), expected,
+                        tolerance);
+                }
             }
         }
     }
@@ -451,4 +486,32 @@ TEST(FactoredKernels, FusedLastPassMatchesDefinition_Float)
 TEST(FactoredKernels, FusedLastPassMatchesDefinition_Double)
 {
     ExpectFusedLastPassMatchesDefinition<double>(1e-11);
+}
+
+// The order of step 1's frequencies (R-4 step 4A) for every N1 the kernels
+// take, not only the N1 = 4 and 8 of the shapes above: a permutation of
+// 0..N1-1 whose slots 4g, 4g+1 and 4g+2, 4g+3 are mirror pairs (k, N1 - k)
+// with k < N1/2 -- except slots 0 and 1, which must be 0 and N1/2.
+TEST(FactoredKernels, Step1OrderPairsMirrorFrequencies)
+{
+    for (int n1 = 4; n1 <= 64; n1 *= 2) {
+        SCOPED_TRACE("N1 " + std::to_string(n1));
+        std::vector<int> seen(static_cast<size_t>(n1), 0);
+        for (int p = 0; p < n1; ++p) {
+            const int k = FactoredStep1Order(p, n1);
+            ASSERT_GE(k, 0);
+            ASSERT_LT(k, n1);
+            ++seen[static_cast<size_t>(k)];
+        }
+        for (int k = 0; k < n1; ++k) {
+            EXPECT_EQ(seen[static_cast<size_t>(k)], 1) << "frequency " << k;
+        }
+        EXPECT_EQ(FactoredStep1Order(0, n1), 0);
+        EXPECT_EQ(FactoredStep1Order(1, n1), n1 / 2);
+        for (int p = 2; p < n1; p += 2) {
+            const int lo = FactoredStep1Order(p, n1);
+            EXPECT_LT(lo, n1 / 2) << "slot " << p;
+            EXPECT_EQ(FactoredStep1Order(p + 1, n1), n1 - lo) << "slot " << p;
+        }
+    }
 }

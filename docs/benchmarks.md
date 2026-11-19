@@ -326,6 +326,13 @@ so more blocks fit an SM; chosen per axis and length, step 4B,
 `…_r4_s4bh{_a,}.json`, back to back): 158 µs, 1.27 ms and 12.36 ms — **0.90,
 0.95 and 1.15 times cuFFT**. At 128³ and 256³ the factored transform is faster
 than cuFFT with its conversion.
+With step 1's twiddle folded into registers in the two kernel variants where
+it wins (the fused x pass through the work buffer, the two-tile axis kernel;
+step 4A, `…_r4_s4as{_a,}.json`, 2026-11-19, back to back): 147 µs, 1.19 ms
+and 12.0 ms — **0.83, 0.89 and 1.12 times cuFFT** with its conversion.
+Per-kernel traces at 512³ from `profile_gpu3d` run right after the benchmark
+proved unreliable in this step and in `…_r4_s4a_a` (kernels whose code did
+not change moved by 10-25 %); the benchmark figures are the ones to trust.
 
 The axes differ only from 512³ up; at 128³ and 256³ all three take the same
 time (2.3 and 1.7 Bracewell passes).

@@ -518,13 +518,68 @@ constexpr int kAblateIo = 1;
 constexpr int kAblateCompute = 2;
 
 /*
+ * R-4 step 4A: the twiddle inside step 1. A thread's 4 frequencies of step 1
+ * are two mirror pairs (k, N1 - k), so it can twiddle its own outputs in
+ * registers before storing them, and the separate twiddle pass over the work
+ * buffer -- a read and a write of the whole tile and a barrier -- is gone.
+ * For that the columns of C1 in shared memory are permuted: position p holds
+ * frequency FactoredStep1Order(p). Group 0 is {0, N1/2, N1/4, 3N1/4} -- its
+ * first "pair" is the two frequencies with no twiddle; groups 1.. take the
+ * remaining pairs two at a time, k < N1/2 first. Needs N1 a multiple of 4.
+ *
+ * It is a template switch (kFold) of the pipelined kernels, not always on: it
+ * won in some variants and lost in others, and the launcher picks per variant
+ * (FactoredPathFor in kernels.cu).
+ */
+__device__ __forceinline__ int FactoredStep1Order(int p, int n1)
+{
+    const int g = p >> 2;
+    const int a = p & 3;
+    if (g == 0) {
+        return a == 0 ? 0 : (a == 1 ? n1 / 2 : (a == 2 ? n1 / 4 : 3 * n1 / 4));
+    }
+    const int m = 2 * (g - 1) + (a >> 1); // index among the pairs other than N1/4
+    const int k = (m + 1 < n1 / 4) ? m + 1 : m + 2;
+    return (a & 1) ? n1 - k : k;
+}
+
+/// Twiddles a thread's step-1 tile -- frequencies FactoredStep1Order(4 kg + a),
+/// column j2, lines lg*4.. -- in registers and stores its rows into dst, row k1
+/// at k1 * workStride. The formulas of FactoredTwiddle: P = d Y[k] + c Y[-k]
+/// into row k, Q = c Y[k] - d Y[-k] into row N1 - k.
+template <typename T>
+__device__ __forceinline__ void StoreStep1Twiddled(T* dst, T (&acc)[4][4], const FactoredAxisTables<T>& t, int kg,
+    int j2, int lg, int lanes, Pow2 n2P, int workStride)
+{
+    RAPIDHT_UNROLL
+    for (int h = 0; h < 2; ++h) {
+        const int lo = FactoredStep1Order(kg * 4 + 2 * h, t.n1);
+        const int hi = FactoredStep1Order(kg * 4 + 2 * h + 1, t.n1);
+        if (lo != 0) { // (0, N1/2) are not a mirror pair and take no twiddle
+            const int at = (lo << n2P.shift) + j2;
+            const T c = t.twC[at];
+            const T d = t.twD[at];
+            RAPIDHT_UNROLL
+            for (int b = 0; b < 4; ++b) {
+                const T yp = acc[2 * h][b];
+                const T ym = acc[2 * h + 1][b];
+                acc[2 * h][b] = d * yp + c * ym;
+                acc[2 * h + 1][b] = c * yp - d * ym;
+            }
+        }
+        Store4(dst + lo * workStride + j2 * lanes + lg * 4, acc[2 * h]);
+        Store4(dst + hi * workStride + j2 * lanes + lg * 4, acc[2 * h + 1]);
+    }
+}
+
+/*
  * Steps 1-2 of the pipelined kernels on a filled tile, through a work buffer
  * (v2.3 and step 3.3; kItems = 0 below): step 1 into work, the
  * twiddle in work, step 2 back into the tile at row k1 + N1*k2. Ends with a
  * barrier, so the tile is ready to be read. Shared by the axis kernel and the
  * fused last pass so that both run exactly the same arithmetic.
  */
-template <typename T>
+template <typename T, bool kFold>
 __device__ __forceinline__ void FactoredComputeTileWork(T* tile, T* work, const T* c1s, const T* c2s, const T* chT,
     const FactoredAxisTables<T>& t, int lanes, Pow2 lanesP, Pow2 n1P, Pow2 n2P, Pow2 quadsPerRow, int workStride)
 {
@@ -551,15 +606,20 @@ __device__ __forceinline__ void FactoredComputeTileWork(T* tile, T* work, const 
                 }
             }
         }
-        RAPIDHT_UNROLL
-        for (int a = 0; a < 4; ++a) {
-            Store4(work + (kg * 4 + a) * workStride + j2 * lanes + lg * 4, acc[a]);
+        if constexpr (kFold) {
+            StoreStep1Twiddled(work, acc, t, kg, j2, lg, lanes, n2P, workStride);
+        } else {
+            RAPIDHT_UNROLL
+            for (int a = 0; a < 4; ++a) {
+                Store4(work + (kg * 4 + a) * workStride + j2 * lanes + lg * 4, acc[a]);
+            }
         }
     }
     __syncthreads();
-
-    FactoredTwiddlePow2(work, t, lanesP, n2P, workStride);
-    __syncthreads();
+    if constexpr (!kFold) {
+        FactoredTwiddlePow2(work, t, lanesP, n2P, workStride);
+        __syncthreads();
+    }
 
     // Step 2, 4 frequencies k2 x 4 lines per thread, k1 fastest after the
     // lines; the result goes to row k1 + N1*k2 of the tile.
@@ -607,7 +667,7 @@ __device__ __forceinline__ void FactoredComputeTileWork(T* tile, T* work, const 
  * writes row k1 + N1*k2 at (k1 + N1*k2) * lanes + l, unpadded, which is what
  * FactoredRecombineQuad reads. Ends with a barrier.
  */
-template <typename T, int kItems>
+template <typename T, int kItems, bool kFold>
 __device__ __forceinline__ void FactoredComputeTile(T* tile, const T* c1s, const T* c2s, const T* chT,
     const FactoredAxisTables<T>& t, int lanes, Pow2 lanesP, Pow2 n1P, Pow2 n2P, Pow2 quadsPerRow, int workStride)
 {
@@ -656,16 +716,21 @@ __device__ __forceinline__ void FactoredComputeTile(T* tile, const T* c1s, const
             const int r = it >> quadsPerRow.shift;
             const int j2 = r & n2P.mask;
             const int kg = r >> n2P.shift;
-            RAPIDHT_UNROLL
-            for (int a = 0; a < 4; ++a) {
-                Store4(tile + (kg * 4 + a) * workStride + j2 * lanes + lg * 4, acc[s][a]);
+            if constexpr (kFold) {
+                StoreStep1Twiddled(tile, acc[s], t, kg, j2, lg, lanes, n2P, workStride);
+            } else {
+                RAPIDHT_UNROLL
+                for (int a = 0; a < 4; ++a) {
+                    Store4(tile + (kg * 4 + a) * workStride + j2 * lanes + lg * 4, acc[s][a]);
+                }
             }
         }
     }
     __syncthreads();
-
-    FactoredTwiddlePow2(tile, t, lanesP, n2P, workStride);
-    __syncthreads();
+    if constexpr (!kFold) {
+        FactoredTwiddlePow2(tile, t, lanesP, n2P, workStride);
+        __syncthreads();
+    }
 
     // Step 2, 4 frequencies k2 x 4 lines per item, k1 fastest after the lines.
     const int items2 = ((n2 >> 2) << n1P.shift) << quadsPerRow.shift;
@@ -758,7 +823,7 @@ __device__ __forceinline__ void FactoredRecombineQuad(
  * Requires n1, n2 and lanes to be multiples of 4 and blockDim.x * kMaxQuads
  * >= n * lanes / 4. Shared memory exactly as FactoredAxisKernelFast.
  */
-template <typename T, int kMaxQuads, int kItems>
+template <typename T, int kMaxQuads, int kItems, bool kFold>
 __device__ __forceinline__ void PipelinedAxisBody(T* data, FactoredAxisTables<T> t, size_t axisStride, size_t laneStride,
     int lanes, int blocksPerOther, size_t otherStride, int batches, int workStride, bool vec, int ablate)
 {
@@ -774,8 +839,10 @@ __device__ __forceinline__ void PipelinedAxisBody(T* data, FactoredAxisTables<T>
     T* c2s = c1s + n1 * n1;
     T* chT = c2s + n2 * n2;
 
+    // Under kFold, C1 with its columns in the order of FactoredStep1Order
+    // (step 4A); C1 is symmetric, so column p of row j1 is c1[j1][order(p)].
     for (int i = threadIdx.x; i < n1 * n1; i += blockDim.x) {
-        c1s[i] = t.c1[i];
+        c1s[i] = kFold ? t.c1[(i / n1) * n1 + FactoredStep1Order(i % n1, n1)] : t.c1[i];
     }
     for (int i = threadIdx.x; i < n2 * n2; i += blockDim.x) {
         c2s[i] = t.c2[i];
@@ -817,9 +884,10 @@ __device__ __forceinline__ void PipelinedAxisBody(T* data, FactoredAxisTables<T>
 
         if (ablate != kAblateIo) { // uniform across the block, so the barriers inside are safe
             if constexpr (kItems == 0) {
-                FactoredComputeTileWork(tile, work, c1s, c2s, chT, t, lanes, lanesP, n1P, n2P, quadsPerRow, workStride);
+                FactoredComputeTileWork<T, kFold>(
+                    tile, work, c1s, c2s, chT, t, lanes, lanesP, n1P, n2P, quadsPerRow, workStride);
             } else {
-                FactoredComputeTile<T, kItems>(
+                FactoredComputeTile<T, kItems, kFold>(
                     tile, c1s, c2s, chT, t, lanes, lanesP, n1P, n2P, quadsPerRow, workStride);
             }
         }
@@ -849,22 +917,22 @@ __device__ __forceinline__ void PipelinedAxisBody(T* data, FactoredAxisTables<T>
 
 /// The pipelined axis kernel of v2.3 (work buffer): no launch bounds, so the
 /// compiler allocates registers exactly as it did before step 4B.
-template <typename T, int kMaxQuads>
+template <typename T, int kMaxQuads, bool kFold>
 __global__ void FactoredAxisKernelPipelined(T* data, FactoredAxisTables<T> t, size_t axisStride, size_t laneStride,
     int lanes, int blocksPerOther, size_t otherStride, int batches, int workStride, bool vec, int ablate)
 {
-    PipelinedAxisBody<T, kMaxQuads, 0>(
+    PipelinedAxisBody<T, kMaxQuads, 0, kFold>(
         data, t, axisStride, laneStride, lanes, blocksPerOther, otherStride, batches, workStride, vec, ablate);
 }
 
 /// The same with the steps in place (R-4 step 4B), kItems tiles a thread,
 /// built for kMinBlocks blocks to an SM.
-template <typename T, int kMaxQuads, int kItems, int kMinBlocks>
+template <typename T, int kMaxQuads, int kItems, int kMinBlocks, bool kFold>
 __global__ void __launch_bounds__(256, kMinBlocks) FactoredAxisKernelInPlace(T* data, FactoredAxisTables<T> t,
     size_t axisStride, size_t laneStride, int lanes, int blocksPerOther, size_t otherStride, int batches,
     int workStride, bool vec, int ablate)
 {
-    PipelinedAxisBody<T, kMaxQuads, kItems>(
+    PipelinedAxisBody<T, kMaxQuads, kItems, kFold>(
         data, t, axisStride, laneStride, lanes, blocksPerOther, otherStride, batches, workStride, vec, ablate);
 }
 
@@ -921,7 +989,7 @@ __device__ __forceinline__ void GroupLoad(const T* data, int batch, T (&reg)[kMa
     }
 }
 
-template <typename T, int kMaxQuads, int kItems>
+template <typename T, int kMaxQuads, int kItems, bool kFold>
 __device__ __forceinline__ void FusedLastBody(T* data, FactoredAxisTables<T> t, int H, int D, int groupsY,
     int groups, int lanes, int batches, int workStride)
 {
@@ -935,8 +1003,10 @@ __device__ __forceinline__ void FusedLastBody(T* data, FactoredAxisTables<T> t, 
     T* c2s = c1s + n1 * n1;
     T* chT = c2s + n2 * n2;
 
+    // Under kFold, C1 with its columns in the order of FactoredStep1Order
+    // (step 4A); C1 is symmetric, so column p of row j1 is c1[j1][order(p)].
     for (int i = threadIdx.x; i < n1 * n1; i += blockDim.x) {
-        c1s[i] = t.c1[i];
+        c1s[i] = kFold ? t.c1[(i / n1) * n1 + FactoredStep1Order(i % n1, n1)] : t.c1[i];
     }
     for (int i = threadIdx.x; i < n2 * n2; i += blockDim.x) {
         c2s[i] = t.c2[i];
@@ -971,7 +1041,8 @@ __device__ __forceinline__ void FusedLastBody(T* data, FactoredAxisTables<T> t, 
         }
 
         if constexpr (kItems == 0) {
-            FactoredComputeTileWork(tile, work, c1s, c2s, chT, t, lanes, lanesP, n1P, n2P, quadsPerRow, workStride);
+            FactoredComputeTileWork<T, kFold>(
+                tile, work, c1s, c2s, chT, t, lanes, lanesP, n1P, n2P, quadsPerRow, workStride);
             // Recombination into work, row k at work + k * lanes (n * lanes
             // fits: work holds n1 * workStride >= n1 * n2 * lanes values).
             for (int q = threadIdx.x; q < quads; q += blockDim.x) {
@@ -983,7 +1054,7 @@ __device__ __forceinline__ void FusedLastBody(T* data, FactoredAxisTables<T> t, 
             }
             __syncthreads();
         } else {
-            FactoredComputeTile<T, kItems>(tile, c1s, c2s, chT, t, lanes, lanesP, n1P, n2P, quadsPerRow, workStride);
+            FactoredComputeTile<T, kItems, kFold>(tile, c1s, c2s, chT, t, lanes, lanesP, n1P, n2P, quadsPerRow, workStride);
         }
 
         // Bracewell within each group, and the store.
@@ -1013,19 +1084,19 @@ __device__ __forceinline__ void FusedLastBody(T* data, FactoredAxisTables<T> t, 
 }
 
 /// The fused last pass through a work buffer (step 3.3), no launch bounds.
-template <typename T, int kMaxQuads>
+template <typename T, int kMaxQuads, bool kFold>
 __global__ void FactoredLastAxisBracewellKernel(T* data, FactoredAxisTables<T> t, int H, int D, int groupsY,
     int groups, int lanes, int batches, int workStride)
 {
-    FusedLastBody<T, kMaxQuads, 0>(data, t, H, D, groupsY, groups, lanes, batches, workStride);
+    FusedLastBody<T, kMaxQuads, 0, kFold>(data, t, H, D, groupsY, groups, lanes, batches, workStride);
 }
 
 /// The fused last pass with the steps in place (step 4B).
-template <typename T, int kMaxQuads, int kItems, int kMinBlocks>
+template <typename T, int kMaxQuads, int kItems, int kMinBlocks, bool kFold>
 __global__ void __launch_bounds__(256, kMinBlocks) FactoredLastAxisBracewellKernelInPlace(T* data,
     FactoredAxisTables<T> t, int H, int D, int groupsY, int groups, int lanes, int batches, int workStride)
 {
-    FusedLastBody<T, kMaxQuads, kItems>(data, t, H, D, groupsY, groups, lanes, batches, workStride);
+    FusedLastBody<T, kMaxQuads, kItems, kFold>(data, t, H, D, groupsY, groups, lanes, batches, workStride);
 }
 
 /// Mirror of an index along an axis of length n: (n - i) mod n.

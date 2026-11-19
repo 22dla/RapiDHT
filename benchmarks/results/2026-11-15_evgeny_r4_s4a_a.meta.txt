@@ -1,0 +1,22 @@
+tag: s4a_a
+date: 2026-11-15T21:25:19+04:00
+settings: (none)
+commit: 28a9cf05ef35096c407dcfb14ca180b27386dce7
+uncommitted:
+   M .gitignore
+   M docs/R4_PLAN.md
+  ?? benchmarks/results/2026-11-15_evgeny_r4_s4a_a.meta.txt
+sources:
+  cae726ad289a27e9a608808a0281e2626fac9c4b022f3172102e45c2ac69d9b5  src/internal/factored_kernels.cuh
+  71de821d714067456d687982df96813149ef71e707640ff0cfa75a31a89e1132  src/kernels.cu
+  00219f6acfe6d833b60361ba32e0e33aadb91e124e238d5bc2ae6a6de9771ecb  src/backend_cuda.cpp
+  36501266c19eb17add2cdbf0afc3085348713f02e60222c38822340b3d91775f  src/internal/kernels.h
+  1a375ecd95a67d44792b9ffb3c8e02e8dd84c73ee1baaa6b43f323ce3e10e9ba  benchmarks/bench_transform.cpp
+  bcaca72a7bb8dbc44bb636fc7e4da1065aa5eebc250dde1506437ad4e064c3a0  benchmarks/cufft_baseline.cu
+binaries:
+  -rwxrwxr-x 1 evgeny evgeny 1795944 2026-11-15 21:24 build-bench/benchmarks/bench_transform
+  -rwxrwxr-x 1 evgeny evgeny 1103296 2026-11-15 21:24 build-bench/benchmarks/profile_gpu3d
+gpu:
+  NVIDIA GeForce RTX 3060 Ti, 595.99.02, 33, 7.86 W, 172 MiB
+other processes on the gpu (they add noise; close what you can):
+  10293, /usr/bin/ptyxis, 37 MiB
