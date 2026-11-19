@@ -35,3 +35,7 @@ __pycache__/
 *.egg-info/
 *.so
 .pytest_cache/
+
+# Nsight Compute reports: large binaries, and every figure taken from one is
+# written into docs/ with the command that made it.
+*.ncu-rep
