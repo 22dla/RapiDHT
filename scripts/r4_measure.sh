@@ -16,7 +16,9 @@
 #
 # Writes into benchmarks/results/:
 #   <date>_<host>_r4_<tag>.json        medians of 7 repetitions (bench_transform)
-#   <date>_<host>_r4_<tag>_trace.txt   time per kernel at 128^3, 256^3, 512^3
+#   <date>_<host>_r4_<tag>_trace.txt   time per kernel at 128^3, 256^3, 512^3,
+#                                      with the SM clock and temperature
+#                                      before and after each size ("# gpu" lines)
 #   <date>_<host>_r4_<tag>.meta.txt    what exactly was measured
 #
 # Compare two runs with tools/r4_compare.py.
@@ -75,17 +77,56 @@ echo "== 3/5 record what is being measured"
 } >"$stem.meta.txt"
 cat "$stem.meta.txt"
 
-echo "== 4/5 benchmark: cuFFT and the factored path, f32 volumes, 7 repetitions"
+# The trace goes first, on a cool card, and logs the clock around each size:
+# taken right after the benchmark's 7 repetitions, the 512^3 trace moved by
+# 10-25 % on kernels whose code had not changed (2026-11-15 s4a_a, 2026-11-19
+# s4as), while the benchmark agreed with itself.
+gpu_line() {
+    nvidia-smi --query-gpu=clocks.sm,temperature.gpu,power.draw,clocks_throttle_reasons.active \
+        --format=csv,noheader,nounits 2>/dev/null \
+        | awk -F', ' -v n="$1" -v when="$2" \
+            '{ printf "n=%s # gpu %s sm_mhz=%s temp_c=%s power_w=%s throttle=%s\n", n, when, $1, $2, $3, $4 }' || true
+}
+
+# The SM clock is locked for the trace. The A-A check of 2026-11-19 (aa1,
+# aa2: the same code twice) showed why: at 512^3 every kernel took one of two
+# times, 4.34 or 3.84 ms on x, as the card went from 1665 MHz to its boost of
+# 1935-1950, and the switch came after 5 calls in one run and 13 in the other
+# -- 13 % on the total from the clock alone. 1665 MHz is the clock the card
+# holds below boost, so locking there costs no heat and needs no warm-up. The
+# benchmark is left unlocked so that its figures stay comparable with the
+# earlier ones (it runs long enough to sit at boost). Needs sudo; without it the
+# trace is taken unlocked and says so.
+trace_clock_mhz=1665
+locked=0
+if sudo nvidia-smi -lgc "$trace_clock_mhz,$trace_clock_mhz" >/dev/null; then
+    locked=1
+    trap 'sudo nvidia-smi -rgc >/dev/null || true' EXIT
+fi
+
+echo "== 4/5 time per kernel (before the benchmark, 15 calls a size)"
+: >"${stem}_trace.txt"
+if [[ $locked == 1 ]]; then
+    echo "# sm clock locked at $trace_clock_mhz MHz for the trace" | tee -a "${stem}_trace.txt"
+else
+    echo "# sm clock NOT locked (no sudo): per-kernel figures at 512^3 may move by 10-15 %" | tee -a "${stem}_trace.txt"
+fi
+for n in 128 256 512; do
+    gpu_line "$n" before | tee -a "${stem}_trace.txt"
+    env "$@" RAPIDHT_TRACE_KERNELS=1 "$profile" "$n" 15 f32 factored 2>&1 | sed "s/^/n=$n /" | tee -a "${stem}_trace.txt"
+    gpu_line "$n" after | tee -a "${stem}_trace.txt"
+done
+
+if [[ $locked == 1 ]]; then
+    sudo nvidia-smi -rgc >/dev/null || true
+    trap - EXIT
+fi
+
+echo "== 5/5 benchmark: cuFFT and the factored path, f32 volumes, 7 repetitions (clock not locked)"
 env "$@" "$bench" \
     --benchmark_filter='^(cuFFT|cuFFT_R2C|FactoredResident|FactoredResidentSeparable)/f32/3D/' \
     --benchmark_repetitions=7 --benchmark_report_aggregates_only=true \
     --benchmark_out="$stem.json" --benchmark_out_format=json
-
-echo "== 5/5 time per kernel"
-: >"${stem}_trace.txt"
-for n in 128 256 512; do
-    env "$@" RAPIDHT_TRACE_KERNELS=1 "$profile" "$n" 9 f32 factored 2>&1 | sed "s/^/n=$n /" | tee -a "${stem}_trace.txt"
-done
 
 echo
 echo "done: $stem.json"

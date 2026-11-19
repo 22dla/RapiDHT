@@ -111,8 +111,13 @@ TRACE = re.compile(r"(axis-[xyz])\([a-z]+\) ([0-9.]+) ms|(bracewell) ([0-9.]+) m
 SIZE = re.compile(r"factored\s+(\d+)\^3")
 
 
-def load_trace(path: str) -> dict[str, dict[str, float]]:
-    """'n=512' -> kernel -> median ms over the lines of the file.
+def load_trace(path: str, pick=min) -> dict[str, dict[str, float]]:
+    """'n=512' -> kernel -> `pick` (min by default) of ms over the lines.
+
+    The minimum, not the median: with the clock locked (2026-11-19, aa3/aa4)
+    the minima of two runs of the same code agree within 0.5 % on every kernel,
+    while the median of y at 512^3 still moved by 7 % -- some calls of that
+    kernel take up to 20 % longer at random, and that noise only ever adds.
 
     r4_measure.sh prefixes every line with n=<size>. Older traces (one size per
     file, no prefix) get the size from profile_gpu3d's summary line, so both
@@ -136,12 +141,29 @@ def load_trace(path: str) -> dict[str, dict[str, float]]:
                 target.setdefault(kernel, []).append(value)
     if unlabelled:
         samples.setdefault(size, {}).update(unlabelled)
-    return {key: {k: statistics.median(v) for k, v in kernels.items()} for key, kernels in samples.items()}
+    return {key: {k: pick(v) for k, v in kernels.items()} for key, kernels in samples.items()}
+
+
+GPU = re.compile(r"^(n=\d+) # gpu \w+ sm_mhz=(\d+) temp_c=(\d+)")
+
+
+def load_clocks(path: str) -> dict[str, tuple[int, int, int]]:
+    """'n=512' -> (lowest SM clock MHz, highest, highest temperature C) from the
+    '# gpu' lines r4_measure.sh writes around each size since 2026-11-19."""
+    seen: dict[str, list[tuple[int, int]]] = {}
+    with open(path, encoding="utf-8") as handle:
+        for line in handle:
+            found = GPU.match(line)
+            if found:
+                seen.setdefault(found.group(1), []).append((int(found.group(2)), int(found.group(3))))
+    return {k: (min(c for c, _ in v), max(c for c, _ in v), max(t for _, t in v)) for k, v in seen.items()}
 
 
 def compare_traces(base_path: str, new_path: str) -> None:
     base, new = load_trace(base_path), load_trace(new_path)
-    print("\nПо ядрам, медиана по строкам трассы, мс:")
+    base_med, new_med = load_trace(base_path, statistics.median), load_trace(new_path, statistics.median)
+    clocks_base, clocks_new = load_clocks(base_path), load_clocks(new_path)
+    print("\nПо ядрам, минимум по вызовам (в скобках медиана), мс:")
     shared = [key for key in new if key in base]
     if not shared:
         print("  у трасс нет общего размера — сравнивать нечего")
@@ -150,12 +172,21 @@ def compare_traces(base_path: str, new_path: str) -> None:
         for kernel, value in new[key].items():
             if kernel in base[key]:
                 old = base[key][kernel]
-                print(f"    {kernel:<10} {old:8.3f} -> {value:8.3f}  ({(value / old - 1) * 100:+6.1f} %)")
+                medians = f"   (медиана {base_med[key][kernel]:.3f} -> {new_med[key][kernel]:.3f})"
+                print(f"    {kernel:<10} {old:8.3f} -> {value:8.3f}  ({(value / old - 1) * 100:+6.1f} %){medians}")
         # Step 3.3 folds the Bracewell pass into the x pass: compare the pair.
         if "bracewell" in base[key] and "bracewell" not in new[key] and "axis-x" in new[key]:
             old = base[key]["axis-x"] + base[key]["bracewell"]
             value = new[key]["axis-x"]
             print(f"    {'x+brace':<10} {old:8.3f} -> {value:8.3f}  ({(value / old - 1) * 100:+6.1f} %)  (x and Bracewell in one pass)")
+        # The clock around the size (traces from 2026-11-19 on): a gap of more
+        # than 3 % between the runs makes the per-kernel numbers suspect.
+        if key in clocks_base and key in clocks_new:
+            (lo_b, hi_b, t_b), (lo_n, hi_n, t_n) = clocks_base[key], clocks_new[key]
+            warn = ""
+            if max(hi_b, hi_n) > 1.03 * min(lo_b, lo_n):
+                warn = "  ← частоты разошлись больше чем на 3 %: сравнение по ядрам ненадёжно"
+            print(f"    частота SM  {lo_b}-{hi_b} -> {lo_n}-{hi_n} МГц, до {t_b} -> {t_n} °C{warn}")
 
 
 def main() -> None:

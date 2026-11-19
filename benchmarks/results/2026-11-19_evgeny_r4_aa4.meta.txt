@@ -1,0 +1,36 @@
+tag: aa4
+date: 2026-11-19T21:50:08+04:00
+settings: (none)
+commit: e9eb58f7d85f8c9b536e2e486126395e45eb563c
+uncommitted:
+   M CLAUDE.md
+   M docs/R4_PLAN.md
+   M scripts/r4_measure.sh
+   M tools/r4_compare.py
+  ?? benchmarks/results/2026-11-19_evgeny_r4_aa1.json
+  ?? benchmarks/results/2026-11-19_evgeny_r4_aa1.meta.txt
+  ?? benchmarks/results/2026-11-19_evgeny_r4_aa1_trace.txt
+  ?? benchmarks/results/2026-11-19_evgeny_r4_aa2.json
+  ?? benchmarks/results/2026-11-19_evgeny_r4_aa2.meta.txt
+  ?? benchmarks/results/2026-11-19_evgeny_r4_aa2_trace.txt
+  ?? benchmarks/results/2026-11-19_evgeny_r4_aa3.json
+  ?? benchmarks/results/2026-11-19_evgeny_r4_aa3.meta.txt
+  ?? benchmarks/results/2026-11-19_evgeny_r4_aa3_trace.txt
+  ?? benchmarks/results/2026-11-19_evgeny_r4_aa4.meta.txt
+sources:
+  2cc5d55d4280322c8176bb40851727925ead3598bbdf9f19cf8807c368c80942  src/internal/factored_kernels.cuh
+  627801baf6b0857b8234d003ecac05b624741e18fe78d2c5dea3983c625a3b5a  src/kernels.cu
+  00219f6acfe6d833b60361ba32e0e33aadb91e124e238d5bc2ae6a6de9771ecb  src/backend_cuda.cpp
+  36501266c19eb17add2cdbf0afc3085348713f02e60222c38822340b3d91775f  src/internal/kernels.h
+  1a375ecd95a67d44792b9ffb3c8e02e8dd84c73ee1baaa6b43f323ce3e10e9ba  benchmarks/bench_transform.cpp
+  bcaca72a7bb8dbc44bb636fc7e4da1065aa5eebc250dde1506437ad4e064c3a0  benchmarks/cufft_baseline.cu
+binaries:
+  -rwxrwxr-x 1 evgeny evgeny 1812392 2026-11-19 21:21 build-bench/benchmarks/bench_transform
+  -rwxrwxr-x 1 evgeny evgeny 1119744 2026-11-19 21:21 build-bench/benchmarks/profile_gpu3d
+gpu:
+  NVIDIA GeForce RTX 3060 Ti, 595.99.02, 46, 8.40 W, 449 MiB
+other processes on the gpu (they add noise; close what you can):
+  4580, /usr/libexec/gnome-remote-desktop-daemon, 134 MiB
+  7730, /usr/bin/ptyxis, 55 MiB
+  4972, /usr/libexec/xdg-desktop-portal-gnome, 4 MiB
+  6165, /snap/snapd-desktop-integration/391/usr/bin/snapd-desktop-integration, 5 MiB
