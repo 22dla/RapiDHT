@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # One measurement of the R-4 track, the way docs/R4_PLAN.md requires it.
 #
+#   R4_NO_CUFFT=1 bash scripts/r4_measure.sh <tag> ...   # sweeps: no cuFFT rows
 #   bash scripts/r4_measure.sh <tag> [VAR=value ...]
 #
 #   bash scripts/r4_measure.sh base                           # the code as it stands
@@ -123,8 +124,17 @@ if [[ $locked == 1 ]]; then
 fi
 
 echo "== 5/5 benchmark: cuFFT and the factored path, f32 volumes, 7 repetitions (clock not locked)"
+# R4_NO_CUFFT=1 leaves cuFFT out -- for sweeps that compare RapiDHT variants
+# with each other, about 40 s a run. Keep it in for A-B runs and published
+# ratios: cuFFT is the same program in A and B, so its time is a free A-A
+# check of the conditions, and a ratio is only fair from the same session.
+filter='^(cuFFT|cuFFT_R2C|FactoredResident|FactoredResidentSeparable)/f32/3D/'
+if [[ ${R4_NO_CUFFT:-0} == 1 ]]; then
+    filter='^(FactoredResident|FactoredResidentSeparable)/f32/3D/'
+    echo "   (cuFFT left out: R4_NO_CUFFT=1)"
+fi
 env "$@" "$bench" \
-    --benchmark_filter='^(cuFFT|cuFFT_R2C|FactoredResident|FactoredResidentSeparable)/f32/3D/' \
+    --benchmark_filter="$filter" \
     --benchmark_repetitions=7 --benchmark_report_aggregates_only=true \
     --benchmark_out="$stem.json" --benchmark_out_format=json
 
