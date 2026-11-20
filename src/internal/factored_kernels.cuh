@@ -402,8 +402,10 @@ __device__ __forceinline__ Pow2 MakePow2(int x)
 }
 
 /// FactoredTwiddle with the divisions replaced by shifts; same formulas.
+/// Inlined so that the sizes of a specialized kernel (step 4D) reach it as
+/// constants.
 template <typename T>
-__device__ void FactoredTwiddlePow2(T* work, const FactoredAxisTables<T>& t, Pow2 lanes, Pow2 n2, int workStride)
+__device__ __forceinline__ void FactoredTwiddlePow2(T* work, const FactoredAxisTables<T>& t, Pow2 lanes, Pow2 n2, int workStride)
 {
     const int n1 = t.n1;
     const int pairCount = (n1 / 2 > 1) ? (n1 / 2 - 1) : 0;
@@ -820,14 +822,60 @@ __device__ __forceinline__ void FactoredRecombineQuad(
 }
 
 /*
+ * R-4 step 4D: kernels specialized at compile time for one length n (kN) and
+ * one batch width (kLanes); 0 keeps them runtime. The bodies overwrite their
+ * copies of the sizes with the constants before anything reads them, so every
+ * loop bound, shift and mask below -- through the force-inlined helpers --
+ * becomes a constant: the passes along x and y at 512^3 are limited by the SM's
+ * instructions, not by memory (they scale with the SM clock, R4_PLAN 4.P).
+ * FactoredN1Of is SplitLength's rule (factored.cpp): n1 = 2^ceil(log2(n) / 2).
+ */
+__host__ __device__ constexpr int FactoredN1Of(int n)
+{
+    int log2n = 0;
+    while ((1 << log2n) < n) {
+        ++log2n;
+    }
+    return 1 << ((log2n + 1) / 2);
+}
+
+/// FactoredWorkStride of kernels.h as a constant for a specialized kernel.
+template <typename T>
+__host__ __device__ constexpr int FactoredWorkStrideOf(int n2, int lanes)
+{
+    return n2 * lanes
+         + ((static_cast<size_t>(n2) * static_cast<size_t>(lanes) * sizeof(T)) % 128 == 0
+                 ? lanes * 4 / static_cast<int>(sizeof(T))
+                 : 0);
+}
+
+/// The constants of a specialized kernel into the kernel's own copies.
+template <typename T, int kN, int kLanes>
+__device__ __forceinline__ void FactoredSpecialize(FactoredAxisTables<T>& t, int& lanes, int& workStride)
+{
+    if constexpr (kN != 0) {
+        constexpr int kN1 = FactoredN1Of(kN);
+        t.n = kN;
+        t.n1 = kN1;
+        t.n2 = kN / kN1;
+        if constexpr (kLanes != 0) {
+            constexpr int kWorkStride = FactoredWorkStrideOf<T>(kN / kN1, kLanes);
+            lanes = kLanes;
+            workStride = kWorkStride;
+        }
+    }
+}
+
+/*
  * Requires n1, n2 and lanes to be multiples of 4 and blockDim.x * kMaxQuads
  * >= n * lanes / 4. Shared memory exactly as FactoredAxisKernelFast.
  */
-template <typename T, int kMaxQuads, int kItems, bool kFold>
+template <typename T, int kMaxQuads, int kItems, bool kFold, int kN, int kLanes>
 __device__ __forceinline__ void PipelinedAxisBody(T* data, FactoredAxisTables<T> t, size_t axisStride, size_t laneStride,
     int lanes, int blocksPerOther, size_t otherStride, int batches, int workStride, bool vec, int ablate)
 {
     extern __shared__ __align__(16) unsigned char sharedPipe[];
+    FactoredSpecialize<T, kN, kLanes>(t, lanes, workStride);
     const int n = t.n;
     const int n1 = t.n1;
     const int n2 = t.n2;
@@ -917,22 +965,22 @@ __device__ __forceinline__ void PipelinedAxisBody(T* data, FactoredAxisTables<T>
 
 /// The pipelined axis kernel of v2.3 (work buffer): no launch bounds, so the
 /// compiler allocates registers exactly as it did before step 4B.
-template <typename T, int kMaxQuads, bool kFold>
+template <typename T, int kMaxQuads, bool kFold, int kN = 0, int kLanes = 0>
 __global__ void FactoredAxisKernelPipelined(T* data, FactoredAxisTables<T> t, size_t axisStride, size_t laneStride,
     int lanes, int blocksPerOther, size_t otherStride, int batches, int workStride, bool vec, int ablate)
 {
-    PipelinedAxisBody<T, kMaxQuads, 0, kFold>(
+    PipelinedAxisBody<T, kMaxQuads, 0, kFold, kN, kLanes>(
         data, t, axisStride, laneStride, lanes, blocksPerOther, otherStride, batches, workStride, vec, ablate);
 }
 
 /// The same with the steps in place (R-4 step 4B), kItems tiles a thread,
 /// built for kMinBlocks blocks to an SM.
-template <typename T, int kMaxQuads, int kItems, int kMinBlocks, bool kFold>
+template <typename T, int kMaxQuads, int kItems, int kMinBlocks, bool kFold, int kN = 0, int kLanes = 0>
 __global__ void __launch_bounds__(256, kMinBlocks) FactoredAxisKernelInPlace(T* data, FactoredAxisTables<T> t,
     size_t axisStride, size_t laneStride, int lanes, int blocksPerOther, size_t otherStride, int batches,
     int workStride, bool vec, int ablate)
 {
-    PipelinedAxisBody<T, kMaxQuads, kItems, kFold>(
+    PipelinedAxisBody<T, kMaxQuads, kItems, kFold, kN, kLanes>(
         data, t, axisStride, laneStride, lanes, blocksPerOther, otherStride, batches, workStride, vec, ablate);
 }
 
@@ -989,11 +1037,12 @@ __device__ __forceinline__ void GroupLoad(const T* data, int batch, T (&reg)[kMa
     }
 }
 
-template <typename T, int kMaxQuads, int kItems, bool kFold>
+template <typename T, int kMaxQuads, int kItems, bool kFold, int kN, int kLanes>
 __device__ __forceinline__ void FusedLastBody(T* data, FactoredAxisTables<T> t, int H, int D, int groupsY,
     int groups, int lanes, int batches, int workStride)
 {
     extern __shared__ __align__(16) unsigned char sharedPipe[];
+    FactoredSpecialize<T, kN, kLanes>(t, lanes, workStride);
     const int n = t.n;
     const int n1 = t.n1;
     const int n2 = t.n2;
@@ -1084,19 +1133,19 @@ __device__ __forceinline__ void FusedLastBody(T* data, FactoredAxisTables<T> t, 
 }
 
 /// The fused last pass through a work buffer (step 3.3), no launch bounds.
-template <typename T, int kMaxQuads, bool kFold>
+template <typename T, int kMaxQuads, bool kFold, int kN = 0, int kLanes = 0>
 __global__ void FactoredLastAxisBracewellKernel(T* data, FactoredAxisTables<T> t, int H, int D, int groupsY,
     int groups, int lanes, int batches, int workStride)
 {
-    FusedLastBody<T, kMaxQuads, 0, kFold>(data, t, H, D, groupsY, groups, lanes, batches, workStride);
+    FusedLastBody<T, kMaxQuads, 0, kFold, kN, kLanes>(data, t, H, D, groupsY, groups, lanes, batches, workStride);
 }
 
 /// The fused last pass with the steps in place (step 4B).
-template <typename T, int kMaxQuads, int kItems, int kMinBlocks, bool kFold>
+template <typename T, int kMaxQuads, int kItems, int kMinBlocks, bool kFold, int kN = 0, int kLanes = 0>
 __global__ void __launch_bounds__(256, kMinBlocks) FactoredLastAxisBracewellKernelInPlace(T* data,
     FactoredAxisTables<T> t, int H, int D, int groupsY, int groups, int lanes, int batches, int workStride)
 {
-    FusedLastBody<T, kMaxQuads, kItems, kFold>(data, t, H, D, groupsY, groups, lanes, batches, workStride);
+    FusedLastBody<T, kMaxQuads, kItems, kFold, kN, kLanes>(data, t, H, D, groupsY, groups, lanes, batches, workStride);
 }
 
 /// Mirror of an index along an axis of length n: (n - i) mod n.

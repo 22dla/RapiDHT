@@ -16,6 +16,7 @@
 #include <cstdint>
 #include <cstdlib>
 #include <cstring>
+#include <type_traits>
 #include <utility>
 #include <vector>
 
@@ -365,12 +366,16 @@ struct FactoredDeviceInfo {
     int optIn = 48 * 1024;
     int sms = 1;
     size_t fastSharedOptIn = 48 * 1024;
-    /// Per pipelined kernel variant (kFactoredSlots of them): the largest
-    /// dynamic shared size its attribute is set to, and shared bytes -> blocks
-    /// per SM.
-    size_t slotSharedOptIn[8] = { 48 * 1024, 48 * 1024, 48 * 1024, 48 * 1024, 48 * 1024, 48 * 1024, 48 * 1024,
-        48 * 1024 };
-    std::vector<std::pair<size_t, int>> slotBlocksPerSm[8];
+    /// Per pipelined kernel -- keyed by the kernel itself: since step 4D a
+    /// variant has several instantiations, one per specialized size, and each
+    /// has its own registers and so its own occupancy -- the largest dynamic
+    /// shared size its attribute is set to, and shared bytes -> blocks per SM.
+    struct KernelInfo {
+        const void* kernel = nullptr;
+        size_t sharedOptIn = 48 * 1024;
+        std::vector<std::pair<size_t, int>> blocksPerSm;
+    };
+    std::vector<KernelInfo> kernels;
 };
 
 template <typename T>
@@ -409,14 +414,25 @@ bool PipelinedFits(size_t n, size_t n1, size_t n2, size_t lanes, int optIn)
 
 /// Blocks of `kernel` resident on one SM at this shared size, asked once.
 template <typename Kernel>
-int FactoredBlocksPerSm(FactoredDeviceInfo& info, int slot, Kernel kernel, size_t sharedBytes)
+int FactoredBlocksPerSm(FactoredDeviceInfo& info, Kernel kernel, size_t sharedBytes)
 {
-    if (sharedBytes > info.slotSharedOptIn[slot]) {
+    const void* key = reinterpret_cast<const void*>(kernel);
+    FactoredDeviceInfo::KernelInfo* entry = nullptr;
+    for (auto& known : info.kernels) {
+        if (known.kernel == key) {
+            entry = &known;
+        }
+    }
+    if (entry == nullptr) {
+        info.kernels.push_back({ key, 48 * 1024, {} });
+        entry = &info.kernels.back();
+    }
+    if (sharedBytes > entry->sharedOptIn) {
         RAPIDHT_CUDA_CHECK(
             cudaFuncSetAttribute(kernel, cudaFuncAttributeMaxDynamicSharedMemorySize, static_cast<int>(sharedBytes)));
-        info.slotSharedOptIn[slot] = sharedBytes;
+        entry->sharedOptIn = sharedBytes;
     }
-    for (const auto& known : info.slotBlocksPerSm[slot]) {
+    for (const auto& known : entry->blocksPerSm) {
         if (known.first == sharedBytes) {
             return known.second;
         }
@@ -424,7 +440,7 @@ int FactoredBlocksPerSm(FactoredDeviceInfo& info, int slot, Kernel kernel, size_
     int perSm = 0;
     RAPIDHT_CUDA_CHECK(cudaOccupancyMaxActiveBlocksPerMultiprocessor(&perSm, kernel, kFactoredThreads, sharedBytes));
     perSm = perSm > 0 ? perSm : 1;
-    info.slotBlocksPerSm[slot].emplace_back(sharedBytes, perSm);
+    entry->blocksPerSm.emplace_back(sharedBytes, perSm);
     return perSm;
 }
 
@@ -441,13 +457,10 @@ int FactoredBlocksPerSm(FactoredDeviceInfo& info, int slot, Kernel kernel, size_
  *    x, the fused pass, two blocks capped at 128 registers (3.96 -> 3.79);
  *    y one block with 140 registers (4.50 -> 3.96) -- capped to two blocks it
  *    takes 6.71 ms, with no spill (STACK 0), cause not measured.
- * Slot: the index of the variant in FactoredDeviceInfo's caches, 0-3 for the
- * axis kernel and 4-7 for the fused pass.
  */
 struct FactoredPath {
     int items;
     int minBlocks;
-    int slot;
 };
 
 /*
@@ -469,72 +482,155 @@ FactoredPath FactoredPathFor(size_t n, size_t lanes, int axis) // axis 0 = x, 1 
     const size_t items = (n * lanes / 16 + kFactoredThreads - 1) / kFactoredThreads;
     const bool inPlace = items <= kFactoredMaxItems && (n >= 512 || (axis == 2 && n == 256));
     if (!inPlace) {
-        return { 0, 0, 0 };
+        return { 0, 0 };
     }
     if (items == 2) {
-        return { 2, 1, 3 };
+        return { 2, 1 };
     }
-    return axis == 1 ? FactoredPath { 1, 1, 1 } : FactoredPath { 1, 2, 2 };
+    return axis == 1 ? FactoredPath { 1, 1 } : FactoredPath { 1, 2 };
 }
 
-template <typename T, int kItems, int kMinBlocks>
-void LaunchPipelinedAxis(FactoredDeviceInfo& info, int slot, size_t batches, size_t sharedBytes, T* data,
+template <typename T, int kItems, int kMinBlocks, int kN, int kLanes>
+void LaunchPipelinedAxisAs(FactoredDeviceInfo& info, size_t batches, size_t sharedBytes, T* data,
     const FactoredAxisTables<T>& tables, size_t axisStride, size_t laneStride, size_t lanes, size_t blocksPerOther,
     size_t otherStride, int workStride, bool vec)
 {
+    constexpr bool kFold = FactoredFoldsTwiddle(false, kItems);
     int perSm = 0;
     if constexpr (kItems == 0) {
-        perSm = FactoredBlocksPerSm(info, slot,
-            FactoredAxisKernelPipelined<T, kFactoredMaxQuads, FactoredFoldsTwiddle(false, kItems)>, sharedBytes);
-    } else {
         perSm = FactoredBlocksPerSm(
-            info, slot,
-            FactoredAxisKernelInPlace<T, kFactoredMaxQuads, kItems, kMinBlocks, FactoredFoldsTwiddle(false, kItems)>,
-            sharedBytes);
+            info, FactoredAxisKernelPipelined<T, kFactoredMaxQuads, kFold, kN, kLanes>, sharedBytes);
+    } else {
+        perSm = FactoredBlocksPerSm(info,
+            FactoredAxisKernelInPlace<T, kFactoredMaxQuads, kItems, kMinBlocks, kFold, kN, kLanes>, sharedBytes);
     }
     const size_t resident = static_cast<size_t>(perSm) * static_cast<size_t>(info.sms);
     const unsigned int grid = static_cast<unsigned int>(batches < resident ? batches : resident);
+    const int lanesI = static_cast<int>(lanes);
+    const int perOther = static_cast<int>(blocksPerOther);
+    const int batchesI = static_cast<int>(batches);
     if constexpr (kItems == 0) {
-        FactoredAxisKernelPipelined<T, kFactoredMaxQuads, FactoredFoldsTwiddle(false, kItems)><<<grid, kFactoredThreads, sharedBytes>>>(data, tables,
-            axisStride, laneStride, static_cast<int>(lanes), static_cast<int>(blocksPerOther), otherStride,
-            static_cast<int>(batches), workStride, vec, FactoredAblateMode());
+        FactoredAxisKernelPipelined<T, kFactoredMaxQuads, kFold, kN, kLanes><<<grid, kFactoredThreads, sharedBytes>>>(
+            data, tables, axisStride, laneStride, lanesI, perOther, otherStride, batchesI, workStride, vec,
+            FactoredAblateMode());
     } else {
-        FactoredAxisKernelInPlace<T, kFactoredMaxQuads, kItems, kMinBlocks, FactoredFoldsTwiddle(false, kItems)><<<grid, kFactoredThreads, sharedBytes>>>(
-            data, tables, axisStride, laneStride, static_cast<int>(lanes), static_cast<int>(blocksPerOther),
-            otherStride, static_cast<int>(batches), workStride, vec, FactoredAblateMode());
+        FactoredAxisKernelInPlace<T, kFactoredMaxQuads, kItems, kMinBlocks, kFold, kN, kLanes>
+            <<<grid, kFactoredThreads, sharedBytes>>>(data, tables, axisStride, laneStride, lanesI, perOther,
+                otherStride, batchesI, workStride, vec, FactoredAblateMode());
     }
     RAPIDHT_CUDA_CHECK(cudaGetLastError());
 }
 
-template <typename T, int kItems, int kMinBlocks>
-void LaunchFusedLast(FactoredDeviceInfo& info, int slot, size_t batches, size_t sharedBytes, T* data,
+template <typename T, int kItems, int kMinBlocks, int kN, int kLanes>
+void LaunchFusedLastAs(FactoredDeviceInfo& info, size_t batches, size_t sharedBytes, T* data,
     const FactoredAxisTables<T>& tables, size_t H, size_t D, size_t groupsY, size_t groups, size_t lanes,
     int workStride)
 {
+    constexpr bool kFold = FactoredFoldsTwiddle(true, kItems);
     int perSm = 0;
     if constexpr (kItems == 0) {
-        perSm = FactoredBlocksPerSm(info, slot,
-            FactoredLastAxisBracewellKernel<T, kFactoredMaxQuads, FactoredFoldsTwiddle(true, kItems)>, sharedBytes);
-    } else {
         perSm = FactoredBlocksPerSm(
-            info, slot,
-            FactoredLastAxisBracewellKernelInPlace<T, kFactoredMaxQuads, kItems, kMinBlocks,
-                FactoredFoldsTwiddle(true, kItems)>,
+            info, FactoredLastAxisBracewellKernel<T, kFactoredMaxQuads, kFold, kN, kLanes>, sharedBytes);
+    } else {
+        perSm = FactoredBlocksPerSm(info,
+            FactoredLastAxisBracewellKernelInPlace<T, kFactoredMaxQuads, kItems, kMinBlocks, kFold, kN, kLanes>,
             sharedBytes);
     }
     const size_t resident = static_cast<size_t>(perSm) * static_cast<size_t>(info.sms);
     const unsigned int grid = static_cast<unsigned int>(batches < resident ? batches : resident);
+    const int Hi = static_cast<int>(H);
+    const int Di = static_cast<int>(D);
+    const int gy = static_cast<int>(groupsY);
+    const int gs = static_cast<int>(groups);
+    const int lanesI = static_cast<int>(lanes);
+    const int batchesI = static_cast<int>(batches);
     if constexpr (kItems == 0) {
-        FactoredLastAxisBracewellKernel<T, kFactoredMaxQuads, FactoredFoldsTwiddle(true, kItems)><<<grid, kFactoredThreads, sharedBytes>>>(data, tables,
-            static_cast<int>(H), static_cast<int>(D), static_cast<int>(groupsY), static_cast<int>(groups),
-            static_cast<int>(lanes), static_cast<int>(batches), workStride);
+        FactoredLastAxisBracewellKernel<T, kFactoredMaxQuads, kFold, kN, kLanes>
+            <<<grid, kFactoredThreads, sharedBytes>>>(data, tables, Hi, Di, gy, gs, lanesI, batchesI, workStride);
     } else {
-        FactoredLastAxisBracewellKernelInPlace<T, kFactoredMaxQuads, kItems, kMinBlocks,
-            FactoredFoldsTwiddle(true, kItems)><<<grid, kFactoredThreads, sharedBytes>>>(data, tables, static_cast<int>(H), static_cast<int>(D),
-            static_cast<int>(groupsY), static_cast<int>(groups), static_cast<int>(lanes),
-            static_cast<int>(batches), workStride);
+        FactoredLastAxisBracewellKernelInPlace<T, kFactoredMaxQuads, kItems, kMinBlocks, kFold, kN, kLanes>
+            <<<grid, kFactoredThreads, sharedBytes>>>(data, tables, Hi, Di, gy, gs, lanesI, batchesI, workStride);
     }
     RAPIDHT_CUDA_CHECK(cudaGetLastError());
+}
+
+/*
+ * R-4 step 4D: kernels compiled for one (length, batch width) -- the sizes
+ * become constants (FactoredSpecialize in factored_kernels.cuh). Only where
+ * that won: specialized everywhere it made 256^3 and 512^3 13-15 % slower
+ * (benchmarks/results/2026-11-20_*_r4_s4d*, f32, sm_86), and per kernel it
+ * both won and lost. The register counts explain the worst loss: the in-place
+ * y pass at 512^3 went from 150 to 96 registers, so two blocks fit an SM
+ * instead of one -- and that pass is 1.5 times slower with two blocks, as in
+ * step 4B. So, from the per-kernel traces at a locked clock:
+ *  - fused x pass: 128 x 16 and 256 x 16 through the work buffer (-9..-11 %),
+ *    512 x 8 in place (-16 %);
+ *  - axis kernel: 128 x 16 through the work buffer (z, y -6 %), 512 x 16 in
+ *    place with two tiles a thread (z, -9 %).
+ * Not specialized: y at 512 (one block wins), z at 256 in place (+8 %), y at
+ * 256 (the minimum -15 % but the median +2 %, and 256^3 lost 13 % in the
+ * benchmark), the separable x pass (not traced), 1024 (not measured), double.
+ */
+constexpr bool FactoredSpecializes(bool fused, int items, int minBlocks, int n, int lanes)
+{
+    if (fused) {
+        return (items == 0 && lanes == 16 && (n == 128 || n == 256))
+            || (items == 1 && minBlocks == 2 && n == 512 && lanes == 8);
+    }
+    return (items == 0 && n == 128 && lanes == 16) || (items == 2 && n == 512 && lanes == 16);
+}
+
+/// Calls `launch` with std::integral_constant<int, n> and <int, lanes> of the
+/// specialized kernel when FactoredSpecializes says so, with <0>, <0> -- the
+/// runtime-sized kernel -- otherwise.
+template <typename T, bool kFused, int kItems, int kMinBlocks, typename Launch>
+void FactoredDispatchSize(const FactoredAxisTables<T>& tables, size_t lanes, Launch&& launch)
+{
+    const int n = tables.n;
+    const int l = static_cast<int>(lanes);
+    auto as = [&](auto kN, auto kL) -> bool {
+        constexpr int kNv = decltype(kN)::value;
+        constexpr int kLv = decltype(kL)::value;
+        if constexpr (FactoredSpecializes(kFused, kItems, kMinBlocks, kNv, kLv)) {
+            if (n == kNv && l == kLv && tables.n1 == FactoredN1Of(kNv)) {
+                launch(kN, kL);
+                return true;
+            }
+        }
+        return false;
+    };
+    if constexpr (std::is_same_v<T, float>) {
+        using std::integral_constant;
+        if (as(integral_constant<int, 128> {}, integral_constant<int, 16> {})
+            || as(integral_constant<int, 256> {}, integral_constant<int, 16> {})
+            || as(integral_constant<int, 512> {}, integral_constant<int, 8> {})
+            || as(integral_constant<int, 512> {}, integral_constant<int, 16> {})) {
+            return;
+        }
+    }
+    launch(std::integral_constant<int, 0> {}, std::integral_constant<int, 0> {});
+}
+
+template <typename T, int kItems, int kMinBlocks>
+void LaunchPipelinedAxis(FactoredDeviceInfo& info, size_t batches, size_t sharedBytes, T* data,
+    const FactoredAxisTables<T>& tables, size_t axisStride, size_t laneStride, size_t lanes, size_t blocksPerOther,
+    size_t otherStride, int workStride, bool vec)
+{
+    FactoredDispatchSize<T, false, kItems, kMinBlocks>(tables, lanes, [&](auto kN, auto kL) {
+        LaunchPipelinedAxisAs<T, kItems, kMinBlocks, decltype(kN)::value, decltype(kL)::value>(info, batches,
+            sharedBytes, data, tables, axisStride, laneStride, lanes, blocksPerOther, otherStride, workStride, vec);
+    });
+}
+
+template <typename T, int kItems, int kMinBlocks>
+void LaunchFusedLast(FactoredDeviceInfo& info, size_t batches, size_t sharedBytes, T* data,
+    const FactoredAxisTables<T>& tables, size_t H, size_t D, size_t groupsY, size_t groups, size_t lanes,
+    int workStride)
+{
+    FactoredDispatchSize<T, true, kItems, kMinBlocks>(tables, lanes, [&](auto kN, auto kL) {
+        LaunchFusedLastAs<T, kItems, kMinBlocks, decltype(kN)::value, decltype(kL)::value>(
+            info, batches, sharedBytes, data, tables, H, D, groupsY, groups, lanes, workStride);
+    });
 }
 
 } // namespace
@@ -597,16 +693,16 @@ void FactoredAxis(T* data, const FactoredAxisTables<T>& tables, size_t axisStrid
                               && reinterpret_cast<uintptr_t>(data) % 16 == 0;
                 const int ws = static_cast<int>(FactoredWorkStride<T>(n2, lanes));
                 if (path.items == 0) {
-                    LaunchPipelinedAxis<T, 0, 0>(info, path.slot, batches, sharedBytes, data, tables, axisStride,
+                    LaunchPipelinedAxis<T, 0, 0>(info, batches, sharedBytes, data, tables, axisStride,
                         laneStride, lanes, blocksPerOther, otherStride, ws, vec);
                 } else if (path.items == 2) {
-                    LaunchPipelinedAxis<T, 2, 1>(info, path.slot, batches, sharedBytes, data, tables, axisStride,
+                    LaunchPipelinedAxis<T, 2, 1>(info, batches, sharedBytes, data, tables, axisStride,
                         laneStride, lanes, blocksPerOther, otherStride, ws, vec);
                 } else if (path.minBlocks == 1) {
-                    LaunchPipelinedAxis<T, 1, 1>(info, path.slot, batches, sharedBytes, data, tables, axisStride,
+                    LaunchPipelinedAxis<T, 1, 1>(info, batches, sharedBytes, data, tables, axisStride,
                         laneStride, lanes, blocksPerOther, otherStride, ws, vec);
                 } else {
-                    LaunchPipelinedAxis<T, 1, 2>(info, path.slot, batches, sharedBytes, data, tables, axisStride,
+                    LaunchPipelinedAxis<T, 1, 2>(info, batches, sharedBytes, data, tables, axisStride,
                         laneStride, lanes, blocksPerOther, otherStride, ws, vec);
                 }
                 return;
@@ -673,19 +769,18 @@ bool FactoredLastAxisBracewell(T* data, const FactoredAxisTables<T>& tables, siz
         return false;
     }
     const FactoredPath path = FactoredPathFor(n, lanes, 0);
-    const int slot = path.slot + 4;
     const size_t perBatch = lanes / 4;
     const size_t batches = (groups + perBatch - 1) / perBatch;
     const size_t sharedBytes = PipelinedSharedBytes<T>(n, n1, n2, lanes, path.items != 0);
     const int ws = static_cast<int>(FactoredWorkStride<T>(n2, lanes));
     if (path.items == 0) {
-        LaunchFusedLast<T, 0, 0>(info, slot, batches, sharedBytes, data, tables, H, D, groupsY, groups, lanes, ws);
+        LaunchFusedLast<T, 0, 0>(info, batches, sharedBytes, data, tables, H, D, groupsY, groups, lanes, ws);
     } else if (path.items == 2) {
-        LaunchFusedLast<T, 2, 1>(info, slot, batches, sharedBytes, data, tables, H, D, groupsY, groups, lanes, ws);
+        LaunchFusedLast<T, 2, 1>(info, batches, sharedBytes, data, tables, H, D, groupsY, groups, lanes, ws);
     } else if (path.minBlocks == 1) {
-        LaunchFusedLast<T, 1, 1>(info, slot, batches, sharedBytes, data, tables, H, D, groupsY, groups, lanes, ws);
+        LaunchFusedLast<T, 1, 1>(info, batches, sharedBytes, data, tables, H, D, groupsY, groups, lanes, ws);
     } else {
-        LaunchFusedLast<T, 1, 2>(info, slot, batches, sharedBytes, data, tables, H, D, groupsY, groups, lanes, ws);
+        LaunchFusedLast<T, 1, 2>(info, batches, sharedBytes, data, tables, H, D, groupsY, groups, lanes, ws);
     }
     return true;
 }

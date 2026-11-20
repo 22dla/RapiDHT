@@ -333,6 +333,13 @@ and 12.0 ms — **0.83, 0.89 and 1.12 times cuFFT** with its conversion.
 Per-kernel traces at 512³ from `profile_gpu3d` run right after the benchmark
 proved unreliable in this step and in `…_r4_s4a_a` (kernels whose code did
 not change moved by 10-25 %); the benchmark figures are the ones to trust.
+That noise was the GPU boosting its clock part-way through a trace; since
+2026-11-19 the trace runs at a locked 1665 MHz and per-kernel figures are
+compared by their minima (`scripts/r4_measure.sh`, A-A check within 0.5 %).
+With the sizes compiled in as constants for the kernels where that wins
+(fused x pass at 128/256/512, the axis kernel at 128, z at 512; step 4D,
+`…_r4_s4ds{_a,}.json`, 2026-11-20, back to back): 145 µs, 1.15 ms and
+11.26 ms — **0.83, 0.86 and 1.05 times cuFFT** with its conversion.
 
 The axes differ only from 512³ up; at 128³ and 256³ all three take the same
 time (2.3 and 1.7 Bracewell passes).

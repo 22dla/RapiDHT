@@ -58,6 +58,7 @@ inline double2 make_double2(double x, double y)
 
 #define __global__
 #define __device__
+#define __host__
 #define __forceinline__ inline
 #define __restrict__
 #define __shared__
@@ -513,5 +514,129 @@ TEST(FactoredKernels, Step1OrderPairsMirrorFrequencies)
             EXPECT_LT(lo, n1 / 2) << "slot " << p;
             EXPECT_EQ(FactoredStep1Order(p + 1, n1), n1 - lo) << "slot " << p;
         }
+    }
+}
+
+// R-4 step 4D: kernels compiled for one (length, batch width) against the same
+// kernels with runtime sizes, for every pair the launcher specializes and the
+// variant (work buffer or in place, twiddle folded or not) it uses it with.
+// The runtime-sized kernels are checked against the definition above; here the
+// lengths are the real ones (128..1024), too long for the O(N^2) reference.
+// One host thread holds a whole batch: up to 1024 x 8 values, so the register
+// budgets of these instantiations are larger than kHostMaxQuads / kHostItems.
+constexpr int kBigQuads = 2048;
+
+double MaxAbsDifference(const std::vector<double>& a, const std::vector<double>& b)
+{
+    double m = 0;
+    for (size_t i = 0; i < a.size(); ++i) {
+        m = std::max(m, std::abs(a[i] - b[i]));
+    }
+    return m;
+}
+constexpr int kBigItems = 512;
+
+// kN, kL: the specialization (0, 0 = runtime sizes); n, lanes: the real ones.
+template <typename T, int kItems, bool kFold, int kN, int kL>
+std::vector<double> RunAxisX(const std::vector<double>& input, size_t n, size_t lanes, size_t D)
+{
+    std::vector<T> v(input.begin(), input.end());
+    const auto t = MakeAxisTables<T>(n);
+    const size_t W = n, H = lanes;
+    const int L = static_cast<int>(lanes);
+    const int ws = static_cast<int>(FactoredWorkStride<T>(static_cast<size_t>(t.view.n2), H));
+    blockDim = { 1, 1, 1 };
+    threadIdx = { 0, 0, 0 };
+    gridDim = { static_cast<unsigned>(D), 1, 1 };
+    for (size_t b = 0; b < D; ++b) {
+        blockIdx = { static_cast<unsigned>(b), 0, 0 };
+        // A batch is the H lines of one z-plane; the lane axis is y.
+        if constexpr (kItems == 0) {
+            FactoredAxisKernelPipelined<T, kBigQuads, kFold, kN, kL>(v.data(), t.view, 1, W, L, 1, W * H,
+                static_cast<int>(D), ws, false, kAblateNone);
+        } else {
+            FactoredAxisKernelInPlace<T, kBigQuads, kBigItems, 1, kFold, kN, kL>(v.data(), t.view, 1, W, L, 1,
+                W * H, static_cast<int>(D), ws, false, kAblateNone);
+        }
+    }
+    return std::vector<double>(v.begin(), v.end());
+}
+
+template <typename T, int kItems, bool kFold, int kN, int kL>
+void ExpectAxisSpecializationMatches(double tolerance)
+{
+    SCOPED_TRACE("n " + std::to_string(kN) + ", " + std::to_string(kL) + " lines, "
+                 + (kItems == 0 ? "work buffer" : "in place") + (kFold ? ", twiddle in step 1" : ""));
+    const size_t D = 3;
+    const auto input = MakeSignal(static_cast<size_t>(kN) * kL * D);
+    const size_t n = kN, lanes = kL;
+    const auto specialized = RunAxisX<T, kItems, kFold, kN, kL>(input, n, lanes, D);
+    ExpectClose(specialized, RunAxisX<T, kItems, kFold, 0, 0>(input, n, lanes, D), tolerance);
+    EXPECT_GT(MaxAbsDifference(specialized, input), 1.0) << "the kernel left the data as it was";
+}
+
+template <typename T, bool kInPlace, bool kFold, int kN, int kL>
+std::vector<double> RunFusedX(const std::vector<double>& input, size_t n, int lanes, size_t H, size_t D)
+{
+    std::vector<T> v(input.begin(), input.end());
+    const auto t = MakeAxisTables<T>(n);
+    const int groupsY = static_cast<int>(H / 2 + 1);
+    const int groups = groupsY * static_cast<int>(D / 2 + 1);
+    const int perBatch = lanes / 4;
+    const int batches = (groups + perBatch - 1) / perBatch;
+    const int ws = static_cast<int>(FactoredWorkStride<T>(static_cast<size_t>(t.view.n2), static_cast<size_t>(lanes)));
+    blockDim = { 1, 1, 1 };
+    threadIdx = { 0, 0, 0 };
+    gridDim = { static_cast<unsigned>(batches), 1, 1 };
+    for (int b = 0; b < batches; ++b) {
+        blockIdx = { static_cast<unsigned>(b), 0, 0 };
+        if constexpr (kInPlace) {
+            FactoredLastAxisBracewellKernelInPlace<T, kBigQuads, kBigItems, 1, kFold, kN, kL>(v.data(), t.view,
+                static_cast<int>(H), static_cast<int>(D), groupsY, groups, lanes, batches, ws);
+        } else {
+            FactoredLastAxisBracewellKernel<T, kBigQuads, kFold, kN, kL>(v.data(), t.view, static_cast<int>(H),
+                static_cast<int>(D), groupsY, groups, lanes, batches, ws);
+        }
+    }
+    return std::vector<double>(v.begin(), v.end());
+}
+
+template <typename T, bool kInPlace, bool kFold, int kN, int kL>
+void ExpectFusedSpecializationMatches(double tolerance)
+{
+    SCOPED_TRACE("fused, n " + std::to_string(kN) + ", " + std::to_string(kL) + " lines, "
+                 + (kInPlace ? "in place" : "work buffer") + (kFold ? ", twiddle in step 1" : ""));
+    const size_t H = 4, D = 4; // 9 groups of mirror lines: more than one batch at 8 and 16 lines
+    const auto input = MakeSignal(static_cast<size_t>(kN) * H * D);
+    const auto specialized = RunFusedX<T, kInPlace, kFold, kN, kL>(input, kN, kL, H, D);
+    ExpectClose(specialized, RunFusedX<T, kInPlace, kFold, 0, 0>(input, kN, kL, H, D), tolerance);
+    EXPECT_GT(MaxAbsDifference(specialized, input), 1.0) << "the kernel left the data as it was";
+}
+
+template <typename T>
+void ExpectSpecializationsMatch(double tolerance)
+{
+    // The pairs and variants FactoredSpecializes (kernels.cu) picks.
+    ExpectAxisSpecializationMatches<T, 0, false, 128, 16>(tolerance);
+    ExpectAxisSpecializationMatches<T, 2, true, 512, 16>(tolerance);
+    ExpectFusedSpecializationMatches<T, false, true, 128, 16>(tolerance);
+    ExpectFusedSpecializationMatches<T, false, true, 256, 16>(tolerance);
+    ExpectFusedSpecializationMatches<T, true, false, 512, 8>(tolerance);
+}
+
+TEST(FactoredKernels, SpecializedSizesMatchRuntimeSizes_Float)
+{
+    ExpectSpecializationsMatch<float>(1e-6);
+}
+
+TEST(FactoredKernels, SpecializedSizesMatchRuntimeSizes_Double)
+{
+    ExpectSpecializationsMatch<double>(1e-13);
+}
+
+TEST(FactoredKernels, N1OfFollowsSplitLength)
+{
+    for (size_t n = 4; n <= 4096; n *= 2) {
+        EXPECT_EQ(static_cast<size_t>(FactoredN1Of(static_cast<int>(n))), internal::SplitLength(n).n1) << "n " << n;
     }
 }
