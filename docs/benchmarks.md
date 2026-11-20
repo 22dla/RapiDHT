@@ -346,6 +346,9 @@ With the y pass at 512³ taking 16 lines and two tiles a thread, like z
 factored Hartley transform is now faster than cuFFT plus its conversion to the
 Hartley spectrum at all three sizes, with 32 MiB of extra device memory
 against cuFFT's 1 028 MiB at 512³.
+The separable pass along x also takes 16 lines at 512 (step 4.X,
+`…_r4_x512_{cur,wide}.json`): the separable transform 10.02 → 9.72 ms; the
+fused last pass keeps 8, with 16 it was 17 % slower.
 
 The axes differ only from 512³ up; at 128³ and 256³ all three take the same
 time (2.3 and 1.7 Bracewell passes).

@@ -345,7 +345,11 @@ size_t FactoredPreferredLanes(size_t n, size_t axisStride, size_t laneLength)
     const bool alongX = axisStride == 1;
     const bool alongY = !alongX && axisStride == laneLength;
     if (alongX) {
-        return n <= 256 ? 16 : 8;
+        // The separable pass along x takes 16 lines at every length: at 512
+        // that is the two-tile kernel and 3 % on the separable transform
+        // (step 4.X, 2026-11-20_*_r4_x512_*). The fused last pass keeps 8 at
+        // 512 -- with 16 it took 4.22 ms against 3.62 (FactoredLastAxisBracewell).
+        return 16;
     }
     if (alongY) {
         // 16 again from n = 512 (step 4.Y, 2026-11-20_*_r4_y512_*): with the
@@ -769,7 +773,7 @@ bool FactoredLastAxisBracewell(T* data, const FactoredAxisTables<T>& tables, siz
     const size_t groups = groupsY * groupsZ;
     // The width the x pass would take (step 2.4), no wider than the groups
     // need, halved until it fits; then the variant of the kernel (step 4B).
-    size_t lanes = FactoredPreferredLanes(n, 1, H);
+    size_t lanes = n >= 512 ? 8 : FactoredPreferredLanes(n, 1, H); // 16 lose 17 % at 512 (step 4.X)
     while (lanes > 4 && (lanes / 4 > groups || !PipelinedFits<T>(n, n1, n2, lanes, info.optIn))) {
         lanes /= 2;
     }

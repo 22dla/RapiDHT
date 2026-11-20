@@ -1,0 +1,25 @@
+tag: x512_cur
+date: 2026-11-20T17:14:02+04:00
+settings: (none)
+commit: f71bc30a795c0327da46c6893bda6bf1353d4fc5
+uncommitted:
+   M docs/R4_PLAN.md
+   M src/kernels.cu
+   M tests/test_factored_kernels.cpp
+  ?? benchmarks/results/2026-11-20_evgeny_r4_x512_cur.meta.txt
+sources:
+  77b71fd47b306f445fd4a82ff196a238cec9fc32a1a61fcbd74c5b25970d7a77  src/internal/factored_kernels.cuh
+  71b65bcf9ac22cb87782bc8f91aaedf758979d3dd4848deb0556cfe784c10f68  src/kernels.cu
+  00219f6acfe6d833b60361ba32e0e33aadb91e124e238d5bc2ae6a6de9771ecb  src/backend_cuda.cpp
+  36501266c19eb17add2cdbf0afc3085348713f02e60222c38822340b3d91775f  src/internal/kernels.h
+  1a375ecd95a67d44792b9ffb3c8e02e8dd84c73ee1baaa6b43f323ce3e10e9ba  benchmarks/bench_transform.cpp
+  bcaca72a7bb8dbc44bb636fc7e4da1065aa5eebc250dde1506437ad4e064c3a0  benchmarks/cufft_baseline.cu
+binaries:
+  -rwxrwxr-x 1 evgeny evgeny 2048560 2026-11-20 17:13 build-bench/benchmarks/bench_transform
+  -rwxrwxr-x 1 evgeny evgeny 1355904 2026-11-20 17:13 build-bench/benchmarks/profile_gpu3d
+gpu:
+  NVIDIA GeForce RTX 3060 Ti, 595.99.02, 31, 5.53 W, 818 MiB
+other processes on the gpu (they add noise; close what you can):
+  66427, /usr/libexec/gnome-remote-desktop-daemon, 134 MiB
+  66799, /usr/libexec/gnome-remote-desktop-daemon, 233 MiB
+  67498, /opt/Mattermost/com.Mattermost.Desktop --type=gpu-process --gpu-recent-crash-count=0 --ozone-platform=wayland --r
