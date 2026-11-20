@@ -44,6 +44,9 @@ if(RAPIDHT_WITH_CUDA)
     # R-4 step 0.5: does the cuFFT baseline fit a given volume at all.
     add_executable(capacity_gpu3d capacity_gpu3d.cpp cufft_baseline.cu)
     target_link_libraries(capacity_gpu3d PRIVATE rapidht_warnings CUDA::cudart CUDA::cufft)
+    # R-4, toward P2+: how fast the memory moves line sets along y and z, by shape.
+    add_executable(stride_probe stride_probe.cu)
+    target_link_libraries(stride_probe PRIVATE CUDA::cudart)
 endif()
 
 # Optional FFTW baseline. Ubuntu's libfftw3-dev ships a pkg-config file but no

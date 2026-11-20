@@ -1,0 +1,49 @@
+tag: z32h
+date: 2026-11-20T18:32:28+04:00
+settings: (none)
+commit: ab355756575800e7e0af8920dc33a5f30436f16c
+uncommitted:
+   M CLAUDE.md
+   M benchmarks/CMakeLists.txt
+   M src/internal/factored_kernels.cuh
+   M src/kernels.cu
+   M tests/test_factored_kernels.cpp
+  ?? benchmarks/results/2026-11-20_evgeny_r4_stride_probe.txt
+  ?? benchmarks/results/2026-11-20_evgeny_r4_z32.json
+  ?? benchmarks/results/2026-11-20_evgeny_r4_z32.meta.txt
+  ?? benchmarks/results/2026-11-20_evgeny_r4_z32_ablate_compute.txt
+  ?? benchmarks/results/2026-11-20_evgeny_r4_z32_ablate_io.txt
+  ?? benchmarks/results/2026-11-20_evgeny_r4_z32_res.txt
+  ?? benchmarks/results/2026-11-20_evgeny_r4_z32_trace.txt
+  ?? benchmarks/results/2026-11-20_evgeny_r4_z32h.meta.txt
+  ?? benchmarks/results/2026-11-20_evgeny_r4_z32s.json
+  ?? benchmarks/results/2026-11-20_evgeny_r4_z32s.meta.txt
+  ?? benchmarks/results/2026-11-20_evgeny_r4_z32s_trace.txt
+  ?? benchmarks/results/2026-11-20_evgeny_r4_z512_ablate_compute.txt
+  ?? benchmarks/results/2026-11-20_evgeny_r4_z512_ablate_io.txt
+  ?? benchmarks/results/2026-11-20_evgeny_r4_z512_ablate_none.txt
+  ?? benchmarks/results/2026-11-20_evgeny_r4_z512_ncu.txt
+  ?? benchmarks/results/2026-11-20_evgeny_r4_zord_across.json
+  ?? benchmarks/results/2026-11-20_evgeny_r4_zord_across.meta.txt
+  ?? benchmarks/results/2026-11-20_evgeny_r4_zord_across_trace.txt
+  ?? benchmarks/results/2026-11-20_evgeny_r4_zord_cur.json
+  ?? benchmarks/results/2026-11-20_evgeny_r4_zord_cur.meta.txt
+  ?? benchmarks/results/2026-11-20_evgeny_r4_zord_cur_trace.txt
+  ?? benchmarks/stride_probe.cu
+  ?? scripts/r4_diag_z.sh
+sources:
+  41cc2e84cc07022b51fc78b3fc6c777771f644cb1e0c6cf26a9d19ee1f8330f3  src/internal/factored_kernels.cuh
+  65f99eb76250dc639b77c7a08d0ff246eef59b5a5ffb9675e65f6c4bc36b9b5e  src/kernels.cu
+  00219f6acfe6d833b60361ba32e0e33aadb91e124e238d5bc2ae6a6de9771ecb  src/backend_cuda.cpp
+  36501266c19eb17add2cdbf0afc3085348713f02e60222c38822340b3d91775f  src/internal/kernels.h
+  1a375ecd95a67d44792b9ffb3c8e02e8dd84c73ee1baaa6b43f323ce3e10e9ba  benchmarks/bench_transform.cpp
+  bcaca72a7bb8dbc44bb636fc7e4da1065aa5eebc250dde1506437ad4e064c3a0  benchmarks/cufft_baseline.cu
+binaries:
+  -rwxrwxr-x 1 evgeny evgeny 2298464 2026-11-20 18:31 build-bench/benchmarks/bench_transform
+  -rwxrwxr-x 1 evgeny evgeny 1605816 2026-11-20 18:31 build-bench/benchmarks/profile_gpu3d
+gpu:
+  NVIDIA GeForce RTX 3060 Ti, 595.99.02, 32, 5.51 W, 982 MiB
+other processes on the gpu (they add noise; close what you can):
+  66427, /usr/libexec/gnome-remote-desktop-daemon, 134 MiB
+  66799, /usr/libexec/gnome-remote-desktop-daemon, 233 MiB
+  67498, /opt/Mattermost/com.Mattermost.Desktop --type=gpu-process --gpu-recent-crash-count=0 --ozone-platform=wayland --r

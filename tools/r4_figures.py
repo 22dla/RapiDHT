@@ -46,6 +46,7 @@ STEPS = [
     ("4А\nповорот\nв шаге 1", "2026-11-19_evgeny_r4_s4as"),
     ("4Д\nразмеры\nконстантами", "2026-11-20_evgeny_r4_s4ds"),
     ("4.Y\nось y:\n16 линий", "2026-11-20_evgeny_r4_s4y"),
+    ("4.Z\nось z:\n32 линии", "2026-11-20_evgeny_r4_z32h"),
 ]
 
 COPY_FLOOR_MS = 2.6  # one pass over 512^3 at the speed of a copy (2.62 ms, step 0.2), as the plan rounds it
@@ -59,6 +60,16 @@ def bench_ms(stem: str, name: str) -> float:
             scale = {"ns": 1e-6, "us": 1e-3, "ms": 1.0}[b["time_unit"]]
             return b["real_time"] * scale
     raise KeyError(f"{name} not in {stem}.json")
+
+
+def baseline_ms(name: str) -> float:
+    """cuFFT from the latest step that measured it: sweeps may leave it out (R4_NO_CUFFT=1)."""
+    for _, stem in reversed(STEPS):
+        try:
+            return bench_ms(stem, name)
+        except KeyError:
+            continue
+    raise KeyError(f"{name} in none of the steps")
 
 
 def trace_ms(stem: str, size: str = "n=512") -> dict[str, float]:
@@ -192,9 +203,8 @@ def budget(cufft_ms: float, r2c_ms: float) -> None:
 def main() -> None:
     plt.rcParams["svg.hashsalt"] = "rapidht-r4"  # stable ids: re-running without new data changes nothing
     plt.rcParams["svg.fonttype"] = "path"
-    latest = STEPS[-1][1]
-    cufft = bench_ms(latest, "cuFFT/f32/3D/512x512x512")
-    r2c = bench_ms(latest, "cuFFT_R2C/f32/3D/512x512x512")
+    cufft = baseline_ms("cuFFT/f32/3D/512x512x512")
+    r2c = baseline_ms("cuFFT_R2C/f32/3D/512x512x512")
     history(cufft)
     budget(cufft, r2c)
     print(f"written: {IMAGES / 'r4-history.svg'}, {IMAGES / 'r4-budget.svg'} (cuFFT {cufft:.2f} ms)")

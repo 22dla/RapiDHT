@@ -346,6 +346,14 @@ With the y pass at 512³ taking 16 lines and two tiles a thread, like z
 factored Hartley transform is now faster than cuFFT plus its conversion to the
 Hartley spectrum at all three sizes, with 32 MiB of extra device memory
 against cuFFT's 1 028 MiB at 512³.
+Step 4.Z: the z pass at 512³ was bound by memory alone (3.62 ms moving
+the data against 3.10 along y, same kernel). `benchmarks/stride_probe` showed
+why: with 16 lines a row of a batch is 64 contiguous bytes and the line sets
+move at 3.57 ms along z; with 32 lines, 128 bytes, they move at 2.61 ms, the
+speed of a plain copy (2.59). z at 512 now takes 32 lines in a four-tile
+kernel that fetches its next batch in two halves: z 3.67 → 3.44 ms, the full
+transform 10.08 → **9.72 ms (0.91 times cuFFT plus conversion)**, the
+separable one 9.32 ms (`…_r4_z32h.json` against `…_r4_zord_cur.json`).
 The separable pass along x also takes 16 lines at 512 (step 4.X,
 `…_r4_x512_{cur,wide}.json`): the separable transform 10.02 → 9.72 ms; the
 fused last pass keeps 8, with 16 it was 17 % slower.

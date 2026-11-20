@@ -1,0 +1,176 @@
+==PROF== Connected to process 95316 (/home/evgeny/projects/RapiDHT/build-bench/benchmarks/profile_gpu3d)
+==PROF== Profiling "FactoredAxisKernelInPlace": 0%....50%....100% - 13 passes
+==PROF== Profiling "FactoredAxisKernelInPlace": 0%....50%....100% - 13 passes
+f32 factored  512^3  (134217728 elements, 512.0 MiB per buffer)  x1 iterations
+  11.08 ms per transform, 38.7 GFLOP of multiply-add arithmetic, 3.49 TFLOP/s
+  device memory held by the transform: 32 MiB built, 172 MiB after resident use, 684 MiB after a host-pointer call
+==PROF== Disconnected from process 95316
+[95316] profile_gpu3d@127.0.0.1
+  void RapiDHT::FactoredAxisKernelInPlace<float, (int)8, (int)2, (int)1, (bool)1, (int)512, (int)16>(T1 *, RapiDHT::FactoredAxisTables<T1>, unsigned long, unsigned long, int, int, unsigned long, int, int, bool, int) (38, 1, 1)x(256, 1, 1), Context 1, Stream 7, Device 0, CC 8.6
+    Section: Command line profiler metrics
+    ----------------------------------------------- ----------- ------------
+    Metric Name                                     Metric Unit Metric Value
+    ----------------------------------------------- ----------- ------------
+    dram__bytes_read.sum                                  Mbyte       537,43
+    dram__bytes_write.sum                                 Mbyte       537,10
+    gpu__time_duration.sum                              msecond         3,99
+    l1tex__t_requests_pipe_lsu_mem_global_op_ld.sum     request    2 033 440
+    l1tex__t_requests_pipe_lsu_mem_global_op_st.sum     request    1 048 576
+    l1tex__t_sectors_pipe_lsu_mem_global_op_ld.sum       sector   17 767 683
+    l1tex__t_sectors_pipe_lsu_mem_global_op_st.sum       sector   16 777 040
+    lts__t_sector_hit_rate.pct                                %        50,03
+    lts__t_sectors_srcunit_tex_op_read.sum               sector   16 823 183
+    lts__t_sectors_srcunit_tex_op_write.sum              sector   16 777 216
+    ----------------------------------------------- ----------- ------------
+
+    Section: GPU Speed Of Light Throughput
+    ----------------------- ------------- ------------
+    Metric Name               Metric Unit Metric Value
+    ----------------------- ------------- ------------
+    DRAM Frequency          cycle/nsecond         6,79
+    SM Frequency            cycle/nsecond         1,40
+    Elapsed Cycles                  cycle    5 591 155
+    Memory Throughput                   %        61,97
+    DRAM Throughput                     %        61,97
+    Duration                      msecond         3,99
+    L1/TEX Cache Throughput             %        56,10
+    L2 Cache Throughput                 %        38,04
+    SM Active Cycles                cycle 5 455 546,42
+    Compute (SM) Throughput             %        42,03
+    ----------------------- ------------- ------------
+
+    OPT   Memory is more heavily utilized than Compute: Look at the Memory Workload Analysis section to identify the    
+          DRAM bottleneck. Check memory replay (coalescing) metrics to make sure you're efficiently utilizing the       
+          bytes transferred. Also consider whether it is possible to do more work per memory access (kernel fusion) or  
+          whether there are values you can (re)compute.                                                                 
+
+    Section: Memory Workload Analysis
+    --------------------------- ------------ ------------
+    Metric Name                  Metric Unit Metric Value
+    --------------------------- ------------ ------------
+    Memory Throughput           Gbyte/second       269,45
+    Mem Busy                               %        54,51
+    Max Bandwidth                          %        61,97
+    L1/TEX Hit Rate                        %         2,73
+    L2 Compression Success Rate            %            0
+    L2 Compression Ratio                                0
+    L2 Hit Rate                            %        50,03
+    Mem Pipes Busy                         %        32,07
+    --------------------------- ------------ ------------
+
+    Section: Warp State Statistics
+    ---------------------------------------- ----------- ------------
+    Metric Name                              Metric Unit Metric Value
+    ---------------------------------------- ----------- ------------
+    Warp Cycles Per Issued Instruction             cycle         4,62
+    Warp Cycles Per Executed Instruction           cycle         4,62
+    Avg. Active Threads Per Warp                                31,78
+    Avg. Not Predicated Off Threads Per Warp                    31,20
+    ---------------------------------------- ----------- ------------
+
+    WRN   The optional metric smsp__pcsamp_sample_count could not be found. Collecting it as an additional metric could 
+          enable the rule to provide more guidance.                                                                     
+
+    Section: Occupancy
+    ------------------------------- ----------- ------------
+    Metric Name                     Metric Unit Metric Value
+    ------------------------------- ----------- ------------
+    Block Limit SM                        block           16
+    Block Limit Registers                 block            1
+    Block Limit Shared Mem                block            1
+    Block Limit Warps                     block            6
+    Theoretical Active Warps per SM        warp            8
+    Theoretical Occupancy                     %        16,67
+    Achieved Occupancy                        %        16,67
+    Achieved Active Warps Per SM           warp         8,00
+    ------------------------------- ----------- ------------
+
+    OPT   Est. Local Speedup: 83.33%                                                                                    
+          The 2.00 theoretical warps per scheduler this kernel can issue according to its occupancy are below the       
+          hardware maximum of 12. This kernel's theoretical occupancy (16.7%) is limited by the number of required      
+          registers. This kernel's theoretical occupancy (16.7%) is limited by the required amount of shared memory.    
+
+  void RapiDHT::FactoredAxisKernelInPlace<float, (int)8, (int)2, (int)1, (bool)1, (int)512, (int)16>(T1 *, RapiDHT::FactoredAxisTables<T1>, unsigned long, unsigned long, int, int, unsigned long, int, int, bool, int) (38, 1, 1)x(256, 1, 1), Context 1, Stream 7, Device 0, CC 8.6
+    Section: Command line profiler metrics
+    ----------------------------------------------- ----------- ------------
+    Metric Name                                     Metric Unit Metric Value
+    ----------------------------------------------- ----------- ------------
+    dram__bytes_read.sum                                  Mbyte       536,95
+    dram__bytes_write.sum                                 Mbyte       537,03
+    gpu__time_duration.sum                              msecond         3,36
+    l1tex__t_requests_pipe_lsu_mem_global_op_ld.sum     request    2 033 440
+    l1tex__t_requests_pipe_lsu_mem_global_op_st.sum     request    1 048 576
+    l1tex__t_sectors_pipe_lsu_mem_global_op_ld.sum       sector   17 767 512
+    l1tex__t_sectors_pipe_lsu_mem_global_op_st.sum       sector   16 777 214
+    lts__t_sector_hit_rate.pct                                %        50,01
+    lts__t_sectors_srcunit_tex_op_read.sum               sector   16 787 054
+    lts__t_sectors_srcunit_tex_op_write.sum              sector   16 777 216
+    ----------------------------------------------- ----------- ------------
+
+    Section: GPU Speed Of Light Throughput
+    ----------------------- ------------- ------------
+    Metric Name               Metric Unit Metric Value
+    ----------------------- ------------- ------------
+    DRAM Frequency          cycle/nsecond         6,79
+    SM Frequency            cycle/nsecond         1,40
+    Elapsed Cycles                  cycle    4 728 135
+    Memory Throughput                   %        73,43
+    DRAM Throughput                     %        73,43
+    Duration                      msecond         3,36
+    L1/TEX Cache Throughput             %        65,24
+    L2 Cache Throughput                 %        31,17
+    SM Active Cycles                cycle 4 690 880,71
+    Compute (SM) Throughput             %        50,04
+    ----------------------- ------------- ------------
+
+    OPT   Memory is more heavily utilized than Compute: Look at the Memory Workload Analysis section to identify the    
+          DRAM bottleneck. Check memory replay (coalescing) metrics to make sure you're efficiently utilizing the       
+          bytes transferred. Also consider whether it is possible to do more work per memory access (kernel fusion) or  
+          whether there are values you can (re)compute.                                                                 
+
+    Section: Memory Workload Analysis
+    --------------------------- ------------ ------------
+    Metric Name                  Metric Unit Metric Value
+    --------------------------- ------------ ------------
+    Memory Throughput           Gbyte/second       319,30
+    Mem Busy                               %        64,89
+    Max Bandwidth                          %        73,43
+    L1/TEX Hit Rate                        %         2,84
+    L2 Compression Success Rate            %            0
+    L2 Compression Ratio                                0
+    L2 Hit Rate                            %        50,01
+    Mem Pipes Busy                         %        38,18
+    --------------------------- ------------ ------------
+
+    Section: Warp State Statistics
+    ---------------------------------------- ----------- ------------
+    Metric Name                              Metric Unit Metric Value
+    ---------------------------------------- ----------- ------------
+    Warp Cycles Per Issued Instruction             cycle         3,98
+    Warp Cycles Per Executed Instruction           cycle         3,98
+    Avg. Active Threads Per Warp                                31,78
+    Avg. Not Predicated Off Threads Per Warp                    31,20
+    ---------------------------------------- ----------- ------------
+
+    WRN   The optional metric smsp__pcsamp_sample_count could not be found. Collecting it as an additional metric could 
+          enable the rule to provide more guidance.                                                                     
+
+    Section: Occupancy
+    ------------------------------- ----------- ------------
+    Metric Name                     Metric Unit Metric Value
+    ------------------------------- ----------- ------------
+    Block Limit SM                        block           16
+    Block Limit Registers                 block            1
+    Block Limit Shared Mem                block            1
+    Block Limit Warps                     block            6
+    Theoretical Active Warps per SM        warp            8
+    Theoretical Occupancy                     %        16,67
+    Achieved Occupancy                        %        16,67
+    Achieved Active Warps Per SM           warp         8,00
+    ------------------------------- ----------- ------------
+
+    OPT   Est. Local Speedup: 83.33%                                                                                    
+          The 2.00 theoretical warps per scheduler this kernel can issue according to its occupancy are below the       
+          hardware maximum of 12. This kernel's theoretical occupancy (16.7%) is limited by the number of required      
+          registers. This kernel's theoretical occupancy (16.7%) is limited by the required amount of shared memory.    
+

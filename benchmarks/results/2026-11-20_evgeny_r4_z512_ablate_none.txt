@@ -1,0 +1,20 @@
+[RapiDHT trace] axis-z(depth) 4.522 ms, axis-y(height) 2.859 ms, axis-x(width) 3.637 ms, total 11.018 ms
+[RapiDHT trace] axis-z(depth) 3.719 ms, axis-y(height) 2.851 ms, axis-x(width) 3.624 ms, total 10.194 ms
+[RapiDHT trace] axis-z(depth) 3.719 ms, axis-y(height) 2.886 ms, axis-x(width) 3.629 ms, total 10.234 ms
+[RapiDHT trace] axis-z(depth) 3.686 ms, axis-y(height) 2.850 ms, axis-x(width) 3.627 ms, total 10.163 ms
+[RapiDHT trace] axis-z(depth) 3.735 ms, axis-y(height) 2.857 ms, axis-x(width) 3.630 ms, total 10.222 ms
+[RapiDHT trace] axis-z(depth) 3.720 ms, axis-y(height) 2.961 ms, axis-x(width) 3.628 ms, total 10.310 ms
+[RapiDHT trace] axis-z(depth) 3.673 ms, axis-y(height) 2.854 ms, axis-x(width) 3.627 ms, total 10.154 ms
+[RapiDHT trace] axis-z(depth) 3.695 ms, axis-y(height) 2.914 ms, axis-x(width) 3.629 ms, total 10.238 ms
+[RapiDHT trace] axis-z(depth) 3.725 ms, axis-y(height) 2.856 ms, axis-x(width) 3.630 ms, total 10.211 ms
+[RapiDHT trace] axis-z(depth) 3.723 ms, axis-y(height) 2.852 ms, axis-x(width) 3.624 ms, total 10.199 ms
+[RapiDHT trace] axis-z(depth) 3.670 ms, axis-y(height) 2.988 ms, axis-x(width) 3.621 ms, total 10.279 ms
+[RapiDHT trace] axis-z(depth) 3.699 ms, axis-y(height) 2.862 ms, axis-x(width) 3.622 ms, total 10.183 ms
+[RapiDHT trace] axis-z(depth) 3.673 ms, axis-y(height) 2.844 ms, axis-x(width) 3.621 ms, total 10.138 ms
+[RapiDHT trace] axis-z(depth) 3.730 ms, axis-y(height) 2.858 ms, axis-x(width) 3.626 ms, total 10.214 ms
+[RapiDHT trace] axis-z(depth) 3.740 ms, axis-y(height) 2.835 ms, axis-x(width) 3.619 ms, total 10.195 ms
+[RapiDHT trace] axis-z(depth) 3.739 ms, axis-y(height) 2.839 ms, axis-x(width) 3.618 ms, total 10.195 ms
+[RapiDHT trace] axis-z(depth) 3.790 ms, axis-y(height) 3.119 ms, axis-x(width) 3.620 ms, total 10.529 ms
+f32 factored  512^3  (134217728 elements, 512.0 MiB per buffer)  x15 iterations
+  10.22 ms per transform, 38.7 GFLOP of multiply-add arithmetic, 3.78 TFLOP/s
+  device memory held by the transform: 32 MiB built, 34 MiB after resident use, 546 MiB after a host-pointer call

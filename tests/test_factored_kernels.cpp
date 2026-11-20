@@ -522,9 +522,10 @@ TEST(FactoredKernels, Step1OrderPairsMirrorFrequencies)
 // variant (work buffer or in place, twiddle folded or not) it uses it with.
 // The runtime-sized kernels are checked against the definition above; here the
 // lengths are the real ones (128..1024), too long for the O(N^2) reference.
-// One host thread holds a whole batch: up to 1024 x 8 values, so the register
-// budgets of these instantiations are larger than kHostMaxQuads / kHostItems.
-constexpr int kBigQuads = 2048;
+// One host thread holds a whole batch: up to 512 x 32 or 1024 x 16 values, so
+// the register budgets of these instantiations are larger than kHostMaxQuads /
+// kHostItems.
+constexpr int kBigQuads = 4096;
 
 double MaxAbsDifference(const std::vector<double>& a, const std::vector<double>& b)
 {
@@ -534,7 +535,7 @@ double MaxAbsDifference(const std::vector<double>& a, const std::vector<double>&
     }
     return m;
 }
-constexpr int kBigItems = 512;
+constexpr int kBigItems = 1024;
 
 // kN, kL: the specialization (0, 0 = runtime sizes); n, lanes: the real ones.
 template <typename T, int kItems, bool kFold, int kN, int kL>
@@ -619,6 +620,7 @@ void ExpectSpecializationsMatch(double tolerance)
     // The pairs and variants FactoredSpecializes (kernels.cu) picks.
     ExpectAxisSpecializationMatches<T, 0, false, 128, 16>(tolerance);
     ExpectAxisSpecializationMatches<T, 2, true, 512, 16>(tolerance);
+    ExpectAxisSpecializationMatches<T, 4, true, 512, 32>(tolerance);
     ExpectFusedSpecializationMatches<T, false, true, 128, 16>(tolerance);
     ExpectFusedSpecializationMatches<T, false, true, 256, 16>(tolerance);
     ExpectFusedSpecializationMatches<T, true, false, 512, 8>(tolerance);

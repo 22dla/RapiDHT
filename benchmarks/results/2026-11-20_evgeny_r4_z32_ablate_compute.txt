@@ -1,0 +1,20 @@
+[RapiDHT trace] axis-z(depth) 3.386 ms, axis-y(height) 2.443 ms, axis-x(width) 3.634 ms, total 9.464 ms
+[RapiDHT trace] axis-z(depth) 2.452 ms, axis-y(height) 2.444 ms, axis-x(width) 3.634 ms, total 8.531 ms
+[RapiDHT trace] axis-z(depth) 2.444 ms, axis-y(height) 2.445 ms, axis-x(width) 3.626 ms, total 8.516 ms
+[RapiDHT trace] axis-z(depth) 2.444 ms, axis-y(height) 2.445 ms, axis-x(width) 3.625 ms, total 8.515 ms
+[RapiDHT trace] axis-z(depth) 2.443 ms, axis-y(height) 2.443 ms, axis-x(width) 3.635 ms, total 8.522 ms
+[RapiDHT trace] axis-z(depth) 2.446 ms, axis-y(height) 2.442 ms, axis-x(width) 3.633 ms, total 8.522 ms
+[RapiDHT trace] axis-z(depth) 2.442 ms, axis-y(height) 2.443 ms, axis-x(width) 3.629 ms, total 8.515 ms
+[RapiDHT trace] axis-z(depth) 2.443 ms, axis-y(height) 2.444 ms, axis-x(width) 3.629 ms, total 8.517 ms
+[RapiDHT trace] axis-z(depth) 2.442 ms, axis-y(height) 2.443 ms, axis-x(width) 3.630 ms, total 8.515 ms
+[RapiDHT trace] axis-z(depth) 2.443 ms, axis-y(height) 2.445 ms, axis-x(width) 3.630 ms, total 8.519 ms
+[RapiDHT trace] axis-z(depth) 2.443 ms, axis-y(height) 2.442 ms, axis-x(width) 3.629 ms, total 8.515 ms
+[RapiDHT trace] axis-z(depth) 2.444 ms, axis-y(height) 2.443 ms, axis-x(width) 3.631 ms, total 8.519 ms
+[RapiDHT trace] axis-z(depth) 2.439 ms, axis-y(height) 2.438 ms, axis-x(width) 3.632 ms, total 8.509 ms
+[RapiDHT trace] axis-z(depth) 2.438 ms, axis-y(height) 2.437 ms, axis-x(width) 3.634 ms, total 8.509 ms
+[RapiDHT trace] axis-z(depth) 2.438 ms, axis-y(height) 2.438 ms, axis-x(width) 3.627 ms, total 8.503 ms
+[RapiDHT trace] axis-z(depth) 2.438 ms, axis-y(height) 2.439 ms, axis-x(width) 3.626 ms, total 8.503 ms
+[RapiDHT trace] axis-z(depth) 2.454 ms, axis-y(height) 2.445 ms, axis-x(width) 3.622 ms, total 8.521 ms
+f32 factored  512^3  (134217728 elements, 512.0 MiB per buffer)  x15 iterations
+  8.52 ms per transform, 38.7 GFLOP of multiply-add arithmetic, 4.53 TFLOP/s
+  device memory held by the transform: 32 MiB built, 34 MiB after resident use, 546 MiB after a host-pointer call

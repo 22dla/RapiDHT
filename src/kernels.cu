@@ -351,6 +351,17 @@ size_t FactoredPreferredLanes(size_t n, size_t axisStride, size_t laneLength)
         // 512 -- with 16 it took 4.22 ms against 3.62 (FactoredLastAxisBracewell).
         return 16;
     }
+    // z at exactly 512 takes 32 lines: a row of a batch is then 128 contiguous
+    // bytes instead of 64, and moving the line sets alone drops from 3.58 to
+    // 2.61 ms -- the speed of a plain copy (benchmarks/stride_probe,
+    // 2026-11-20_*_r4_stride_probe; two 64-byte rows in one page did not help,
+    // so it is the contiguity, not address translation). The four-tile kernel
+    // this needs overlaps its fetch with the steps worse, so the pass gains
+    // less: 3.67 -> 3.43 ms (_r4_z32s). y gains the same in the probe but
+    // loses as a pass, 2.84 -> 3.43, and keeps 16. Not tried at 1024.
+    if (n == 512 && !alongY) {
+        return 32;
+    }
     if (alongY) {
         // 16 again from n = 512 (step 4.Y, 2026-11-20_*_r4_y512_*): with the
         // two-tile in-place kernel of step 4B and the specialization of 4D, y
@@ -400,7 +411,14 @@ FactoredDeviceInfo& FactoredInfo(int device)
 }
 
 /// Most 4 x 4 output tiles a thread holds in the in-place steps (kItems).
-constexpr size_t kFactoredMaxItems = 2;
+constexpr size_t kFactoredMaxItems = 4;
+
+/// Prefetch registers (quads of values a thread) of a kernel variant: four
+/// tiles a thread go with 32 lines at 512, n * lanes / 4 / 256 = 16 quads.
+constexpr int FactoredMaxQuadsFor(int items)
+{
+    return items == 4 ? 16 : kFactoredMaxQuads;
+}
 
 /// Shared memory of the pipelined kernels. Through a work buffer (v2.3):
 /// tile, work, C1, C2 and the transposed half-shift matrix. In place (4B):
@@ -467,6 +485,9 @@ int FactoredBlocksPerSm(FactoredDeviceInfo& info, Kernel kernel, size_t sharedBy
  *    two blocks it takes 6.71 ms, with no spill (STACK 0), cause not
  *    measured. Since step 4.Y y takes 16 lines from n = 512 and so the
  *    two-tile kernel, like z (FactoredPreferredLanes).
+ *  - at exactly 512, z takes 32 lines and four tiles a thread (one block to
+ *    an SM, 16 prefetch quads, 212 registers): 128 contiguous bytes a row
+ *    move at the speed of a copy (benchmarks/stride_probe).
  */
 struct FactoredPath {
     int items;
@@ -484,20 +505,41 @@ struct FactoredPath {
  */
 constexpr bool FactoredFoldsTwiddle(bool fused, int items)
 {
-    return fused ? items == 0 : items == 2;
+    return fused ? items == 0 : items >= 2;
 }
 
 FactoredPath FactoredPathFor(size_t n, size_t lanes, int axis) // axis 0 = x, 1 = y, 2 = z
 {
     const size_t items = (n * lanes / 16 + kFactoredThreads - 1) / kFactoredThreads;
-    const bool inPlace = items <= kFactoredMaxItems && (n >= 512 || (axis == 2 && n == 256));
+    // Four tiles a thread only where they were measured: y and z at 512 with
+    // 32 lines (FactoredPreferredLanes gives them to z). Elsewhere at most
+    // two, as before.
+    const size_t maxItems = (n == 512 && axis != 0) ? kFactoredMaxItems : 2;
+    const bool inPlace = items <= maxItems && (n >= 512 || (axis == 2 && n == 256));
     if (!inPlace) {
         return { 0, 0 };
+    }
+    if (items == 4) {
+        return { 4, 1 };
     }
     if (items == 2) {
         return { 2, 1 };
     }
     return axis == 1 ? FactoredPath { 1, 1 } : FactoredPath { 1, 2 };
+}
+
+/// PipelinedFits for the axis kernel, by the variant FactoredPathFor gives it:
+/// in place it needs no work buffer, and four tiles a thread prefetch 16 quads.
+template <typename T>
+bool PipelinedAxisFits(size_t n, size_t n1, size_t n2, size_t lanes, int optIn, int axis)
+{
+    const FactoredPath path = FactoredPathFor(n, lanes, axis);
+    if (path.items == 0) {
+        return PipelinedFits<T>(n, n1, n2, lanes, optIn);
+    }
+    return lanes >= 4 && PipelinedSharedBytes<T>(n, n1, n2, lanes, true) <= static_cast<size_t>(optIn)
+        && (n * lanes / 4 + kFactoredThreads - 1) / kFactoredThreads
+               <= static_cast<size_t>(FactoredMaxQuadsFor(path.items));
 }
 
 template <typename T, int kItems, int kMinBlocks, int kN, int kLanes>
@@ -506,13 +548,14 @@ void LaunchPipelinedAxisAs(FactoredDeviceInfo& info, size_t batches, size_t shar
     size_t otherStride, int workStride, bool vec)
 {
     constexpr bool kFold = FactoredFoldsTwiddle(false, kItems);
+    constexpr int kQuads = FactoredMaxQuadsFor(kItems);
     int perSm = 0;
     if constexpr (kItems == 0) {
         perSm = FactoredBlocksPerSm(
             info, FactoredAxisKernelPipelined<T, kFactoredMaxQuads, kFold, kN, kLanes>, sharedBytes);
     } else {
-        perSm = FactoredBlocksPerSm(info,
-            FactoredAxisKernelInPlace<T, kFactoredMaxQuads, kItems, kMinBlocks, kFold, kN, kLanes>, sharedBytes);
+        perSm = FactoredBlocksPerSm(
+            info, FactoredAxisKernelInPlace<T, kQuads, kItems, kMinBlocks, kFold, kN, kLanes>, sharedBytes);
     }
     const size_t resident = static_cast<size_t>(perSm) * static_cast<size_t>(info.sms);
     const unsigned int grid = static_cast<unsigned int>(batches < resident ? batches : resident);
@@ -524,7 +567,7 @@ void LaunchPipelinedAxisAs(FactoredDeviceInfo& info, size_t batches, size_t shar
             data, tables, axisStride, laneStride, lanesI, perOther, otherStride, batchesI, workStride, vec,
             FactoredAblateMode());
     } else {
-        FactoredAxisKernelInPlace<T, kFactoredMaxQuads, kItems, kMinBlocks, kFold, kN, kLanes>
+        FactoredAxisKernelInPlace<T, kQuads, kItems, kMinBlocks, kFold, kN, kLanes>
             <<<grid, kFactoredThreads, sharedBytes>>>(data, tables, axisStride, laneStride, lanesI, perOther,
                 otherStride, batchesI, workStride, vec, FactoredAblateMode());
     }
@@ -589,7 +632,8 @@ constexpr bool FactoredSpecializes(bool fused, int items, int minBlocks, int n, 
         return (items == 0 && lanes == 16 && (n == 128 || n == 256))
             || (items == 1 && minBlocks == 2 && n == 512 && lanes == 8);
     }
-    return (items == 0 && n == 128 && lanes == 16) || (items == 2 && n == 512 && lanes == 16);
+    return (items == 0 && n == 128 && lanes == 16) || (items == 2 && n == 512 && lanes == 16)
+        || (items == 4 && n == 512 && lanes == 32);
 }
 
 /// Calls `launch` with std::integral_constant<int, n> and <int, lanes> of the
@@ -616,7 +660,8 @@ void FactoredDispatchSize(const FactoredAxisTables<T>& tables, size_t lanes, Lau
         if (as(integral_constant<int, 128> {}, integral_constant<int, 16> {})
             || as(integral_constant<int, 256> {}, integral_constant<int, 16> {})
             || as(integral_constant<int, 512> {}, integral_constant<int, 8> {})
-            || as(integral_constant<int, 512> {}, integral_constant<int, 16> {})) {
+            || as(integral_constant<int, 512> {}, integral_constant<int, 16> {})
+            || as(integral_constant<int, 512> {}, integral_constant<int, 32> {})) {
             return;
         }
     }
@@ -686,15 +731,16 @@ void FactoredAxis(T* data, const FactoredAxisTables<T>& tables, size_t axisStrid
             // The width the sweep found best for this axis and length, halved
             // until it fits the shared memory, the lane axis and the registers
             // (R-4 steps 2.2, 2.4); then the variant of the kernel (step 4B).
+            const int axis = axisStride == 1 ? 0 : (axisStride == laneLength ? 1 : 2);
             size_t preferred = FactoredPreferredLanes(n, axisStride, laneLength);
-            while (preferred > 4 && !(preferred <= laneLength && PipelinedFits<T>(n, n1, n2, preferred, optIn))) {
+            while (preferred > 4
+                   && !(preferred <= laneLength && PipelinedAxisFits<T>(n, n1, n2, preferred, optIn, axis))) {
                 preferred /= 2;
             }
-            if (preferred <= laneLength && PipelinedFits<T>(n, n1, n2, preferred, optIn)) {
+            if (preferred <= laneLength && PipelinedAxisFits<T>(n, n1, n2, preferred, optIn, axis)) {
                 lanes = preferred;
             }
-            if (PipelinedFits<T>(n, n1, n2, lanes, optIn)) {
-                const int axis = axisStride == 1 ? 0 : (axisStride == laneLength ? 1 : 2);
+            if (PipelinedAxisFits<T>(n, n1, n2, lanes, optIn, axis)) {
                 const FactoredPath path = FactoredPathFor(n, lanes, axis);
                 const size_t sharedBytes = PipelinedSharedBytes<T>(n, n1, n2, lanes, path.items != 0);
                 const size_t blocksPerOther = laneLength / lanes;
@@ -706,6 +752,9 @@ void FactoredAxis(T* data, const FactoredAxisTables<T>& tables, size_t axisStrid
                 const int ws = static_cast<int>(FactoredWorkStride<T>(n2, lanes));
                 if (path.items == 0) {
                     LaunchPipelinedAxis<T, 0, 0>(info, batches, sharedBytes, data, tables, axisStride,
+                        laneStride, lanes, blocksPerOther, otherStride, ws, vec);
+                } else if (path.items == 4) {
+                    LaunchPipelinedAxis<T, 4, 1>(info, batches, sharedBytes, data, tables, axisStride,
                         laneStride, lanes, blocksPerOther, otherStride, ws, vec);
                 } else if (path.items == 2) {
                     LaunchPipelinedAxis<T, 2, 1>(info, batches, sharedBytes, data, tables, axisStride,

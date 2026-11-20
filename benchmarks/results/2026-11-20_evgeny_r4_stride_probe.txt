@@ -1,0 +1,11 @@
+NVIDIA GeForce RTX 3060 Ti, 38 SMs; 512^3 float, one pass reads and writes 512 MiB; ms, min (median) of 20
+  copy (cudaMemcpy, the floor)    2.591 ( 2.592)
+  lanes    axis  blocks to an SM
+  16 x 1   z   1/SM  3.579 ( 3.656)   2/SM  3.499 ( 3.575)   4/SM        -     
+  16 x 1   y   1/SM  3.082 ( 3.142)   2/SM  3.183 ( 3.268)   4/SM        -     
+  32 x 1   z   1/SM  2.605 ( 2.608)   2/SM        -        4/SM        -     
+  32 x 1   y   1/SM  2.607 ( 2.611)   2/SM        -        4/SM        -     
+  16 x 2   z   1/SM  3.505 ( 3.604)   2/SM        -        4/SM        -     
+  16 x 2   y   1/SM  3.170 ( 3.274)   2/SM        -        4/SM        -     
+  64 x 1   z   1/SM  2.677 ( 2.679)   2/SM        -        4/SM        -     
+  64 x 1   y   1/SM  2.671 ( 2.674)   2/SM        -        4/SM        -     

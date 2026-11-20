@@ -458,12 +458,13 @@ __device__ __forceinline__ void StoreQuad(T* p, size_t s, bool vec, const T (&in
 
 /// Issues this thread's global loads of a batch: quad q = threadIdx.x +
 /// i * blockDim.x is position q / (lanes/4), lines 4 * (q % (lanes/4)) + 0..3.
-template <typename T, int kMaxQuads>
+/// Only the slots i in [kFrom, kTo), so that a batch can be fetched in parts.
+template <typename T, int kMaxQuads, int kFrom = 0, int kTo = kMaxQuads>
 __device__ __forceinline__ void PipelineLoad(
     const T* base, T (&reg)[kMaxQuads][4], int quads, Pow2 quadsPerRow, size_t axisStride, size_t laneStride, bool vec)
 {
     RAPIDHT_UNROLL
-    for (int i = 0; i < kMaxQuads; ++i) {
+    for (int i = kFrom; i < kTo; ++i) {
         const int q = static_cast<int>(threadIdx.x) + i * static_cast<int>(blockDim.x);
         if (q < quads) {
             const size_t row = static_cast<size_t>(q >> quadsPerRow.shift);
@@ -667,11 +668,18 @@ __device__ __forceinline__ void FactoredComputeTileWork(T* tile, T* work, const 
  * lanes + l (PipelineFillPadded); step 1 writes row k1 in the same padded
  * layout, which keeps the column reads of step 2 free of bank conflicts; step 2
  * writes row k1 + N1*k2 at (k1 + N1*k2) * lanes + l, unpadded, which is what
- * FactoredRecombineQuad reads. Ends with a barrier.
+ * FactoredRecombineQuad reads. Ends with a barrier. `between` runs between the
+ * two steps; the pipelined kernel issues the second half of its next fetch
+ * there.
  */
-template <typename T, int kItems, bool kFold>
+struct FactoredNothing {
+    __device__ void operator()() const { }
+};
+
+template <typename T, int kItems, bool kFold, typename Between = FactoredNothing>
 __device__ __forceinline__ void FactoredComputeTile(T* tile, const T* c1s, const T* c2s, const T* chT,
-    const FactoredAxisTables<T>& t, int lanes, Pow2 lanesP, Pow2 n1P, Pow2 n2P, Pow2 quadsPerRow, int workStride)
+    const FactoredAxisTables<T>& t, int lanes, Pow2 lanesP, Pow2 n1P, Pow2 n2P, Pow2 quadsPerRow, int workStride,
+    Between between = Between {})
 {
     const int n1 = t.n1;
     const int n2 = t.n2;
@@ -733,6 +741,7 @@ __device__ __forceinline__ void FactoredComputeTile(T* tile, const T* c1s, const
         FactoredTwiddlePow2(tile, t, lanesP, n2P, workStride);
         __syncthreads();
     }
+    between();
 
     // Step 2, 4 frequencies k2 x 4 lines per item, k1 fastest after the lines.
     const int items2 = ((n2 >> 2) << n1P.shift) << quadsPerRow.shift;
@@ -924,10 +933,22 @@ __device__ __forceinline__ void PipelinedAxisBody(T* data, FactoredAxisTables<T>
         }
         __syncthreads();
 
-        // The next batch is fetched while this one is computed.
+        // The next batch is fetched while this one is computed. With 16
+        // quads a thread (32 lines at 512, four tiles) all of them at once
+        // overlapped badly: moving the data alone took 2.62 ms and computing
+        // alone 2.44, together 4.0 (2026-11-20_*_r4_z32_ablate_*). So from 16
+        // quads the second half is issued between the two steps.
         const int next = batch + static_cast<int>(gridDim.x);
-        if (next < batches && ablate != kAblateCompute) {
-            PipelineLoad(batchBase(next), reg, quads, quadsPerRow, axisStride, laneStride, vec);
+        const bool fetch = next < batches && ablate != kAblateCompute;
+        constexpr bool kSplit = kItems != 0 && kMaxQuads >= 16;
+        constexpr int kHalf = kSplit ? kMaxQuads / 2 : kMaxQuads;
+        const bool split = kSplit && ablate != kAblateIo; // without the steps there is no "between"
+        if (fetch) {
+            if (split) {
+                PipelineLoad<T, kMaxQuads, 0, kHalf>(batchBase(next), reg, quads, quadsPerRow, axisStride, laneStride, vec);
+            } else {
+                PipelineLoad(batchBase(next), reg, quads, quadsPerRow, axisStride, laneStride, vec);
+            }
         }
 
         if (ablate != kAblateIo) { // uniform across the block, so the barriers inside are safe
@@ -936,7 +957,14 @@ __device__ __forceinline__ void PipelinedAxisBody(T* data, FactoredAxisTables<T>
                     tile, work, c1s, c2s, chT, t, lanes, lanesP, n1P, n2P, quadsPerRow, workStride);
             } else {
                 FactoredComputeTile<T, kItems, kFold>(
-                    tile, c1s, c2s, chT, t, lanes, lanesP, n1P, n2P, quadsPerRow, workStride);
+                    tile, c1s, c2s, chT, t, lanes, lanesP, n1P, n2P, quadsPerRow, workStride, [&] {
+                        if constexpr (kSplit) {
+                            if (fetch && split) {
+                                PipelineLoad<T, kMaxQuads, kHalf, kMaxQuads>(
+                                    batchBase(next), reg, quads, quadsPerRow, axisStride, laneStride, vec);
+                            }
+                        }
+                    });
             }
         }
 
