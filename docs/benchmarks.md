@@ -360,14 +360,24 @@ lines in quads), and the per-axis difference has not been isolated by a
 measurement. The float result at these extents is checked against the CPU
 backend by `FactoredFloatAgreesWithCpuOnBenchmarkExtents_GPU`; single-precision
 error, measured on the device against the CPU backend in double
-(`benchmarks/accuracy_gpu3d`, `…_r4_accuracy.txt`), relative to the RMS of
-the spectrum of zero-mean noise:
+(`benchmarks/accuracy_gpu3d`, `2026-11-20_…_r4_accuracy.txt`), relative to the
+RMS of the spectrum of zero-mean white noise (SplitMix64):
 
 | | 256³ largest | 256³ RMS | 512³ largest | 512³ RMS |
 | --- | ---: | ---: | ---: | ---: |
-| cuFFT + conversion | 1.41e-5 | 2.76e-7 | 1.92e-5 | 3.17e-7 |
-| factored | 1.12e-5 | 2.02e-7 | 6.31e-5 | 2.39e-7 |
-| matrices | 3.16e-4 | 4.18e-5 | 7.36e-4 | 8.42e-5 |
+| cuFFT + conversion | 1.90e-6 | 2.76e-7 | 2.21e-6 | 3.18e-7 |
+| factored | 1.16e-6 | 2.02e-7 | 1.48e-6 | 2.39e-7 |
+| matrices | 3.08e-4 | 4.18e-5 | 6.82e-4 | 8.42e-5 |
+
+The tests' LCG noise is not white: sampled at power-of-two strides it falls on
+a lattice, rounding errors of the sums along an axis come out correlated, and
+both transforms show outliers well above their white-noise level
+(7–9 times for cuFFT, 8–26 times for the factored path). There the
+largest errors are 1.41e-5 / 1.92e-5 for cuFFT and 9.20e-6 / 3.92e-5 for the
+factored path (256³ / 512³). The factored outlier comes from the z pass at
+k_z = 0; a float32 NumPy model of the algorithm (`tools/r4_factored_emu.py`)
+reproduces it, so it belongs to the summation order on that input, not to a
+kernel (R-4a).
 
 **Largest volume on the 8 GB card, float** (`…_r4_1024.txt`, R-4 step 0.5):
 the factored path transforms 1024³ (4 GiB) in place in 198 ms, holding the

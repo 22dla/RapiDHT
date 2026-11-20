@@ -1,0 +1,120 @@
+256^3, SplitMix64 noise in [-1, 1), errors relative to the RMS of the double spectrum
+  cuFFT R2C + conversion       largest 1.904e-06   rms 2.760e-07   largest / cuFFT's 1.00
+  RapiDHT GPUFactored          largest 1.158e-06   rms 2.017e-07   largest / cuFFT's 0.61
+  RapiDHT GPU (matrices)       largest 3.075e-04   rms 4.182e-05   largest / cuFFT's 161.50
+ R-4a breakdown, 256^3 (same units)
+  cuFFT R2C + conversion       median 1.81e-07   p99.9 9.78e-07   p99.999 1.38e-06   max 1.90e-06
+  RapiDHT GPUFactored          median 1.35e-07   p99.9 6.75e-07   p99.999 9.25e-07   max 1.16e-06
+  GPUFactored separable        median 1.32e-07   p99.9 6.70e-07   p99.999 9.37e-07   max 1.20e-06
+  worst points of GPUFactored (x, y, z): error, |reference|, cuFFT's error there
+    ( 97, 254,  57)  1.16e-06   2.23   1.25e-07
+    (151, 179, 178)  1.15e-06   1.97   2.91e-07
+    ( 22, 228, 221)  1.15e-06   1.27   8.53e-08
+    (255, 171, 108)  1.14e-06   1.85   3.10e-07
+    ( 19, 205, 148)  1.12e-06   2.70   7.42e-07
+    (209, 143,  50)  1.10e-06   3.53   9.62e-07
+    ( 65, 171, 131)  1.09e-06   1.83   3.58e-07
+    ( 68, 117,  44)  1.08e-06   1.81   3.63e-07
+  worst points of cuFFT (x, y, z): error, |reference|, GPUFactored's error there
+    ( 82,  23,  27)  1.90e-06   3.99   2.52e-07
+    (157, 201,  81)  1.87e-06   3.98   1.91e-07
+    ( 91, 188,  95)  1.76e-06   3.16   9.92e-08
+    ( 65, 191, 239)  1.76e-06   3.43   1.03e-07
+  GPUFactored by residue:
+    x: worst k1 (of N1 = 16)   1: 1.16e-06    7: 1.15e-06    6: 1.15e-06   median over k1 1.03e-06
+    y: worst k1 (of N1 = 16)  14: 1.16e-06    3: 1.15e-06    4: 1.15e-06   median over k1 1.07e-06
+    z: worst k1 (of N1 = 16)   9: 1.16e-06    2: 1.15e-06   13: 1.15e-06   median over k1 1.04e-06
+  cuFFT by residue, for comparison:
+    x: worst k1 (of N1 = 16)   2: 1.90e-06   13: 1.87e-06   11: 1.76e-06   median over k1 1.59e-06
+    y: worst k1 (of N1 = 16)   7: 1.90e-06    9: 1.87e-06   12: 1.76e-06   median over k1 1.59e-06
+    z: worst k1 (of N1 = 16)  11: 1.90e-06    1: 1.87e-06   15: 1.76e-06   median over k1 1.59e-06
+256^3, LCG noise (the tests' generator) in [-1, 1), errors relative to the RMS of the double spectrum
+  cuFFT R2C + conversion       largest 1.413e-05   rms 2.759e-07   largest / cuFFT's 1.00
+  RapiDHT GPUFactored          largest 9.198e-06   rms 2.005e-07   largest / cuFFT's 0.65
+  RapiDHT GPU (matrices)       largest 3.156e-04   rms 4.183e-05   largest / cuFFT's 22.33
+ R-4a breakdown, 256^3 (same units)
+  cuFFT R2C + conversion       median 1.81e-07   p99.9 9.76e-07   p99.999 1.52e-06   max 1.41e-05
+  RapiDHT GPUFactored          median 1.33e-07   p99.9 6.77e-07   p99.999 4.30e-06   max 9.20e-06
+  GPUFactored separable        median 1.30e-07   p99.9 6.73e-07   p99.999 4.18e-06   max 8.96e-06
+  worst points of GPUFactored (x, y, z): error, |reference|, cuFFT's error there
+    (104, 192,   0)  9.20e-06   2.44   1.15e-07
+    (107, 192,   0)  8.62e-06   1.31   2.56e-07
+    (172,  64,   0)  8.08e-06   0.96   1.31e-07
+    (222, 224,   0)  7.97e-06   0.88   2.29e-08
+    (199, 192,   0)  7.68e-06   1.31   1.68e-07
+    (120, 192,   0)  7.65e-06   2.84   1.20e-08
+    ( 90,  32,   0)  7.52e-06   1.00   3.26e-07
+    ( 73,  64,   0)  7.51e-06   1.21   1.86e-07
+  worst points of cuFFT (x, y, z): error, |reference|, GPUFactored's error there
+    (176,   0,   0)  1.41e-05   0.25   4.98e-07
+    (  0,   0,   0)  1.32e-05   0.13   1.63e-06
+    (126,   0,   0)  1.06e-05   0.99   1.60e-06
+    (112,   0,   0)  9.52e-06   0.00   9.85e-07
+  GPUFactored by residue:
+    x: worst k1 (of N1 = 16)   8: 9.20e-06   11: 8.62e-06   12: 8.08e-06   median over k1 7.21e-06
+    y: worst k1 (of N1 = 16)   0: 9.20e-06    7: 1.12e-06    5: 1.11e-06   median over k1 1.08e-06
+    z: worst k1 (of N1 = 16)   0: 9.20e-06    4: 1.40e-06    7: 1.29e-06   median over k1 1.11e-06
+  cuFFT by residue, for comparison:
+    x: worst k1 (of N1 = 16)   0: 1.41e-05   14: 1.06e-05    2: 8.90e-06   median over k1 4.94e-06
+    y: worst k1 (of N1 = 16)   0: 1.41e-05    9: 1.93e-06   14: 1.77e-06   median over k1 1.61e-06
+    z: worst k1 (of N1 = 16)   0: 1.41e-05    3: 1.93e-06    9: 1.77e-06   median over k1 1.61e-06
+512^3, SplitMix64 noise in [-1, 1), errors relative to the RMS of the double spectrum
+  cuFFT R2C + conversion       largest 2.207e-06   rms 3.175e-07   largest / cuFFT's 1.00
+  RapiDHT GPUFactored          largest 1.479e-06   rms 2.385e-07   largest / cuFFT's 0.67
+  RapiDHT GPU (matrices)       largest 6.819e-04   rms 8.420e-05   largest / cuFFT's 308.90
+ R-4a breakdown, 512^3 (same units)
+  cuFFT R2C + conversion       median 2.07e-07   p99.9 1.13e-06   p99.999 1.62e-06   max 2.21e-06
+  RapiDHT GPUFactored          median 1.60e-07   p99.9 7.93e-07   p99.999 1.08e-06   max 1.48e-06
+  GPUFactored separable        median 1.58e-07   p99.9 7.87e-07   p99.999 1.09e-06   max 1.48e-06
+  worst points of GPUFactored (x, y, z): error, |reference|, cuFFT's error there
+    (489, 251, 233)  1.48e-06   2.00   1.94e-08
+    (484, 283,  90)  1.42e-06   3.31   6.27e-07
+    (357, 243, 278)  1.40e-06   2.07   4.97e-07
+    ( 99, 290, 303)  1.38e-06   4.55   6.64e-07
+    ( 77,  70, 403)  1.37e-06   1.23   6.43e-07
+    (167, 246, 171)  1.37e-06   3.21   6.76e-07
+    (378, 189, 409)  1.36e-06   3.20   6.86e-07
+    (414, 482, 112)  1.36e-06   3.01   3.97e-07
+  worst points of cuFFT (x, y, z): error, |reference|, GPUFactored's error there
+    (275, 293, 466)  2.21e-06   4.40   1.29e-07
+    (261, 134,  84)  2.20e-06   3.69   1.34e-07
+    ( 38, 317, 189)  2.18e-06   3.15   1.52e-07
+    (452, 198, 326)  2.18e-06   2.92   1.58e-07
+  GPUFactored by residue:
+    x: worst k1 (of N1 = 32)   9: 1.48e-06    4: 1.42e-06    5: 1.40e-06   median over k1 1.30e-06
+    y: worst k1 (of N1 = 32)  27: 1.48e-06   19: 1.40e-06    2: 1.38e-06   median over k1 1.31e-06
+    z: worst k1 (of N1 = 32)   9: 1.48e-06   26: 1.42e-06   22: 1.40e-06   median over k1 1.32e-06
+  cuFFT by residue, for comparison:
+    x: worst k1 (of N1 = 32)  19: 2.21e-06    5: 2.20e-06    6: 2.18e-06   median over k1 1.99e-06
+    y: worst k1 (of N1 = 32)   5: 2.21e-06    6: 2.20e-06   29: 2.18e-06   median over k1 1.99e-06
+    z: worst k1 (of N1 = 32)  18: 2.21e-06   20: 2.20e-06   29: 2.18e-06   median over k1 2.00e-06
+512^3, LCG noise (the tests' generator) in [-1, 1), errors relative to the RMS of the double spectrum
+  cuFFT R2C + conversion       largest 1.921e-05   rms 3.166e-07   largest / cuFFT's 1.00
+  RapiDHT GPUFactored          largest 3.918e-05   rms 2.404e-07   largest / cuFFT's 2.04
+  RapiDHT GPU (matrices)       largest 7.358e-04   rms 8.419e-05   largest / cuFFT's 38.30
+ R-4a breakdown, 512^3 (same units)
+  cuFFT R2C + conversion       median 2.06e-07   p99.9 1.13e-06   p99.999 1.63e-06   max 1.92e-05
+  RapiDHT GPUFactored          median 1.59e-07   p99.9 8.09e-07   p99.999 6.30e-06   max 3.92e-05
+  GPUFactored separable        median 1.55e-07   p99.9 8.13e-07   p99.999 6.29e-06   max 3.92e-05
+  worst points of GPUFactored (x, y, z): error, |reference|, cuFFT's error there
+    (376, 256,   0)  3.92e-05   1.22   1.25e-07
+    (482, 256,   0)  3.67e-05   1.63   1.66e-07
+    (228, 256,   0)  3.22e-05   1.56   3.46e-07
+    (339, 256,   0)  3.14e-05   0.32   4.99e-07
+    (128, 256,   0)  3.05e-05   0.32   1.46e-07
+    ( 10, 256,   0)  2.99e-05   0.36   2.34e-07
+    ( 63, 256,   0)  2.95e-05   0.44   5.12e-07
+    ( 18, 128,   0)  2.88e-05   0.15   1.15e-07
+  worst points of cuFFT (x, y, z): error, |reference|, GPUFactored's error there
+    (320,   0,   0)  1.92e-05   0.31   2.77e-07
+    (352,   0,   0)  1.63e-05   2.07   8.65e-07
+    ( 80,   0,   0)  1.42e-05   0.57   1.54e-07
+    ( 64,   0,   0)  1.17e-05   0.18   2.04e-07
+  GPUFactored by residue:
+    x: worst k1 (of N1 = 32)  24: 3.92e-05    2: 3.67e-05    4: 3.22e-05   median over k1 2.56e-05
+    y: worst k1 (of N1 = 32)   0: 3.92e-05    5: 1.68e-06   29: 1.62e-06   median over k1 1.48e-06
+    z: worst k1 (of N1 = 32)   0: 3.92e-05   16: 3.02e-06    8: 2.59e-06   median over k1 1.86e-06
+  cuFFT by residue, for comparison:
+    x: worst k1 (of N1 = 32)   0: 1.92e-05   16: 1.42e-05   24: 8.71e-06   median over k1 2.59e-06
+    y: worst k1 (of N1 = 32)   0: 1.92e-05   31: 2.13e-06   22: 2.12e-06   median over k1 1.97e-06
+    z: worst k1 (of N1 = 32)   0: 1.92e-05   28: 2.13e-06    1: 2.12e-06   median over k1 1.97e-06
