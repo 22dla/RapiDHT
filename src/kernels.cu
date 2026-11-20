@@ -348,7 +348,11 @@ size_t FactoredPreferredLanes(size_t n, size_t axisStride, size_t laneLength)
         return n <= 256 ? 16 : 8;
     }
     if (alongY) {
-        return n <= 128 ? 16 : 8;
+        // 16 again from n = 512 (step 4.Y, 2026-11-20_*_r4_y512_*): with the
+        // two-tile in-place kernel of step 4B and the specialization of 4D, y
+        // at 512^3 takes 2.83 ms against 4.51 with 8 lines -- the 2.4 sweep
+        // that chose 8 ran the v2.3 kernel, through the work buffer.
+        return (n <= 128 || n >= 512) ? 16 : 8;
     }
     return 16;
 }
@@ -455,8 +459,10 @@ int FactoredBlocksPerSm(FactoredDeviceInfo& info, Kernel kernel, size_t sharedBy
  *  - from n = 512 in place everywhere. z takes 16 lines, two tiles a thread
  *    (116 registers, 41 instead of 74 KiB, two blocks to an SM: 5.2 -> 4.3 ms);
  *    x, the fused pass, two blocks capped at 128 registers (3.96 -> 3.79);
- *    y one block with 140 registers (4.50 -> 3.96) -- capped to two blocks it
- *    takes 6.71 ms, with no spill (STACK 0), cause not measured.
+ *    y with 8 lines one block with 140 registers (4.50 -> 3.96) -- capped to
+ *    two blocks it takes 6.71 ms, with no spill (STACK 0), cause not
+ *    measured. Since step 4.Y y takes 16 lines from n = 512 and so the
+ *    two-tile kernel, like z (FactoredPreferredLanes).
  */
 struct FactoredPath {
     int items;
@@ -567,7 +573,9 @@ void LaunchFusedLastAs(FactoredDeviceInfo& info, size_t batches, size_t sharedBy
  *    512 x 8 in place (-16 %);
  *  - axis kernel: 128 x 16 through the work buffer (z, y -6 %), 512 x 16 in
  *    place with two tiles a thread (z, -9 %).
- * Not specialized: y at 512 (one block wins), z at 256 in place (+8 %), y at
+ * Since step 4.Y the 512 x 16 two-tile kernel also runs y at 512 (2.83 ms
+ * against 4.51 with 8 lines, 2026-11-20_*_r4_y512_*).
+ * Not specialized: z at 256 in place (+8 %), y at
  * 256 (the minimum -15 % but the median +2 %, and 256^3 lost 13 % in the
  * benchmark), the separable x pass (not traced), 1024 (not measured), double.
  */

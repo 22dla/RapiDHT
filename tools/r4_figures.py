@@ -45,6 +45,7 @@ STEPS = [
     ("4Б\nшаги на месте\n(гибрид)", "2026-11-15_evgeny_r4_s4bh"),
     ("4А\nповорот\nв шаге 1", "2026-11-19_evgeny_r4_s4as"),
     ("4Д\nразмеры\nконстантами", "2026-11-20_evgeny_r4_s4ds"),
+    ("4.Y\nось y:\n16 линий", "2026-11-20_evgeny_r4_s4y"),
 ]
 
 COPY_FLOOR_MS = 2.6  # one pass over 512^3 at the speed of a copy (2.62 ms, step 0.2), as the plan rounds it
@@ -139,7 +140,7 @@ def budget(cufft_ms: float, r2c_ms: float) -> None:
     rows = [
         ("v2.2 (06.11)", [8.6, 6.9, 6.9, 2.6]),  # 2026-11-13 figure
         ("v2.3 (13.11)", [4.0, 5.1, 6.1, 2.6]),  # step 0.2 trace
-        ("4Д (20.11)", now),
+        (STEPS[-1][0].split("\n")[0] + " (20.11)", now),
         ("цель П2", [3.9, 3.4, 3.4, 0.0]),
         ("предел шины,\nтри прохода", [COPY_FLOOR_MS, COPY_FLOOR_MS, COPY_FLOOR_MS, 0.0]),
     ]
@@ -178,7 +179,7 @@ def budget(cufft_ms: float, r2c_ms: float) -> None:
     handles = [plt.Rectangle((0, 0), 1, 1, color=c) for c in colors]
     ax.legend(handles, names, loc="lower right", fontsize=8, frameon=False, labelcolor=MUTED)
     ax.set_title(
-        "Время по проходам: 512 × 512 × 512, float, данные на устройстве (4Д — трасса, приведённая к бенчмарку)",
+        "Время по проходам: 512 × 512 × 512, float, данные на устройстве (последний шаг — трасса, приведённая к бенчмарку)",
         color=INK,
         fontsize=10,
         loc="left",

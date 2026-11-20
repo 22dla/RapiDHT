@@ -1,0 +1,34 @@
+tag: y512_wide
+date: 2026-11-20T16:44:44+04:00
+settings: RAPIDHT_R4_Y512=wide
+commit: 129cd345c4a6cf70e7582f84e27d52c7271f5ade
+uncommitted:
+   M docs/R4_PLAN.md
+   M src/kernels.cu
+   M tests/test_factored_kernels.cpp
+  ?? benchmarks/results/2026-11-20_evgeny_r4_y512_cur.json
+  ?? benchmarks/results/2026-11-20_evgeny_r4_y512_cur.meta.txt
+  ?? benchmarks/results/2026-11-20_evgeny_r4_y512_cur_trace.txt
+  ?? benchmarks/results/2026-11-20_evgeny_r4_y512_spec1.json
+  ?? benchmarks/results/2026-11-20_evgeny_r4_y512_spec1.meta.txt
+  ?? benchmarks/results/2026-11-20_evgeny_r4_y512_spec1_trace.txt
+  ?? benchmarks/results/2026-11-20_evgeny_r4_y512_wide.meta.txt
+  ?? benchmarks/results/2026-11-20_evgeny_r4_y512_work.json
+  ?? benchmarks/results/2026-11-20_evgeny_r4_y512_work.meta.txt
+  ?? benchmarks/results/2026-11-20_evgeny_r4_y512_work_trace.txt
+sources:
+  77b71fd47b306f445fd4a82ff196a238cec9fc32a1a61fcbd74c5b25970d7a77  src/internal/factored_kernels.cuh
+  a3b6986698368434a0c8e970e9e89066da1e064c58003210453b26d76d8ca25c  src/kernels.cu
+  00219f6acfe6d833b60361ba32e0e33aadb91e124e238d5bc2ae6a6de9771ecb  src/backend_cuda.cpp
+  36501266c19eb17add2cdbf0afc3085348713f02e60222c38822340b3d91775f  src/internal/kernels.h
+  1a375ecd95a67d44792b9ffb3c8e02e8dd84c73ee1baaa6b43f323ce3e10e9ba  benchmarks/bench_transform.cpp
+  bcaca72a7bb8dbc44bb636fc7e4da1065aa5eebc250dde1506437ad4e064c3a0  benchmarks/cufft_baseline.cu
+binaries:
+  -rwxrwxr-x 1 evgeny evgeny 2028184 2026-11-20 16:36 build-bench/benchmarks/bench_transform
+  -rwxrwxr-x 1 evgeny evgeny 1339624 2026-11-20 16:36 build-bench/benchmarks/profile_gpu3d
+gpu:
+  NVIDIA GeForce RTX 3060 Ti, 595.99.02, 47, 6.67 W, 816 MiB
+other processes on the gpu (they add noise; close what you can):
+  66427, /usr/libexec/gnome-remote-desktop-daemon, 134 MiB
+  66799, /usr/libexec/gnome-remote-desktop-daemon, 233 MiB
+  67498, /opt/Mattermost/com.Mattermost.Desktop --type=gpu-process --gpu-recent-crash-count=0 --ozone-platform=wayland --r

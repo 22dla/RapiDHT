@@ -340,6 +340,12 @@ With the sizes compiled in as constants for the kernels where that wins
 (fused x pass at 128/256/512, the axis kernel at 128, z at 512; step 4D,
 `…_r4_s4ds{_a,}.json`, 2026-11-20, back to back): 145 µs, 1.15 ms and
 11.26 ms — **0.83, 0.86 and 1.05 times cuFFT** with its conversion.
+With the y pass at 512³ taking 16 lines and two tiles a thread, like z
+(step 4.Y, `…_r4_s4y{_a,}.json`, back to back): 10.09 ms at 512³, the y pass
+4.51 → 2.82 ms — **0.83, 0.86 and 0.94 times cuFFT** with its conversion. The
+factored Hartley transform is now faster than cuFFT plus its conversion to the
+Hartley spectrum at all three sizes, with 32 MiB of extra device memory
+against cuFFT's 1 028 MiB at 512³.
 
 The axes differ only from 512³ up; at 128³ and 256³ all three take the same
 time (2.3 and 1.7 Bracewell passes).
