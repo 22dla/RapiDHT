@@ -88,7 +88,8 @@ enum class Kernel { Generic,
     Pipelined, // through a work buffer (v2.3)
     InPlace, // the same steps in place (R-4 step 4B)
     PipelinedFold, // and each with the twiddle inside step 1 (step 4A)
-    InPlaceFold };
+    InPlaceFold,
+    InPlaceQuarters }; // in place with kQuarterQuads: the next batch fetched in quarters (step 4.Z)
 
 // Registers a thread holds for the next batch: with one thread to a block it
 // has to hold the whole batch -- up to 32 lines of n = 32 in the wide-batch
@@ -103,6 +104,13 @@ constexpr int kHostItems = 64;
 // Fewer blocks than batches, so that every block runs the pipeline over
 // several batches, including a ragged last round.
 constexpr size_t kHostGrid = 3;
+
+// Prefetch slots of Kernel::InPlaceQuarters. From 16 slots the kernel fetches
+// the next batch in four parts at hooks inside the steps; with one thread a
+// block, quad q sits in slot q, so 32 slots and batches of 32 quads (4 lines
+// of n = 32) put quads in every quarter. More slots would leave the upper
+// quarters empty and the split untested.
+constexpr int kQuarterQuads = 32;
 
 template <typename T>
 struct AxisTables {
@@ -158,7 +166,10 @@ void RunAxis(T* data, const FactoredAxisTables<T>& t, size_t axisStride, size_t 
             const int lanesI = static_cast<int>(lanes);
             const int perOther = static_cast<int>(blocksPerOther);
             const int batchesI = static_cast<int>(batches);
-            if (kernel == Kernel::InPlace) {
+            if (kernel == Kernel::InPlaceQuarters) {
+                FactoredAxisKernelInPlace<T, kQuarterQuads, kHostItems, 1, true>(
+                    data, t, axisStride, laneStride, lanesI, perOther, otherStride, batchesI, ws, vec, ablate);
+            } else if (kernel == Kernel::InPlace) {
                 FactoredAxisKernelInPlace<T, kHostMaxQuads, kHostItems, 1, false>(
                     data, t, axisStride, laneStride, lanesI, perOther, otherStride, batchesI, ws, vec, ablate);
             } else if (kernel == Kernel::InPlaceFold) {
@@ -397,6 +408,33 @@ void ExpectWideBatchesMatchDefinition(double tolerance)
             }
         }
     }
+}
+
+// The fetch in quarters (step 4.Z): 4 lines a batch, axes of 16 and 32, so a
+// batch of 16 or 32 quads fills two or all four quarters of the 32 slots, and
+// kHostGrid blocks each take several batches -- the next one is fetched in parts
+// while the current one is computed.
+template <typename T>
+void ExpectQuartersMatchDefinition(double tolerance)
+{
+    const Shape shapes[] = { { 16, 16, 16 }, { 32, 16, 16 }, { 16, 32, 16 } };
+    for (const Shape& s : shapes) {
+        SCOPED_TRACE(Describe(s));
+        const Dims dims = Dims::Of(s.width, s.height, s.depth);
+        const auto input = MakeSignal(dims.Total());
+        ExpectClose(RunTransform<T>(input, s.width, s.height, s.depth, Kernel::InPlaceQuarters, 4),
+            ReferenceDht(input, dims), tolerance);
+    }
+}
+
+TEST(FactoredKernels, FetchInQuartersMatchesDefinition_Float)
+{
+    ExpectQuartersMatchDefinition<float>(2e-5);
+}
+
+TEST(FactoredKernels, FetchInQuartersMatchesDefinition_Double)
+{
+    ExpectQuartersMatchDefinition<double>(1e-11);
 }
 
 TEST(FactoredKernels, PipelinedWideBatchesMatchDefinition_Float)

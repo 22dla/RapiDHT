@@ -1,0 +1,32 @@
+tag: y32q
+date: 2026-11-21T10:29:31+04:00
+settings: (none)
+commit: 3c01a0cb154547318572a4e3bc81a62c24df5f70
+uncommitted:
+   M CLAUDE.md
+   M src/internal/factored_kernels.cuh
+   M src/kernels.cu
+   M tests/test_factored_kernels.cpp
+  ?? benchmarks/results/2026-11-20_evgeny_r4_z32q.json
+  ?? benchmarks/results/2026-11-20_evgeny_r4_z32q.meta.txt
+  ?? benchmarks/results/2026-11-20_evgeny_r4_z32q_trace.txt
+  ?? benchmarks/results/2026-11-21_evgeny_r4_y32q.meta.txt
+  ?? benchmarks/results/2026-11-21_evgeny_r4_y32q_a.json
+  ?? benchmarks/results/2026-11-21_evgeny_r4_y32q_a.meta.txt
+  ?? benchmarks/results/2026-11-21_evgeny_r4_y32q_a_trace.txt
+sources:
+  4ed80e9d7f742405c97cb8d0e1abdbb49a5daa772b1b6aba466efa15d4922df8  src/internal/factored_kernels.cuh
+  de8c109da6d594a7f864574ba4324527e75126a3fc600ef4777f5a71da5f89e5  src/kernels.cu
+  00219f6acfe6d833b60361ba32e0e33aadb91e124e238d5bc2ae6a6de9771ecb  src/backend_cuda.cpp
+  36501266c19eb17add2cdbf0afc3085348713f02e60222c38822340b3d91775f  src/internal/kernels.h
+  1a375ecd95a67d44792b9ffb3c8e02e8dd84c73ee1baaa6b43f323ce3e10e9ba  benchmarks/bench_transform.cpp
+  bcaca72a7bb8dbc44bb636fc7e4da1065aa5eebc250dde1506437ad4e064c3a0  benchmarks/cufft_baseline.cu
+binaries:
+  -rwxrwxr-x 1 evgeny evgeny 2282080 2026-11-21 10:28 build-bench/benchmarks/bench_transform
+  -rwxrwxr-x 1 evgeny evgeny 1593528 2026-11-21 10:28 build-bench/benchmarks/profile_gpu3d
+gpu:
+  NVIDIA GeForce RTX 3060 Ti, 595.99.02, 35, 9.01 W, 947 MiB
+other processes on the gpu (they add noise; close what you can):
+  4596, /usr/libexec/gnome-remote-desktop-daemon, 134 MiB
+  7196, /opt/google/chrome/chrome --type=gpu-process --gpu-recent-crash-count=0 --ozone-platform=wayland --render-node-ove
+  8172, /usr/bin/ptyxis, 37 MiB

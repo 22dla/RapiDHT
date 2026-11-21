@@ -357,8 +357,11 @@ size_t FactoredPreferredLanes(size_t n, size_t axisStride, size_t laneLength)
     // 2026-11-20_*_r4_stride_probe; two 64-byte rows in one page did not help,
     // so it is the contiguity, not address translation). The four-tile kernel
     // this needs overlaps its fetch with the steps worse, so the pass gains
-    // less: 3.67 -> 3.43 ms (_r4_z32s). y gains the same in the probe but
-    // loses as a pass, 2.84 -> 3.43, and keeps 16. Not tried at 1024.
+    // less: 3.67 -> 3.43 ms with the fetch in halves (_r4_z32s), 3.24 in
+    // quarters (_r4_s4z). y keeps 16: with 32 lines it lost as a pass both in
+    // halves (2.84 -> 3.43) and in quarters (2.84 -> 3.11 at a locked clock;
+    // the full transform at boost moved -1.4 %, within noise; _r4_y32q).
+    // Not tried at 1024.
     if (n == 512 && !alongY) {
         return 32;
     }

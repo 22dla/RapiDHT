@@ -668,18 +668,31 @@ __device__ __forceinline__ void FactoredComputeTileWork(T* tile, T* work, const 
  * lanes + l (PipelineFillPadded); step 1 writes row k1 in the same padded
  * layout, which keeps the column reads of step 2 free of bank conflicts; step 2
  * writes row k1 + N1*k2 at (k1 + N1*k2) * lanes + l, unpadded, which is what
- * FactoredRecombineQuad reads. Ends with a barrier. `between` runs between the
- * two steps; the pipelined kernel issues the second half of its next fetch
- * there.
+ * FactoredRecombineQuad reads. Ends with a barrier. `hook` is called with
+ * FactoredPhase<0> halfway through step 1, <1> between the steps and <2>
+ * halfway through step 2 (the halfway calls only from two tiles a thread);
+ * the pipelined kernel issues parts of its next fetch there.
  */
+template <int kPhase>
+struct FactoredPhase { };
+
+template <int kPhase>
+__host__ __device__ constexpr int FactoredPhaseIndex(FactoredPhase<kPhase>)
+{
+    return kPhase;
+}
+
 struct FactoredNothing {
-    __device__ void operator()() const { }
+    template <int kPhase>
+    __device__ void operator()(FactoredPhase<kPhase>) const
+    {
+    }
 };
 
-template <typename T, int kItems, bool kFold, typename Between = FactoredNothing>
+template <typename T, int kItems, bool kFold, typename Hook = FactoredNothing>
 __device__ __forceinline__ void FactoredComputeTile(T* tile, const T* c1s, const T* c2s, const T* chT,
     const FactoredAxisTables<T>& t, int lanes, Pow2 lanesP, Pow2 n1P, Pow2 n2P, Pow2 quadsPerRow, int workStride,
-    Between between = Between {})
+    Hook hook = Hook {})
 {
     const int n1 = t.n1;
     const int n2 = t.n2;
@@ -716,6 +729,9 @@ __device__ __forceinline__ void FactoredComputeTile(T* tile, const T* c1s, const
                 }
             }
         }
+        if (s == kItems / 2 - 1) {
+            hook(FactoredPhase<0> {});
+        }
     }
     __syncthreads(); // every read of the input is done
     RAPIDHT_UNROLL
@@ -741,7 +757,7 @@ __device__ __forceinline__ void FactoredComputeTile(T* tile, const T* c1s, const
         FactoredTwiddlePow2(tile, t, lanesP, n2P, workStride);
         __syncthreads();
     }
-    between();
+    hook(FactoredPhase<1> {});
 
     // Step 2, 4 frequencies k2 x 4 lines per item, k1 fastest after the lines.
     const int items2 = ((n2 >> 2) << n1P.shift) << quadsPerRow.shift;
@@ -774,6 +790,9 @@ __device__ __forceinline__ void FactoredComputeTile(T* tile, const T* c1s, const
                     }
                 }
             }
+        }
+        if (s == kItems / 2 - 1) {
+            hook(FactoredPhase<2> {});
         }
     }
     __syncthreads(); // every read of step 1's result is done
@@ -936,16 +955,18 @@ __device__ __forceinline__ void PipelinedAxisBody(T* data, FactoredAxisTables<T>
         // The next batch is fetched while this one is computed. With 16
         // quads a thread (32 lines at 512, four tiles) all of them at once
         // overlapped badly: moving the data alone took 2.62 ms and computing
-        // alone 2.44, together 4.0 (2026-11-20_*_r4_z32_ablate_*). So from 16
-        // quads the second half is issued between the two steps.
+        // alone 2.44, together 4.0 (2026-11-20_*_r4_z32_ablate_*); in two
+        // halves around step 2, 3.43 (_r4_z32s). So from 16 quads the fetch
+        // goes in four quarters: before step 1, halfway through it, between
+        // the steps and halfway through step 2 (FactoredComputeTile's hook).
         const int next = batch + static_cast<int>(gridDim.x);
         const bool fetch = next < batches && ablate != kAblateCompute;
         constexpr bool kSplit = kItems != 0 && kMaxQuads >= 16;
-        constexpr int kHalf = kSplit ? kMaxQuads / 2 : kMaxQuads;
-        const bool split = kSplit && ablate != kAblateIo; // without the steps there is no "between"
+        constexpr int kPart = kSplit ? kMaxQuads / 4 : kMaxQuads;
+        const bool split = kSplit && ablate != kAblateIo; // without the steps there are no hooks
         if (fetch) {
             if (split) {
-                PipelineLoad<T, kMaxQuads, 0, kHalf>(batchBase(next), reg, quads, quadsPerRow, axisStride, laneStride, vec);
+                PipelineLoad<T, kMaxQuads, 0, kPart>(batchBase(next), reg, quads, quadsPerRow, axisStride, laneStride, vec);
             } else {
                 PipelineLoad(batchBase(next), reg, quads, quadsPerRow, axisStride, laneStride, vec);
             }
@@ -957,10 +978,11 @@ __device__ __forceinline__ void PipelinedAxisBody(T* data, FactoredAxisTables<T>
                     tile, work, c1s, c2s, chT, t, lanes, lanesP, n1P, n2P, quadsPerRow, workStride);
             } else {
                 FactoredComputeTile<T, kItems, kFold>(
-                    tile, c1s, c2s, chT, t, lanes, lanesP, n1P, n2P, quadsPerRow, workStride, [&] {
+                    tile, c1s, c2s, chT, t, lanes, lanesP, n1P, n2P, quadsPerRow, workStride, [&](auto phase) {
                         if constexpr (kSplit) {
+                            constexpr int kQuarter = 1 + FactoredPhaseIndex(decltype(phase) {});
                             if (fetch && split) {
-                                PipelineLoad<T, kMaxQuads, kHalf, kMaxQuads>(
+                                PipelineLoad<T, kMaxQuads, kQuarter * kPart, (kQuarter + 1) * kPart>(
                                     batchBase(next), reg, quads, quadsPerRow, axisStride, laneStride, vec);
                             }
                         }
