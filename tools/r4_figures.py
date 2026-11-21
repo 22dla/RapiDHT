@@ -46,7 +46,7 @@ STEPS = [
     ("4А\nповорот\nв шаге 1", "2026-11-19_evgeny_r4_s4as"),
     ("4Д\nразмеры\nконстантами", "2026-11-20_evgeny_r4_s4ds"),
     ("4.Y\nось y:\n16 линий", "2026-11-20_evgeny_r4_s4y"),
-    ("4.Z\nось z:\n32 линии", "2026-11-20_evgeny_r4_z32h"),
+    ("4.Z\nось z:\n32 линии", "2026-11-20_evgeny_r4_s4z"),
 ]
 
 COPY_FLOOR_MS = 2.6  # one pass over 512^3 at the speed of a copy (2.62 ms, step 0.2), as the plan rounds it

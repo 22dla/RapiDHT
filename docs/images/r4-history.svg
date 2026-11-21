@@ -1639,8 +1639,8 @@ z
     </g>
    </g>
    <g id="line2d_25">
-    <path d="M 42.904648 224.068223 
-L 723.6 224.068223 
+    <path d="M 42.904648 224.09424 
+L 723.6 224.09424 
 " clip-path="url(#pc605f9b4ee)" style="fill: none; stroke-dasharray: 6,3.6; stroke-dashoffset: 0; stroke: #0b0b0b"/>
    </g>
    <g id="line2d_26">
@@ -1670,7 +1670,7 @@ L 467.636045 216.66576
 L 523.89186 218.254469 
 L 580.147674 221.54498 
 L 636.403488 226.774789 
-L 692.659302 228.43148 
+L 692.659302 228.68379 
 " clip-path="url(#pc605f9b4ee)" style="fill: none; stroke: #2a78d6; stroke-width: 2; stroke-linecap: square"/>
     <defs>
      <path id="mfdea17a6b4" d="M 0 2.5 
@@ -1697,7 +1697,7 @@ z
      <use xlink:href="#mfdea17a6b4" x="523.89186" y="218.254469" style="fill: #2a78d6; stroke: #2a78d6"/>
      <use xlink:href="#mfdea17a6b4" x="580.147674" y="221.54498" style="fill: #2a78d6; stroke: #2a78d6"/>
      <use xlink:href="#mfdea17a6b4" x="636.403488" y="226.774789" style="fill: #2a78d6; stroke: #2a78d6"/>
-     <use xlink:href="#mfdea17a6b4" x="692.659302" y="228.43148" style="fill: #2a78d6; stroke: #2a78d6"/>
+     <use xlink:href="#mfdea17a6b4" x="692.659302" y="228.68379" style="fill: #2a78d6; stroke: #2a78d6"/>
     </g>
    </g>
    <g id="text_20">
@@ -1828,7 +1828,7 @@ z
    </g>
    <g id="text_31">
     <!-- 9,7 -->
-    <g style="fill: #0b0b0b" transform="translate(686.920552 221.43148) scale(0.08 -0.08)">
+    <g style="fill: #0b0b0b" transform="translate(686.920552 221.68379) scale(0.08 -0.08)">
      <defs>
       <path id="Inter-Regular-54a" d="M 1884 -63 
 C 2938 -63 3588 866 3588 2513 
@@ -1868,7 +1868,7 @@ z
    </g>
    <g id="text_32">
     <!-- cuFFT + перевод в Хартли: 10,7 -->
-    <g style="fill: #0b0b0b" transform="translate(332.622091 221.392349) scale(0.08 -0.08)">
+    <g style="fill: #0b0b0b" transform="translate(332.622091 221.418367) scale(0.08 -0.08)">
      <defs>
       <path id="Inter-Regular-24b" d="M 1916 -75 
 C 2600 -75 3156 297 3344 919 
