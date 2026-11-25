@@ -512,6 +512,71 @@ double IntegerErrorLsb(const std::vector<float>& got, const std::vector<double>&
     return worst / std::sqrt(static_cast<double>(got.size()));
 }
 
+/*
+ * R-5 step 1.2: what the mean offset costs. The exact sum of the integers on
+ * every step-th line along x -- step 1 is the rounded mean of the whole volume,
+ * 64 and 512 the sampled policies of step 0.5 -- reduced on the device and
+ * turned into the float offset a first pass would read, without a trip to the
+ * host. Checked once against the sum on the host (integers: exact), then timed
+ * as a whole: zeroing the sum, the reduction, the rounding kernel.
+ */
+template <typename TIn>
+void BM_IntOffset(benchmark::State& state, Extent e, size_t step)
+{
+    const size_t count = ElementCount(e.width, e.height, e.depth);
+    const size_t lines = count / e.width;
+    const rapidht_bench::IntInput input
+        = sizeof(TIn) == 1 ? rapidht_bench::IntInput::U8 : rapidht_bench::IntInput::U16;
+    const std::vector<TIn> host = MakeIntegerNoise<TIn>(count);
+    TIn* in = nullptr;
+    unsigned long long* sum = nullptr;
+    float* offset = nullptr;
+    if (cudaMalloc(&in, count * sizeof(TIn)) != cudaSuccess || cudaMalloc(&sum, sizeof(*sum)) != cudaSuccess
+        || cudaMalloc(&offset, sizeof(*offset)) != cudaSuccess) {
+        cudaFree(in);
+        cudaFree(sum);
+        cudaGetLastError();
+        state.SkipWithError("cudaMalloc failed");
+        return;
+    }
+    try {
+        cudaMemcpy(in, host.data(), count * sizeof(TIn), cudaMemcpyHostToDevice);
+        unsigned long long expected = 0;
+        size_t sampled = 0;
+        for (size_t line = 0; line < lines; line += step, ++sampled) {
+            for (size_t x = 0; x < e.width; ++x) {
+                expected += host[line * e.width + x];
+            }
+        }
+        const float expectedOffset
+            = static_cast<float>(std::rint(static_cast<double>(expected) / static_cast<double>(sampled * e.width)));
+        rapidht_bench::IntegerMeanOffset(in, input, e.width, lines, step, sum, offset);
+        unsigned long long got = 0;
+        float gotOffset = 0.0f;
+        cudaMemcpy(&got, sum, sizeof(got), cudaMemcpyDeviceToHost);
+        cudaMemcpy(&gotOffset, offset, sizeof(gotOffset), cudaMemcpyDeviceToHost);
+        if (got != expected || gotOffset != expectedOffset) {
+            throw std::runtime_error("the device sum or offset disagrees with the host");
+        }
+        for (auto _ : state) {
+            rapidht_bench::IntegerMeanOffset(in, input, e.width, lines, step, sum, offset);
+            cudaDeviceSynchronize();
+        }
+        state.counters["readMiB"]
+            = static_cast<double>(sampled * e.width * sizeof(TIn)) / (1024.0 * 1024.0);
+    } catch (const std::exception& error) {
+        cudaFree(in);
+        cudaFree(sum);
+        cudaFree(offset);
+        state.SkipWithError(error.what());
+        return;
+    }
+    cudaFree(in);
+    cudaFree(sum);
+    cudaFree(offset);
+    state.counters["N"] = static_cast<double>(count);
+}
+
 template <typename TIn>
 void BM_CufftInt(benchmark::State& state, Extent e, rapidht_bench::IntLoad load)
 {
@@ -1114,6 +1179,32 @@ void RegisterIntegerInput(const Extent* extents, size_t n)
 #endif
 }
 
+/// R-5 step 1.2: the mean offset, exact and sampled.
+void RegisterIntOffset(const Extent* extents, size_t n)
+{
+#ifdef RAPIDHT_WITH_CUDA
+    if (!RapiDHT::IsGpuAvailable()) {
+        return;
+    }
+    const std::pair<const char*, size_t> policies[] = { { "mean", 1 }, { "every64", 64 }, { "every512", 512 } };
+    for (size_t i = 0; i < n; ++i) {
+        const Extent e = extents[i];
+        for (const auto& [name, step] : policies) {
+            const std::string tail = std::string("/") + name + "/3D/" + Describe(e);
+            benchmark::RegisterBenchmark(("IntOffset/u8" + tail).c_str(),
+                [e, step = step](benchmark::State& s) { BM_IntOffset<uint8_t>(s, e, step); })
+                ->Unit(benchmark::kMicrosecond);
+            benchmark::RegisterBenchmark(("IntOffset/u16" + tail).c_str(),
+                [e, step = step](benchmark::State& s) { BM_IntOffset<uint16_t>(s, e, step); })
+                ->Unit(benchmark::kMicrosecond);
+        }
+    }
+#else
+    (void)extents;
+    (void)n;
+#endif
+}
+
 /// R-5 step 0.6: host to device, the three input types, ordinary and pinned
 /// host memory.
 void RegisterHostToDevice(const Extent* extents, size_t n)
@@ -1276,6 +1367,8 @@ int main(int argc, char** argv)
     RegisterFactored<float>(kExtentsR4Only3D, CountOf(kExtentsR4Only3D), "3D", "f32");
     RegisterIntegerInput(kExtents3D, CountOf(kExtents3D));
     RegisterIntegerInput(kExtentsR5Large3D, CountOf(kExtentsR5Large3D));
+    RegisterIntOffset(kExtents3D + 2, 1); // 512^3
+    RegisterIntOffset(kExtentsR5Large3D + 1, 1); // 1024^3
     RegisterHostToDevice(kExtents3D + 2, 1); // 512^3
     RegisterHostToDevice(kExtentsR5Large3D + 1, 1); // 1024^3
     RegisterConvolution(kExtentsR4Only3D, 1, "3D"); // 64^3

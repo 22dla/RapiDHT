@@ -112,6 +112,15 @@ std::unique_ptr<CufftIntHartley> MakeCufftIntHartley(
 void ConvertIntToFloat(const void* deviceIn, IntInput input, float* deviceOut, size_t count, double offset);
 void AddToFirst(float* deviceData, double value);
 
+/// R-5 step 1.2, the price of the mean offset: the exact sum (uint64) of the
+/// integers on every `step`-th line along x -- lines 0, step, 2 step, ... of
+/// the `lines` lines of `width` values; step 1 is the whole volume -- into
+/// *deviceSum, then their mean rounded to the nearest integer, as a float, into
+/// *deviceOffset, where a first pass would read it. All on the device, no host
+/// round trip; asynchronous. width divisible by 4.
+void IntegerMeanOffset(const void* deviceIn, IntInput input, size_t width, size_t lines, size_t step,
+    unsigned long long* deviceSum, float* deviceOffset);
+
 /// LegacyCallback. Defined in cufft_int_callback.cu, which only targets that
 /// link rapidht_cufft_callback have.
 std::unique_ptr<CufftIntHartley> MakeCufftIntCallback(

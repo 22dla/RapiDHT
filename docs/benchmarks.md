@@ -691,6 +691,14 @@ conversion kernel, largest error in LSB (cuFFT in brackets):
 - RMS error under the default policy: 0.001--0.003 LSB on the real volumes,
   100--300 times below the noise of rounding the input.
 
+### The price of the offset (R-5 step 1.2, 2026-11-25)
+
+`IntOffset/` rows of `benchmarks/results/2026-11-25_evgeny_r5_s12.json`: the
+exact sum (uint64) of the sampled lines and the rounded mean as a float, both
+on the device. The default policy, the mean of every 64th line, takes 18 µs
+at 512³ uint16 (0.19 % of the float transform) and 94 µs at 1024³; the exact
+mean 0.70 and 5.60 ms (7.5 % of the transform at 512³).
+
 ### Reading integers along z (R-5 step 1.1, 2026-11-25)
 
 `stride_probe int` (`benchmarks/results/2026-11-25_evgeny_r5_stride_int.txt`):

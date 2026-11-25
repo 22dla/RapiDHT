@@ -163,6 +163,7 @@ echo "== 5/5 benchmark: R-4 rows and the R-5 families, 7 repetitions (clock not 
 #   cuFFTIntLto  LTO load callback                                            (step 0.2c)
 #   IntConvertFactored  conversion kernel + FactoredResident                  (step 0.3)
 #   IntFactored  the first pass reads the integers itself                     (step 2.3)
+#   IntOffset    the mean offset on the device: exact, every 64th / 512th line (step 1.2)
 sizes='(128x128x128|256x256x256|512x512x512)'
 r4_rows="(cuFFT|cuFFT_R2C|FactoredResident|FactoredResidentSeparable)/f32/3D/$sizes"
 r5_sizes=$sizes
@@ -174,11 +175,13 @@ if [[ ${R5_LARGE:-0} == 1 ]]; then
     echo "   (large sizes: R5_LARGE=1)"
 fi
 r5_rows="(cuFFTInt|cuFFTIntCb|cuFFTIntLto|IntConvertFactored|IntFactored)/(u8|u16)/3D/$r5_sizes"
-filter="^($r4_rows|$r5_rows)\$"
+# The price of the mean offset (step 1.2): a few seconds, so in every run.
+offset_rows="IntOffset/(u8|u16)/(mean|every64|every512)/3D/(512x512x512|1024x1024x1024)"
+filter="^($r4_rows|$r5_rows|$offset_rows)\$"
 # R5_BUS=1 (step 0.6): one way over the bus for uint8, uint16 and float, from
 # ordinary and pinned host memory -- about a minute, so not in every run.
 if [[ ${R5_BUS:-0} == 1 ]]; then
-    filter="^($r4_rows|$r5_rows|H2D/(u8|u16|f32)/(pageable|pinned)/3D/(512x512x512|1024x1024x1024))\$"
+    filter="^($r4_rows|$r5_rows|$offset_rows|H2D/(u8|u16|f32)/(pageable|pinned)/3D/(512x512x512|1024x1024x1024))\$"
     echo "   (host to device: R5_BUS=1)"
 fi
 # R5_TASKS=1 is stage 5: the end-to-end tasks (Task<N>/<implementation>/...),

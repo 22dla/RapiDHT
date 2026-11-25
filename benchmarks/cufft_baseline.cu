@@ -9,6 +9,7 @@
 #include <cufft.h>
 #include <cufftXt.h>
 
+#include <algorithm>
 #include <cstdint>
 #include <stdexcept>
 #include <string>
@@ -62,6 +63,78 @@ void ConvertIntToFloat(const void* deviceIn, IntInput input, float* deviceOut, s
             <<<grid, block>>>(static_cast<const ushort4*>(deviceIn), reinterpret_cast<float4*>(deviceOut), quads, off);
     }
     Check(cudaGetLastError(), "IntToFloat launch");
+}
+
+namespace {
+
+/*
+ * Sum of every step-th line, exact: a fixed grid of blocks strides over the
+ * sampled lines, each thread adds the quads it reads into a 64-bit register,
+ * the warp and then the block reduce, one atomicAdd a block. Memory-bound for
+ * step 1 (one read of the volume); for a sparse sample it is the launch.
+ */
+template <typename TIn4>
+__global__ void SumLines(
+    const TIn4* __restrict__ in, size_t quadsPerLine, size_t sampled, size_t step, unsigned long long* sum)
+{
+    unsigned long long local = 0;
+    const size_t threads = static_cast<size_t>(gridDim.x) * blockDim.x;
+    const size_t total = sampled * quadsPerLine;
+    for (size_t i = static_cast<size_t>(blockIdx.x) * blockDim.x + threadIdx.x; i < total; i += threads) {
+        const size_t line = (i / quadsPerLine) * step;
+        const TIn4 v = in[line * quadsPerLine + i % quadsPerLine];
+        local += static_cast<unsigned long long>(v.x) + v.y + v.z + v.w;
+    }
+    for (int offset = 16; offset > 0; offset /= 2) {
+        local += __shfl_down_sync(0xffffffffu, local, offset);
+    }
+    __shared__ unsigned long long warps[32];
+    const int lane = static_cast<int>(threadIdx.x) % 32;
+    const int warp = static_cast<int>(threadIdx.x) / 32;
+    if (lane == 0) {
+        warps[warp] = local;
+    }
+    __syncthreads();
+    if (warp == 0) {
+        local = lane < static_cast<int>(blockDim.x) / 32 ? warps[lane] : 0;
+        for (int offset = 16; offset > 0; offset /= 2) {
+            local += __shfl_down_sync(0xffffffffu, local, offset);
+        }
+        if (lane == 0) {
+            atomicAdd(sum, local);
+        }
+    }
+}
+
+__global__ void RoundedMean(const unsigned long long* sum, double count, float* offset)
+{
+    *offset = static_cast<float>(rint(static_cast<double>(*sum) / count));
+}
+
+} // namespace
+
+void IntegerMeanOffset(const void* deviceIn, IntInput input, size_t width, size_t lines, size_t step,
+    unsigned long long* deviceSum, float* deviceOffset)
+{
+    const size_t quadsPerLine = width / 4;
+    const size_t sampled = (lines + step - 1) / step;
+    int device = 0;
+    int sms = 0;
+    Check(cudaGetDevice(&device), "cudaGetDevice");
+    Check(cudaDeviceGetAttribute(&sms, cudaDevAttrMultiProcessorCount, device), "cudaDeviceGetAttribute");
+    const unsigned block = 256;
+    // Enough blocks to fill the card (8 a SM), never more than there are quads.
+    const size_t wanted = (sampled * quadsPerLine + block - 1) / block;
+    const unsigned grid = static_cast<unsigned>(std::min<size_t>(wanted, static_cast<size_t>(sms) * 8));
+    Check(cudaMemsetAsync(deviceSum, 0, sizeof(unsigned long long)), "cudaMemsetAsync(sum)");
+    if (input == IntInput::U8) {
+        SumLines<<<grid, block>>>(static_cast<const uchar4*>(deviceIn), quadsPerLine, sampled, step, deviceSum);
+    } else {
+        SumLines<<<grid, block>>>(static_cast<const ushort4*>(deviceIn), quadsPerLine, sampled, step, deviceSum);
+    }
+    Check(cudaGetLastError(), "SumLines launch");
+    RoundedMean<<<1, 1>>>(deviceSum, static_cast<double>(sampled * width), deviceOffset);
+    Check(cudaGetLastError(), "RoundedMean launch");
 }
 
 void AddToFirst(float* deviceData, double value)
