@@ -613,6 +613,46 @@ not for integer arithmetic. A first pass that reads uint8 / uint16 can
 subtract it at no cost; the mean needs one reduction over the input (or a
 known level, such as air or the matrix).
 
+### Real and synthetic tomograms (R-5 step 0.4, 2026-11-25)
+
+The same report on volumes that look like tomograms
+(`benchmarks/results/2026-11-25_evgeny_r5_s04_accuracy.txt`, `R5_ACC=1`; the
+Korneev columns cut by `tools/r5_tiff_to_raw.py`, hashes in `…_s04.meta.txt`).
+Largest error over the non-zero frequencies, in LSB, rounded mean subtracted;
+"floor" is the exact spectrum rounded to float -- no float output does better:
+
+| input, uint16 | floor | cuFFT | factored | RMS, factored |
+| --- | ---: | ---: | ---: | ---: |
+| white noise, full range, 512³ | 0.005 | 0.044 | 0.027 | 0.0044 |
+| synthetic cylinder, 128³ | 0.148 | 0.61 | 0.60 | 0.0017 |
+| synthetic cylinder, 512³ | 1.23 | 6.04 | 6.66 | 0.0023 |
+| C6197A centre, 128³ box | 0.029 | 0.117 | 0.060 | 0.0007 |
+| C6197A centre, 512³ | 0.136 | 0.82 | 0.84 | 0.0010 |
+| C6203A centre, 128³ box | 0.037 | 0.186 | 0.080 | 0.0012 |
+| C6203A centre, 512³ | 0.553 | 1.28 | 0.84 | 0.0016 |
+| C6197A, edge of the field of view, 128³ box | 0.153 | 0.39 | 0.31 | 0.0011 |
+| C6203A, edge of the field of view, 128³ box | 0.160 | 0.47 | 0.48 | 0.0012 |
+
+- On a tomogram the largest error is set by its few large low-frequency
+  coefficients (sample against air, the edge of the field of view), not by
+  the arithmetic: the float output alone already rounds them by 0.14--1.2 LSB
+  at 512³. Subtracting the mean removes one of them, not the rest. White
+  noise, with no large coefficient but the zero one, hid this.
+- Both libraries land at 2--7 times the floor and within 1.1 of each other in
+  the worst case (synthetic 512³); on the real columns the factored path is
+  the more accurate or equal. The RMS error stays at 0.001--0.002 LSB,
+  150--300 times below the noise of rounding the input.
+- So a bound on the largest error of 0.1 LSB, as R-5 first set it (criterion
+  C3), cannot be met by any transform with a float output on real data. The
+  bound has to be stated against the floor or in another measure; see
+  `docs/R5_PLAN.md`, step 0.4.
+- uint8 has no such problem (largest 0.02 LSB at 512³): its coefficients are
+  256 times smaller against the same float precision.
+- A constant input (the zero corner of a full slice) minus half the range
+  gives cuFFT an exact result and the factored path a largest error of
+  1.6 LSB (`s04` run by hand, not in the table): the large zero coefficient
+  leaks into others in the factored passes. Not looked into.
+
 ## Integer volumes: the cuFFT baseline (R-5 step 0.2, 2026-11-25)
 
 cuFFT has no integer input type. Three ways to give it a uint8 / uint16 volume

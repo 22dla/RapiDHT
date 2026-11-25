@@ -46,9 +46,18 @@ profile=build-bench/benchmarks/profile_gpu3d
 accuracy=build-bench/benchmarks/accuracy_integer
 # Real volumes read by this run (rule 10 of docs/R5_PLAN.md: path and SHA-256 of
 # each go into .meta.txt; accuracy figures of two runs compare only when the
-# hashes agree). Empty until step 0.4 teaches accuracy_integer to read files:
-# up to then it uses generated white noise only.
+# hashes agree). The Korneev columns, cut by tools/r5_tiff_to_raw.py (step 0.4;
+# the table of files and hashes is in docs/R5_PLAN.md). Hashed only with
+# R5_ACC=1, the only time they are read.
+korneev=${R5_KORNEEV:-$HOME/data/korneev}
 r5_data=()
+if [[ ${R5_ACC:-0} == 1 ]]; then
+    r5_data=("$korneev/C6197A_center512.raw" "$korneev/C6203A_center512.raw"
+             "$korneev/C6197A_full1024x512.raw" "$korneev/C6203A_full1024x512.raw")
+    for file in "${r5_data[@]}"; do
+        [[ -r "$file" ]] || { echo "R5_ACC=1: $file is missing (R5_KORNEEV= sets the folder)" >&2; exit 2; }
+    done
+fi
 mkdir -p "$results"
 
 if [[ -e "$stem.json" ]]; then
@@ -178,11 +187,23 @@ env "$@" "$bench" \
 # Accuracy goes last: it does not depend on the clock, and the CPU reference in
 # double at 512^3 takes minutes that would otherwise warm the card before the
 # timing.
+# The inputs (step 0.4): white noise; the synthetic cylinder, u16 and u8; the
+# centre of each column (inside the field of view) as a 128^3 box and whole;
+# a 128^3 box of each full slice on the diagonal, where the edge of the field
+# of view crosses it (52 % zeros outside the circle -- the hard case). Real volumes are uint16 only.
 if [[ ${R5_ACC:-0} == 1 ]]; then
-    echo "== accuracy (R5_ACC=1): accuracy_integer 128 256 512"
+    echo "== accuracy (R5_ACC=1)"
     {
-        echo "# accuracy_integer 128 256 512, $(date --iso-8601=seconds), commit $(git rev-parse --short HEAD)$( [[ -n $(git status --short --untracked-files=no) ]] && echo ' + uncommitted changes (see .meta.txt)'); settings: ${*:-(none)}"
+        echo "# accuracy_integer, $(date --iso-8601=seconds), commit $(git rev-parse --short HEAD)$( [[ -n $(git status --short --untracked-files=no) ]] && echo ' + uncommitted changes (see .meta.txt)'); settings: ${*:-(none)}"
         env "$@" "$accuracy" 128 256 512
+        for type in u16 u8; do
+            env "$@" "$accuracy" --synthetic cylinder $type 128 512
+        done
+        for column in C6197A C6203A; do
+            env "$@" "$accuracy" --raw "$korneev/${column}_center512.raw" 512x512x512 u16 --crop 192 192 192 128 128 128
+            env "$@" "$accuracy" --raw "$korneev/${column}_center512.raw" 512x512x512 u16
+            env "$@" "$accuracy" --raw "$korneev/${column}_full1024x512.raw" 1024x1024x512 u16 --crop 86 86 192 128 128 128
+        done
     } 2>&1 | tee "${stem}_accuracy.txt"
 fi
 

@@ -3,7 +3,10 @@
  * File: benchmarks/accuracy_integer.cpp
  * Brief: How accurate is a float transform of an integer tomogram, and against what?
  *
- *   ./accuracy_integer 128 256 512
+ *   ./accuracy_integer 128 256 512                         white integer noise, n^3
+ *   ./accuracy_integer --synthetic cylinder u16|u8 128 512 a synthetic tomogram, n^3
+ *   ./accuracy_integer --raw FILE WxHxD u16|u8 [--crop X0 Y0 Z0 W H D]
+ *                                                          a volume from a file
  *
  * R-5 of docs/BACKLOG.md, first question: would integer arithmetic beat the
  * error of the float transform on uint8 / uint16 volumes? Integer arithmetic
@@ -19,11 +22,23 @@
  *   - the float output: the exact spectrum rounded to float. A transform that
  *     returns float cannot be more accurate than this, however it computes.
  *
- * Inputs (white integer noise, the case with the most information per voxel):
+ * Inputs. White integer noise, the case with the most information per voxel:
  *   uint8 full   uniform 0..255
  *   uint16 full  uniform 0..65535
  *   uint16 CT    30000 + uniform -2000..2000: a narrow band far from zero, the
  *                way a reconstructed tomogram sits in its range
+ * White noise is not what a tomogram looks like: its spectrum is dominated by a
+ * few large low frequencies (sample against air, the container wall, cupping),
+ * which is where the float error can grow (docs/R5_PLAN.md, risk R2). Hence two
+ * more sources (R-5 step 0.4):
+ *   --synthetic cylinder  a sample cylinder along z in air, grains as random
+ *                balls on a pore matrix in the band 30000 +- 2000, cupping (the
+ *                sample darker toward its axis), Gaussian noise; deterministic.
+ *                u8 is the same volume divided by 256.
+ *   --raw        a real volume, raw little-endian integers, x fastest, as
+ *                tools/r5_tiff_to_raw.py writes them; --crop takes a box of it
+ *                (the box, not the file, must be a power of two per axis).
+ *
  * Each is transformed raw, and with an integer offset subtracted first: half
  * the range (no extra pass needed), and the rounded mean (one reduction). The
  * subtraction is exact, and it changes only the zero-frequency coefficient, by
@@ -39,10 +54,12 @@
 
 #include <cuda_runtime.h>
 
+#include <algorithm>
 #include <cmath>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
+#include <cstring>
 #include <exception>
 #include <stdexcept>
 #include <string>
@@ -56,29 +73,186 @@ using RapiDHT::DeviceVolume;
 using RapiDHT::HartleyTransform;
 using RapiDHT::Modes;
 
-struct Input {
-    const char* name;
-    int32_t base; ///< values are base + uniform integer in [0, span)
-    int32_t span;
-    int32_t halfRange; ///< the offset a format would suggest without looking at the data
+/// An integer volume held as doubles (exact), with what the report needs.
+struct Volume {
+    std::string name;
+    size_t width = 0, height = 0, depth = 0;
+    double halfRange = 0.0; ///< the offset a format suggests without looking at the data
+    std::vector<double> data;
+
+    size_t Count() const { return width * height * depth; }
 };
 
-/// SplitMix64 integers in [base, base + span): white, exact in float (< 2^24).
-std::vector<double> MakeIntegers(size_t count, const Input& in)
-{
-    std::vector<double> data(count);
-    uint64_t state = 2463534242u;
-    for (double& value : data) {
+/// SplitMix64: reproducible, and the same on every platform.
+struct SplitMix64 {
+    uint64_t state;
+    uint64_t Next()
+    {
         uint64_t z = (state += 0x9E3779B97F4A7C15ull);
         z = (z ^ (z >> 30)) * 0xBF58476D1CE4E5B9ull;
         z = (z ^ (z >> 27)) * 0x94D049BB133111EBull;
-        z ^= z >> 31;
-        value = static_cast<double>(in.base + static_cast<int32_t>(z % static_cast<uint64_t>(in.span)));
+        return z ^ (z >> 31);
     }
-    return data;
+    /// Uniform in [0, 1).
+    double Uniform() { return static_cast<double>(Next() >> 11) * 0x1.0p-53; }
+    /// Standard normal (Box-Muller; one value of the pair is dropped).
+    double Normal()
+    {
+        const double u = 1.0 - Uniform(); // (0, 1]
+        const double v = Uniform();
+        return std::sqrt(-2.0 * std::log(u)) * std::cos(6.283185307179586 * v);
+    }
+};
+
+/// White integers in [base, base + span), n^3.
+Volume WhiteNoise(size_t n, const char* name, int32_t base, int32_t span, double halfRange)
+{
+    Volume v { name, n, n, n, halfRange, std::vector<double>(n * n * n) };
+    SplitMix64 rng { 2463534242u };
+    for (double& value : v.data) {
+        value = static_cast<double>(base + static_cast<int32_t>(rng.Next() % static_cast<uint64_t>(span)));
+    }
+    return v;
 }
 
-std::vector<float> OnDevice(const std::vector<float>& input, size_t n, bool cufft)
+/*
+ * A synthetic tomogram of a porous sample, uint16 levels (u8: divided by 256):
+ *
+ *   air       outside a cylinder of radius 0.45 n along z: level 6000
+ *   pores     inside it: level 28500
+ *   grains    random balls of radius n/40 .. n/14 placed until they cover about
+ *             half the cylinder (overlaps allowed): level 31500
+ *   cupping   inside the cylinder the level drops toward the axis by up to 4 %
+ *             (quadratically in r: 1 - 0.04 (1 - r^2 / R^2))
+ *   noise     Gaussian, sigma 300 (u16), everywhere
+ *
+ * then rounded and clamped to the type. The band of the sample is about
+ * 27 400 .. 32 100, the "30000 +- 2000" of the plan; air gives the sharp edge
+ * of the sample, the largest low-frequency coefficients.
+ */
+Volume SyntheticCylinder(size_t n, bool u8)
+{
+    const std::string name = std::string("synthetic cylinder, ") + (u8 ? "uint8" : "uint16");
+    Volume v { name, n, n, n, u8 ? 128.0 : 32768.0, std::vector<double>(n * n * n) };
+    const double centre = 0.5 * static_cast<double>(n) - 0.5;
+    const double radius = 0.45 * static_cast<double>(n);
+    std::vector<uint8_t> grain(n * n * n, 0);
+
+    // Balls until their nominal volume is half the cylinder's.
+    SplitMix64 rng { 0x5EED0004u };
+    const double target = 0.5 * 3.141592653589793 * radius * radius * static_cast<double>(n);
+    double placed = 0.0;
+    while (placed < target) {
+        const double r = static_cast<double>(n) * (1.0 / 40.0 + rng.Uniform() * (1.0 / 14.0 - 1.0 / 40.0));
+        // Centre uniformly inside the cylinder (rejection on the disc).
+        double cx = 0.0, cy = 0.0;
+        do {
+            cx = centre + (2.0 * rng.Uniform() - 1.0) * radius;
+            cy = centre + (2.0 * rng.Uniform() - 1.0) * radius;
+        } while ((cx - centre) * (cx - centre) + (cy - centre) * (cy - centre) > radius * radius);
+        const double cz = rng.Uniform() * static_cast<double>(n);
+        const long x0 = std::max(0L, static_cast<long>(std::floor(cx - r)));
+        const long x1 = std::min(static_cast<long>(n) - 1, static_cast<long>(std::ceil(cx + r)));
+        const long y0 = std::max(0L, static_cast<long>(std::floor(cy - r)));
+        const long y1 = std::min(static_cast<long>(n) - 1, static_cast<long>(std::ceil(cy + r)));
+        const long z0 = std::max(0L, static_cast<long>(std::floor(cz - r)));
+        const long z1 = std::min(static_cast<long>(n) - 1, static_cast<long>(std::ceil(cz + r)));
+        for (long z = z0; z <= z1; ++z) {
+            for (long y = y0; y <= y1; ++y) {
+                for (long x = x0; x <= x1; ++x) {
+                    const double dx = x - cx, dy = y - cy, dz = z - cz;
+                    if (dx * dx + dy * dy + dz * dz <= r * r) {
+                        grain[static_cast<size_t>(x) + n * (static_cast<size_t>(y) + n * static_cast<size_t>(z))] = 1;
+                    }
+                }
+            }
+        }
+        placed += 4.0 / 3.0 * 3.141592653589793 * r * r * r;
+    }
+
+    SplitMix64 noise { 0x5EED0005u };
+    const double maximum = u8 ? 255.0 : 65535.0;
+    for (size_t z = 0; z < n; ++z) {
+        for (size_t y = 0; y < n; ++y) {
+            for (size_t x = 0; x < n; ++x) {
+                const size_t i = x + n * (y + n * z);
+                const double dx = static_cast<double>(x) - centre, dy = static_cast<double>(y) - centre;
+                const double rr = (dx * dx + dy * dy) / (radius * radius);
+                double level = 6000.0;
+                if (rr <= 1.0) {
+                    level = (grain[i] != 0 ? 31500.0 : 28500.0) * (1.0 - 0.04 * (1.0 - rr));
+                }
+                level += 300.0 * noise.Normal();
+                if (u8) {
+                    level /= 256.0;
+                }
+                v.data[i] = std::clamp(std::round(level), 0.0, maximum);
+            }
+        }
+    }
+    return v;
+}
+
+/// 64-bit file positions: fseeko / ftello on POSIX, their _i64 forms on Windows.
+int Seek(FILE* file, unsigned long long at, int whence)
+{
+#ifdef _WIN32
+    return _fseeki64(file, static_cast<long long>(at), whence);
+#else
+    return fseeko(file, static_cast<off_t>(at), whence);
+#endif
+}
+
+unsigned long long Tell(FILE* file)
+{
+#ifdef _WIN32
+    return static_cast<unsigned long long>(_ftelli64(file));
+#else
+    return static_cast<unsigned long long>(ftello(file));
+#endif
+}
+
+/// A box of a raw volume of file extent fw x fh x fd, element size 1 or 2.
+Volume ReadRaw(const std::string& path, size_t fw, size_t fh, size_t fd, bool u8, size_t x0, size_t y0, size_t z0,
+    size_t w, size_t h, size_t d)
+{
+    if (x0 + w > fw || y0 + h > fh || z0 + d > fd) {
+        throw std::runtime_error("--crop box lies outside the file's extent");
+    }
+    FILE* file = std::fopen(path.c_str(), "rb");
+    if (file == nullptr) {
+        throw std::runtime_error("cannot open " + path);
+    }
+    const size_t bytes = u8 ? 1 : 2;
+    if (Seek(file, 0, SEEK_END) != 0 || Tell(file) != static_cast<unsigned long long>(fw) * fh * fd * bytes) {
+        std::fclose(file);
+        throw std::runtime_error(path + ": size does not match the extent and type given");
+    }
+    std::string name = path.substr(path.find_last_of('/') + 1);
+    if (w != fw || h != fh || d != fd) {
+        name += ", box at (" + std::to_string(x0) + ", " + std::to_string(y0) + ", " + std::to_string(z0) + ")";
+    }
+    Volume v { name, w, h, d, u8 ? 128.0 : 32768.0, std::vector<double>(w * h * d) };
+    std::vector<unsigned char> line(w * bytes);
+    for (size_t z = 0; z < d; ++z) {
+        for (size_t y = 0; y < h; ++y) {
+            const unsigned long long at = ((static_cast<unsigned long long>(z0 + z) * fh + (y0 + y)) * fw + x0) * bytes;
+            if (Seek(file, at, SEEK_SET) != 0 || std::fread(line.data(), 1, line.size(), file) != line.size()) {
+                std::fclose(file);
+                throw std::runtime_error(path + ": read failed");
+            }
+            double* out = v.data.data() + w * (y + h * z);
+            for (size_t x = 0; x < w; ++x) {
+                // Little-endian, whatever the host is.
+                out[x] = u8 ? line[x] : static_cast<double>(line[2 * x] | (line[2 * x + 1] << 8));
+            }
+        }
+    }
+    std::fclose(file);
+    return v;
+}
+
+std::vector<float> OnDevice(const std::vector<float>& input, const Volume& v, bool cufft)
 {
     std::vector<float> output(input.size());
     if (cufft) {
@@ -87,7 +261,8 @@ std::vector<float> OnDevice(const std::vector<float>& input, size_t n, bool cuff
             throw std::runtime_error("cudaMalloc failed");
         }
         try {
-            rapidht_bench::CufftHartley plan(static_cast<int>(n), static_cast<int>(n), static_cast<int>(n));
+            rapidht_bench::CufftHartley plan(
+                static_cast<int>(v.width), static_cast<int>(v.height), static_cast<int>(v.depth));
             cudaMemcpy(device, input.data(), input.size() * sizeof(float), cudaMemcpyHostToDevice);
             plan.Forward(device);
             cudaMemcpy(output.data(), device, input.size() * sizeof(float), cudaMemcpyDeviceToHost);
@@ -98,7 +273,7 @@ std::vector<float> OnDevice(const std::vector<float>& input, size_t n, bool cuff
         cudaFree(device);
         return output;
     }
-    HartleyTransform<float> transform(n, n, n, Modes::GPUFactored);
+    HartleyTransform<float> transform(v.width, v.height, v.depth, Modes::GPUFactored);
     DeviceVolume<float> volume(input.size());
     volume.Upload(input.data());
     transform.ForwardTransform(volume);
@@ -144,25 +319,35 @@ void Row(const char* label, const Error& e)
     std::printf("  %-34s rms %9.3e   largest %9.3e   zero frequency %9.3e\n", label, e.rms, e.largest, e.dc);
 }
 
-void Run(size_t n, const Input& in)
+std::string Extent(const Volume& v)
 {
-    const size_t count = n * n * n;
-    const std::vector<double> input = MakeIntegers(count, in);
-    double mean = 0.0;
-    for (double v : input) {
-        mean += v;
+    if (v.width == v.height && v.height == v.depth) {
+        return std::to_string(v.width) + "^3";
+    }
+    return std::to_string(v.width) + "x" + std::to_string(v.height) + "x" + std::to_string(v.depth);
+}
+
+void Run(const Volume& v)
+{
+    const size_t count = v.Count();
+    double mean = 0.0, low = v.data[0], high = v.data[0];
+    for (double x : v.data) {
+        mean += x;
+        low = std::min(low, x);
+        high = std::max(high, x);
     }
     mean /= static_cast<double>(count);
 
-    std::vector<double> reference = input;
-    HartleyTransform<double>(n, n, n, Modes::CPU).ForwardTransform(reference.data());
+    std::vector<double> reference = v.data;
+    HartleyTransform<double>(v.width, v.height, v.depth, Modes::CPU).ForwardTransform(reference.data());
 
-    std::printf("%zu^3, %s (mean %.1f); errors / sqrt(N), in LSB of the input\n", n, in.name, mean);
+    std::printf("%s, %s (mean %.1f, range %.0f..%.0f); errors / sqrt(N), in LSB of the input\n", Extent(v).c_str(),
+        v.name.c_str(), mean, low, high);
     std::printf("  %-34s rms %9.3e   (input rounding: 1/sqrt(12))\n", "floor: quantisation of the input",
         1.0 / std::sqrt(12.0));
     Row("floor: exact spectrum stored as float", OutputFloor(reference));
 
-    const double offsets[] = { 0.0, static_cast<double>(in.halfRange), std::round(mean) };
+    const double offsets[] = { 0.0, v.halfRange, std::round(mean) };
     const char* offsetNames[] = { "raw", "minus half range", "minus rounded mean" };
     for (int o = 0; o < 3; ++o) {
         if (o == 2 && offsets[2] == offsets[1]) {
@@ -170,14 +355,67 @@ void Run(size_t n, const Input& in)
         }
         std::vector<float> single(count);
         for (size_t i = 0; i < count; ++i) {
-            single[i] = static_cast<float>(input[i] - offsets[o]); // exact: integers below 2^24
+            single[i] = static_cast<float>(v.data[i] - offsets[o]); // exact: integers below 2^24
         }
         for (const bool cufft : { true, false }) {
             const std::string label = std::string(cufft ? "cuFFT + conversion, " : "GPUFactored, ") + offsetNames[o];
-            Row(label.c_str(), Measure(OnDevice(single, n, cufft), offsets[o], reference));
+            Row(label.c_str(), Measure(OnDevice(single, v, cufft), offsets[o], reference));
         }
     }
     std::fflush(stdout);
+}
+
+bool IsPowerOfTwo(size_t n)
+{
+    return n >= 2 && (n & (n - 1)) == 0;
+}
+
+size_t ParseSize(const char* text)
+{
+    char* end = nullptr;
+    const unsigned long long value = std::strtoull(text, &end, 10);
+    if (end == text || *end != '\0') {
+        throw std::runtime_error(std::string("not a number: ") + text);
+    }
+    return static_cast<size_t>(value);
+}
+
+/// "WxHxD" -> three sizes.
+void ParseExtent(const std::string& text, size_t& w, size_t& h, size_t& d)
+{
+    const size_t a = text.find('x'), b = text.find('x', a + 1);
+    if (a == std::string::npos || b == std::string::npos) {
+        throw std::runtime_error("extent must be WxHxD, got " + text);
+    }
+    w = ParseSize(text.substr(0, a).c_str());
+    h = ParseSize(text.substr(a + 1, b - a - 1).c_str());
+    d = ParseSize(text.substr(b + 1).c_str());
+}
+
+bool ParseType(const std::string& text)
+{
+    if (text != "u8" && text != "u16") {
+        throw std::runtime_error("type must be u8 or u16, got " + text);
+    }
+    return text == "u8";
+}
+
+void CheckTransformExtent(size_t w, size_t h, size_t d)
+{
+    if (!IsPowerOfTwo(w) || !IsPowerOfTwo(h) || !IsPowerOfTwo(d)) {
+        throw std::runtime_error("the transformed extent must be a power of two per axis");
+    }
+}
+
+int Usage(const char* program)
+{
+    std::fprintf(stderr,
+        "usage: %s EDGE [EDGE ...]                                white noise, EDGE^3\n"
+        "       %s --synthetic cylinder u16|u8 EDGE [EDGE ...]    synthetic tomogram, EDGE^3\n"
+        "       %s --raw FILE WxHxD u16|u8 [--crop X0 Y0 Z0 W H D]\n"
+        "EDGE and the transformed extent: powers of two.\n",
+        program, program, program);
+    return 2;
 }
 
 } // namespace
@@ -185,19 +423,45 @@ void Run(size_t n, const Input& in)
 int main(int argc, char** argv)
 {
     if (argc < 2) {
-        std::fprintf(stderr, "usage: %s EDGE [EDGE ...]   (powers of two, e.g. 128 256 512)\n", argv[0]);
-        return 2;
+        return Usage(argv[0]);
     }
-    const Input inputs[] = {
-        { "uint8 full range, uniform 0..255", 0, 256, 128 },
-        { "uint16 full range, uniform 0..65535", 0, 65536, 32768 },
-        { "uint16 CT-like band, 30000 +- 2000", 28000, 4001, 32768 },
-    };
     try {
-        for (int i = 1; i < argc; ++i) {
-            const size_t n = static_cast<size_t>(std::strtoul(argv[i], nullptr, 10));
-            for (const Input& in : inputs) {
-                Run(n, in);
+        const std::string mode = argv[1];
+        if (mode == "--synthetic") {
+            if (argc < 5 || std::string(argv[2]) != "cylinder") {
+                return Usage(argv[0]);
+            }
+            const bool u8 = ParseType(argv[3]);
+            for (int i = 4; i < argc; ++i) {
+                const size_t n = ParseSize(argv[i]);
+                CheckTransformExtent(n, n, n);
+                Run(SyntheticCylinder(n, u8));
+            }
+        } else if (mode == "--raw") {
+            if (argc != 5 && argc != 12) {
+                return Usage(argv[0]);
+            }
+            size_t fw = 0, fh = 0, fd = 0;
+            ParseExtent(argv[3], fw, fh, fd);
+            const bool u8 = ParseType(argv[4]);
+            size_t box[6] = { 0, 0, 0, fw, fh, fd };
+            if (argc == 12) {
+                if (std::string(argv[5]) != "--crop") {
+                    return Usage(argv[0]);
+                }
+                for (int i = 0; i < 6; ++i) {
+                    box[i] = ParseSize(argv[6 + i]);
+                }
+            }
+            CheckTransformExtent(box[3], box[4], box[5]);
+            Run(ReadRaw(argv[2], fw, fh, fd, u8, box[0], box[1], box[2], box[3], box[4], box[5]));
+        } else {
+            for (int i = 1; i < argc; ++i) {
+                const size_t n = ParseSize(argv[i]);
+                CheckTransformExtent(n, n, n);
+                Run(WhiteNoise(n, "uint8 full range, uniform 0..255", 0, 256, 128.0));
+                Run(WhiteNoise(n, "uint16 full range, uniform 0..65535", 0, 65536, 32768.0));
+                Run(WhiteNoise(n, "uint16 CT-like band, 30000 +- 2000", 28000, 4001, 32768.0));
             }
         }
     } catch (const std::exception& error) {
