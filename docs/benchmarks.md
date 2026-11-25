@@ -365,6 +365,10 @@ batch: the x pass 3.15 → 2.93 ms, the full transform 9.65 → **9.34 ms (0.874
 times cuFFT plus conversion, 10.68 ms in the same run)**, the separable one
 unchanged at 9.23 ms (`…_r4_xg_b2.json` against `…_r4_xg_a2.json`, back to
 back, 2026-11-25; the first A–B, `…_r4_xg{_a,}.json`, gave −3.2 %).
+Step 5.1 removed the R-4 switches (`RAPIDHT_FACTORED_KERNEL`, `RAPIDHT_R4_ABLATE`)
+with no change outside noise (`…_r4_s51_b2.json` against `…_r4_s51_a2.json`:
+9.39 against 9.33 ms at 512³). **`…_r4_s51.json` is unusable**: the machine was
+busy during that run and cuFFT itself moved by +26 % at 512³.
 
 The axes differ only from 512³ up; at 128³ and 256³ all three take the same
 time (2.3 and 1.7 Bracewell passes).

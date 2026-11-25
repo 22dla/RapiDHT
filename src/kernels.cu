@@ -14,8 +14,6 @@
 #include "device_launch_parameters.h"
 
 #include <cstdint>
-#include <cstdlib>
-#include <cstring>
 #include <type_traits>
 #include <utility>
 #include <vector>
@@ -300,37 +298,6 @@ namespace {
 constexpr int kFactoredThreads = 256;
 constexpr int kFactoredMaxQuads = 8;
 
-/// RAPIDHT_FACTORED_KERNEL=v2 keeps the one-batch-per-block kernel of v2.2,
-/// so that both can be timed from the same build.
-bool FactoredUseV2Kernel()
-{
-    static const bool v2 = [] {
-        const char* s = std::getenv("RAPIDHT_FACTORED_KERNEL");
-        return s != nullptr && std::strcmp(s, "v2") == 0;
-    }();
-    return v2;
-}
-
-/// RAPIDHT_R4_ABLATE=io|compute: the diagnostic modes of the pipelined kernel
-/// (R-4 step 1.1). Wrong results by design; never set outside a measurement.
-int FactoredAblateMode()
-{
-    static const int mode = [] {
-        const char* s = std::getenv("RAPIDHT_R4_ABLATE");
-        if (s == nullptr) {
-            return kAblateNone;
-        }
-        if (std::strcmp(s, "io") == 0) {
-            return kAblateIo;
-        }
-        if (std::strcmp(s, "compute") == 0) {
-            return kAblateCompute;
-        }
-        return kAblateNone;
-    }();
-    return mode;
-}
-
 /*
  * Batch width of the pipelined kernel by axis and length, from the sweep of
  * R-4 step 2.4 (benchmarks/results/2026-11-15_*_r4_s24_L{4,8,16,32}_trace.txt,
@@ -567,12 +534,11 @@ void LaunchPipelinedAxisAs(FactoredDeviceInfo& info, size_t batches, size_t shar
     const int batchesI = static_cast<int>(batches);
     if constexpr (kItems == 0) {
         FactoredAxisKernelPipelined<T, kFactoredMaxQuads, kFold, kN, kLanes><<<grid, kFactoredThreads, sharedBytes>>>(
-            data, tables, axisStride, laneStride, lanesI, perOther, otherStride, batchesI, workStride, vec,
-            FactoredAblateMode());
+            data, tables, axisStride, laneStride, lanesI, perOther, otherStride, batchesI, workStride, vec);
     } else {
         FactoredAxisKernelInPlace<T, kQuads, kItems, kMinBlocks, kFold, kN, kLanes>
             <<<grid, kFactoredThreads, sharedBytes>>>(data, tables, axisStride, laneStride, lanesI, perOther,
-                otherStride, batchesI, workStride, vec, FactoredAblateMode());
+                otherStride, batchesI, workStride, vec);
     }
     RAPIDHT_CUDA_CHECK(cudaGetLastError());
 }
@@ -730,7 +696,7 @@ void FactoredAxis(T* data, const FactoredAxisTables<T>& tables, size_t axisStrid
         // fits on an SM and it is 8.5-42 % slower than v2 at 128^3-512^3
         // (R-4 step 2.0, benchmarks/results/2026-11-15_*_r4_s20_f64_*.json).
         if (sizeof(T) == 4 && lanes >= 4 && bytesFor(lanes) <= static_cast<size_t>(optIn)
-            && quadsPerThread <= kFactoredMaxQuads && !FactoredUseV2Kernel()) {
+            && quadsPerThread <= kFactoredMaxQuads) {
             // The width the sweep found best for this axis and length, halved
             // until it fits the shared memory, the lane axis and the registers
             // (R-4 steps 2.2, 2.4); then the variant of the kernel (step 4B).
@@ -813,7 +779,7 @@ bool FactoredLastAxisBracewell(T* data, const FactoredAxisTables<T>& tables, siz
     const size_t n2 = static_cast<size_t>(tables.n2);
     // Float only, like the pipelined kernel it is built on (double stays on
     // v2, R-4 step 2.0); n1, n2 >= 4 for the 4 x 4 register tiles.
-    if (sizeof(T) != 4 || n1 < 4 || n2 < 4 || FactoredUseV2Kernel()) {
+    if (sizeof(T) != 4 || n1 < 4 || n2 < 4) {
         return false;
     }
     int device = 0;

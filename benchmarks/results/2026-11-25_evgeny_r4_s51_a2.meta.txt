@@ -1,0 +1,35 @@
+tag: s51_a2
+date: 2026-11-25T13:09:27+04:00
+settings: (none)
+commit: 7622e78a13b0fb3e548d6b2e2b56a9bf39af15ac
+uncommitted:
+   M CLAUDE.md
+   M benchmarks/stride_probe.cu
+   M docs/architecture.uxf
+   M scripts/r4_measure.sh
+  ?? benchmarks/results/2026-11-25_evgeny_r4_s51.json
+  ?? benchmarks/results/2026-11-25_evgeny_r4_s51.meta.txt
+  ?? benchmarks/results/2026-11-25_evgeny_r4_s51_a.json
+  ?? benchmarks/results/2026-11-25_evgeny_r4_s51_a.meta.txt
+  ?? benchmarks/results/2026-11-25_evgeny_r4_s51_a2.meta.txt
+  ?? benchmarks/results/2026-11-25_evgeny_r4_s51_a_trace.txt
+  ?? benchmarks/results/2026-11-25_evgeny_r4_s51_b2.json
+  ?? benchmarks/results/2026-11-25_evgeny_r4_s51_b2.meta.txt
+  ?? benchmarks/results/2026-11-25_evgeny_r4_s51_b2_trace.txt
+  ?? benchmarks/results/2026-11-25_evgeny_r4_s51_trace.txt
+sources:
+  cdb8efaa70599006c3fa26ac337cb5a6b8f064633ec77e8d0d98c44c843d5c5e  src/internal/factored_kernels.cuh
+  a067ae917b0fbd44e686826fce247e1eb9d1a75898b1f8266983c5df2fff7422  src/kernels.cu
+  00219f6acfe6d833b60361ba32e0e33aadb91e124e238d5bc2ae6a6de9771ecb  src/backend_cuda.cpp
+  36501266c19eb17add2cdbf0afc3085348713f02e60222c38822340b3d91775f  src/internal/kernels.h
+  1a375ecd95a67d44792b9ffb3c8e02e8dd84c73ee1baaa6b43f323ce3e10e9ba  benchmarks/bench_transform.cpp
+  bcaca72a7bb8dbc44bb636fc7e4da1065aa5eebc250dde1506437ad4e064c3a0  benchmarks/cufft_baseline.cu
+binaries:
+  -rwxrwxr-x 1 evgeny evgeny 2404960 2026-11-25 13:08 build-bench/benchmarks/bench_transform
+  -rwxrwxr-x 1 evgeny evgeny 1712312 2026-11-25 13:08 build-bench/benchmarks/profile_gpu3d
+gpu:
+  NVIDIA GeForce RTX 3060 Ti, 595.99.02, 40, 6.30 W, 965 MiB
+other processes on the gpu (they add noise; close what you can):
+  6260, /usr/libexec/gnome-remote-desktop-daemon, 134 MiB
+  6623, /usr/libexec/gnome-remote-desktop-daemon, 292 MiB
+  7341, /opt/Mattermost/com.Mattermost.Desktop --type=gpu-process --gpu-recent-crash-count=0 --ozone-platform=wayland --re

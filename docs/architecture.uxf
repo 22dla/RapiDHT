@@ -8,7 +8,7 @@
       <x>20</x>
       <y>1260</y>
       <w>1320</w>
-      <h>390</h>
+      <h>490</h>
     </coordinates>
     <panel_attributes>src — library target coreht
 bg=#EAF6EA</panel_attributes>
@@ -369,14 +369,20 @@ bg=#FFFFFF</panel_attributes>
       <x>510</x>
       <y>1520</y>
       <w>370</w>
-      <h>110</h>
+      <h>210</h>
     </coordinates>
     <panel_attributes>«source» kernels.cu  [CUDA]
 --
 __global__ kernels behind kernels.h:
 cas matrix init, Bracewell 2D and 3D,
 scale, tiled matmul, transpose;
-FactoredAxisKernel, BracewellInPlace2D/3D (R-4)
+R-4 (device code in factored_kernels.cuh):
+  FactoredAxisKernel — generic, any n1, n2
+  FactoredAxisKernelFast — v2, the path for double
+  FactoredAxisKernelPipelined / InPlace — float
+  FactoredLastAxisBracewellKernel[InPlace] —
+    last x pass with Bracewell folded in
+  BracewellInPlace2D/3D
 bg=#FFFFFF</panel_attributes>
     <additional_attributes/>
   </element>

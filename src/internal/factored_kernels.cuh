@@ -506,21 +506,6 @@ __device__ __forceinline__ void PipelineFillPadded(
 }
 
 /*
- * Diagnostic modes of the pipelined kernel (R-4 step 1.1, docs/R4_PLAN.md),
- * chosen by RAPIDHT_R4_ABLATE. Both give a WRONG result and exist only to time
- * the two halves of the kernel apart:
- *  - kAblateIo: every global load and store as usual, steps 1-2 and the
- *    recombination skipped; each line is written back unchanged, so the pass
- *    is the identity (the host test checks exactly that);
- *  - kAblateCompute: the first batch is fetched once and computed over and
- *    over without new loads; only that first result is stored, so that the
- *    compiler cannot drop the arithmetic.
- */
-constexpr int kAblateNone = 0;
-constexpr int kAblateIo = 1;
-constexpr int kAblateCompute = 2;
-
-/*
  * R-4 step 4A: the twiddle inside step 1. A thread's 4 frequencies of step 1
  * are two mirror pairs (k, N1 - k), so it can twiddle its own outputs in
  * registers before storing them, and the separate twiddle pass over the work
@@ -910,7 +895,7 @@ struct PipelineFetchParts {
  */
 template <typename T, int kMaxQuads, int kItems, bool kFold, int kN, int kLanes>
 __device__ __forceinline__ void PipelinedAxisBody(T* data, FactoredAxisTables<T> t, size_t axisStride, size_t laneStride,
-    int lanes, int blocksPerOther, size_t otherStride, int batches, int workStride, bool vec, int ablate)
+    int lanes, int blocksPerOther, size_t otherStride, int batches, int workStride, bool vec)
 {
     extern __shared__ __align__(16) unsigned char sharedPipe[];
     FactoredSpecialize<T, kN, kLanes>(t, lanes, workStride);
@@ -970,34 +955,31 @@ __device__ __forceinline__ void PipelinedAxisBody(T* data, FactoredAxisTables<T>
         // goes in four quarters: before step 1, halfway through it, between
         // the steps and halfway through step 2 (FactoredComputeTile's hook).
         const int next = batch + static_cast<int>(gridDim.x);
-        const bool fetch = next < batches && ablate != kAblateCompute;
+        const bool fetch = next < batches;
         using Parts = PipelineFetchParts<kItems, kMaxQuads>;
-        constexpr int kPart = Parts::kPart;
-        const bool split = Parts::kSplit && ablate != kAblateIo; // without the steps there are no hooks
         if (fetch) {
-            if (split) {
-                PipelineLoad<T, kMaxQuads, 0, kPart>(batchBase(next), reg, quads, quadsPerRow, axisStride, laneStride, vec);
+            if constexpr (Parts::kSplit) {
+                PipelineLoad<T, kMaxQuads, 0, Parts::kPart>(
+                    batchBase(next), reg, quads, quadsPerRow, axisStride, laneStride, vec);
             } else {
                 PipelineLoad(batchBase(next), reg, quads, quadsPerRow, axisStride, laneStride, vec);
             }
         }
 
-        if (ablate != kAblateIo) { // uniform across the block, so the barriers inside are safe
-            if constexpr (kItems == 0) {
-                FactoredComputeTileWork<T, kFold>(
-                    tile, work, c1s, c2s, chT, t, lanes, lanesP, n1P, n2P, quadsPerRow, workStride);
-            } else {
-                FactoredComputeTile<T, kItems, kFold>(
-                    tile, c1s, c2s, chT, t, lanes, lanesP, n1P, n2P, quadsPerRow, workStride, [&](auto phase) {
-                        if constexpr (Parts::kSplit) {
-                            constexpr int kQuarter = 1 + FactoredPhaseIndex(decltype(phase) {});
-                            if (fetch && split) {
-                                PipelineLoad<T, kMaxQuads, kQuarter * Parts::kPart, (kQuarter + 1) * Parts::kPart>(
-                                    batchBase(next), reg, quads, quadsPerRow, axisStride, laneStride, vec);
-                            }
+        if constexpr (kItems == 0) {
+            FactoredComputeTileWork<T, kFold>(
+                tile, work, c1s, c2s, chT, t, lanes, lanesP, n1P, n2P, quadsPerRow, workStride);
+        } else {
+            FactoredComputeTile<T, kItems, kFold>(
+                tile, c1s, c2s, chT, t, lanes, lanesP, n1P, n2P, quadsPerRow, workStride, [&](auto phase) {
+                    if constexpr (Parts::kSplit) {
+                        constexpr int kQuarter = 1 + FactoredPhaseIndex(decltype(phase) {});
+                        if (fetch) {
+                            PipelineLoad<T, kMaxQuads, kQuarter * Parts::kPart, (kQuarter + 1) * Parts::kPart>(
+                                batchBase(next), reg, quads, quadsPerRow, axisStride, laneStride, vec);
                         }
-                    });
-            }
+                    }
+                });
         }
 
         // Recombination and store, quad by quad. Same formulas as
@@ -1006,19 +988,9 @@ __device__ __forceinline__ void PipelinedAxisBody(T* data, FactoredAxisTables<T>
             const int k = q >> quadsPerRow.shift;
             const int line = (q & quadsPerRow.mask) * 4;
             T out[4];
-            if (ablate == kAblateIo) { // the tile is as filled
-                if constexpr (kItems == 0) {
-                    Load4(tile + k * lanes + line, out);
-                } else {
-                    Load4(tile + (k >> n2P.shift) * workStride + (k & n2P.mask) * lanes + line, out);
-                }
-            } else {
-                FactoredRecombineQuad(tile, k, line, lanes, n1, n2, n1P, n2P, out);
-            }
-            if (ablate != kAblateCompute || batch == static_cast<int>(blockIdx.x)) {
-                StoreQuad(base + static_cast<size_t>(k) * axisStride + static_cast<size_t>(line) * laneStride,
-                    laneStride, vec, out);
-            }
+            FactoredRecombineQuad(tile, k, line, lanes, n1, n2, n1P, n2P, out);
+            StoreQuad(
+                base + static_cast<size_t>(k) * axisStride + static_cast<size_t>(line) * laneStride, laneStride, vec, out);
         }
     }
 }
@@ -1027,10 +999,10 @@ __device__ __forceinline__ void PipelinedAxisBody(T* data, FactoredAxisTables<T>
 /// compiler allocates registers exactly as it did before step 4B.
 template <typename T, int kMaxQuads, bool kFold, int kN = 0, int kLanes = 0>
 __global__ void FactoredAxisKernelPipelined(T* data, FactoredAxisTables<T> t, size_t axisStride, size_t laneStride,
-    int lanes, int blocksPerOther, size_t otherStride, int batches, int workStride, bool vec, int ablate)
+    int lanes, int blocksPerOther, size_t otherStride, int batches, int workStride, bool vec)
 {
     PipelinedAxisBody<T, kMaxQuads, 0, kFold, kN, kLanes>(
-        data, t, axisStride, laneStride, lanes, blocksPerOther, otherStride, batches, workStride, vec, ablate);
+        data, t, axisStride, laneStride, lanes, blocksPerOther, otherStride, batches, workStride, vec);
 }
 
 /// The same with the steps in place (R-4 step 4B), kItems tiles a thread,
@@ -1038,10 +1010,10 @@ __global__ void FactoredAxisKernelPipelined(T* data, FactoredAxisTables<T> t, si
 template <typename T, int kMaxQuads, int kItems, int kMinBlocks, bool kFold, int kN = 0, int kLanes = 0>
 __global__ void __launch_bounds__(256, kMinBlocks) FactoredAxisKernelInPlace(T* data, FactoredAxisTables<T> t,
     size_t axisStride, size_t laneStride, int lanes, int blocksPerOther, size_t otherStride, int batches,
-    int workStride, bool vec, int ablate)
+    int workStride, bool vec)
 {
     PipelinedAxisBody<T, kMaxQuads, kItems, kFold, kN, kLanes>(
-        data, t, axisStride, laneStride, lanes, blocksPerOther, otherStride, batches, workStride, vec, ablate);
+        data, t, axisStride, laneStride, lanes, blocksPerOther, otherStride, batches, workStride, vec);
 }
 
 /*

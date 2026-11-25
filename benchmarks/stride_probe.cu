@@ -6,9 +6,10 @@
  *   ./stride_probe            (512^3 float, about a minute)
  *
  * R-4, toward P2+. At 512^3 the z pass is bound by its loads and stores alone
- * (RAPIDHT_R4_ABLATE=io: 3.62 ms against 3.10 along y, the arithmetic 2.52 ms
- * hidden under it), and handing neighbouring blocks different rows made every
- * axis slower (RAPIDHT_R4_ORDER=across, 2026-11-20_*_r4_zord_*). Before the
+ * (the io-only mode of the kernel, RAPIDHT_R4_ABLATE=io until step 5.1: 3.62 ms
+ * against 3.10 along y, the arithmetic 2.52 ms hidden under it), and handing
+ * neighbouring blocks different rows made every axis slower
+ * (RAPIDHT_R4_ORDER=across, 2026-11-20_*_r4_zord_*). Before the
  * kernel is reshaped, this probe asks which shape of line set the memory
  * moves fastest along z. A block takes kLanesX consecutive x and kRowsY
  * consecutive rows of the other lane axis -- kLanesX * kRowsY lines of n

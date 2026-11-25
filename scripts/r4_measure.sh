@@ -5,7 +5,10 @@
 #   bash scripts/r4_measure.sh <tag> [VAR=value ...]
 #
 #   bash scripts/r4_measure.sh base                           # the code as it stands
-#   bash scripts/r4_measure.sh v2 RAPIDHT_FACTORED_KERNEL=v2  # same build, another kernel
+#   bash scripts/r4_measure.sh wide RAPIDHT_R4_X=wide         # same build, a temporary switch
+#
+# Temporary RAPIDHT_R4_* switches live only until their step is decided (rule 4
+# of docs/R4_PLAN.md); since step 5.1 the code has none.
 #
 # Why a script: on 2026-11-13 a "v2.3" result was recorded from binaries built a
 # week earlier, because the build step was skipped by hand. Here the build, the

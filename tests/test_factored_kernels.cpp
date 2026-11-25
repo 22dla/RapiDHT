@@ -141,7 +141,7 @@ AxisTables<T> MakeAxisTables(size_t n)
 /// One axis, every block in turn. Lanes: as wide as allowed, at most `maxLanes`.
 template <typename T>
 void RunAxis(T* data, const FactoredAxisTables<T>& t, size_t axisStride, size_t laneStride, size_t laneLength,
-    size_t otherStride, size_t otherLength, Kernel kernel, size_t maxLanes, int ablate = kAblateNone)
+    size_t otherStride, size_t otherLength, Kernel kernel, size_t maxLanes)
 {
     if (t.n <= 1) {
         return;
@@ -168,19 +168,19 @@ void RunAxis(T* data, const FactoredAxisTables<T>& t, size_t axisStride, size_t 
             const int batchesI = static_cast<int>(batches);
             if (kernel == Kernel::InPlaceQuarters) {
                 FactoredAxisKernelInPlace<T, kQuarterQuads, kHostItems, 1, true>(
-                    data, t, axisStride, laneStride, lanesI, perOther, otherStride, batchesI, ws, vec, ablate);
+                    data, t, axisStride, laneStride, lanesI, perOther, otherStride, batchesI, ws, vec);
             } else if (kernel == Kernel::InPlace) {
                 FactoredAxisKernelInPlace<T, kHostMaxQuads, kHostItems, 1, false>(
-                    data, t, axisStride, laneStride, lanesI, perOther, otherStride, batchesI, ws, vec, ablate);
+                    data, t, axisStride, laneStride, lanesI, perOther, otherStride, batchesI, ws, vec);
             } else if (kernel == Kernel::InPlaceFold) {
                 FactoredAxisKernelInPlace<T, kHostMaxQuads, kHostItems, 1, true>(
-                    data, t, axisStride, laneStride, lanesI, perOther, otherStride, batchesI, ws, vec, ablate);
+                    data, t, axisStride, laneStride, lanesI, perOther, otherStride, batchesI, ws, vec);
             } else if (kernel == Kernel::PipelinedFold) {
                 FactoredAxisKernelPipelined<T, kHostMaxQuads, true>(
-                    data, t, axisStride, laneStride, lanesI, perOther, otherStride, batchesI, ws, vec, ablate);
+                    data, t, axisStride, laneStride, lanesI, perOther, otherStride, batchesI, ws, vec);
             } else {
                 FactoredAxisKernelPipelined<T, kHostMaxQuads, false>(
-                    data, t, axisStride, laneStride, lanesI, perOther, otherStride, batchesI, ws, vec, ablate);
+                    data, t, axisStride, laneStride, lanesI, perOther, otherStride, batchesI, ws, vec);
             }
         }
         return;
@@ -337,50 +337,6 @@ TEST(FactoredKernels, FoldedTwiddleMatchesDefinition_Float)
 {
     ExpectKernelMatchesDefinition<float>(Kernel::PipelinedFold, kFastShapes, std::size(kFastShapes), 2e-5);
     ExpectKernelMatchesDefinition<float>(Kernel::InPlaceFold, kFastShapes, std::size(kFastShapes), 2e-5);
-}
-
-// The "io only" diagnostic mode of the pipelined kernel (RAPIDHT_R4_ABLATE=io,
-// R-4 step 1.1) must move every value through the same loads and stores as the
-// real pass and put it back where it came from: then the time it measures is
-// the time of the data movement of a real pass, and nothing is skipped. So
-// along each axis the pass is the identity.
-template <typename T>
-void ExpectIoModeIsIdentity(Kernel kernel)
-{
-    const Shape shapes[] = { { 16, 16, 16 }, { 64, 16, 8 }, { 16, 64, 8 }, { 32, 16, 64 } };
-    for (const Shape& s : shapes) {
-        SCOPED_TRACE(Describe(s));
-        const size_t W = s.width, H = s.height, D = s.depth;
-        std::vector<T> v(W * H * D);
-        for (size_t i = 0; i < v.size(); ++i) {
-            v[i] = static_cast<T>(static_cast<double>((i * 2654435761u) % 1000003) * 1e-3);
-        }
-        const std::vector<T> original = v;
-        const auto tx = MakeAxisTables<T>(W);
-        const auto ty = MakeAxisTables<T>(H);
-        const auto tz = MakeAxisTables<T>(D);
-        const size_t lanes = sizeof(T) == 4 ? 8 : 4;
-        RunAxis(v.data(), tx.view, 1, W, H, W * H, D, kernel, lanes, kAblateIo);
-        RunAxis(v.data(), ty.view, W, 1, W, W * H, D, kernel, lanes, kAblateIo);
-        RunAxis(v.data(), tz.view, W * H, 1, W, W, H, kernel, lanes, kAblateIo);
-        size_t moved = 0;
-        for (size_t i = 0; i < v.size(); ++i) {
-            moved += (v[i] != original[i]) ? 1 : 0;
-        }
-        EXPECT_EQ(moved, 0u);
-    }
-}
-
-TEST(FactoredKernels, PipelinedIoModeIsIdentity_Float)
-{
-    ExpectIoModeIsIdentity<float>(Kernel::Pipelined);
-    ExpectIoModeIsIdentity<float>(Kernel::InPlace);
-}
-
-TEST(FactoredKernels, PipelinedIoModeIsIdentity_Double)
-{
-    ExpectIoModeIsIdentity<double>(Kernel::Pipelined);
-    ExpectIoModeIsIdentity<double>(Kernel::InPlace);
 }
 
 // Wide batches (R-4 step 2.2): on short axes the launcher gives the pipelined
@@ -592,10 +548,10 @@ std::vector<double> RunAxisX(const std::vector<double>& input, size_t n, size_t 
         // A batch is the H lines of one z-plane; the lane axis is y.
         if constexpr (kItems == 0) {
             FactoredAxisKernelPipelined<T, kBigQuads, kFold, kN, kL>(v.data(), t.view, 1, W, L, 1, W * H,
-                static_cast<int>(D), ws, false, kAblateNone);
+                static_cast<int>(D), ws, false);
         } else {
             FactoredAxisKernelInPlace<T, kBigQuads, kBigItems, 1, kFold, kN, kL>(v.data(), t.view, 1, W, L, 1,
-                W * H, static_cast<int>(D), ws, false, kAblateNone);
+                W * H, static_cast<int>(D), ws, false);
         }
     }
     return std::vector<double>(v.begin(), v.end());
