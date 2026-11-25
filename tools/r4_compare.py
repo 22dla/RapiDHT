@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
-"""Compare two bench_transform JSON files of the R-4 track and give a verdict.
+"""Compare two bench_transform JSON files of the R-4 and R-5 tracks and give a verdict.
 
     python3 tools/r4_compare.py BASE.json NEW.json [--trace BASE_trace.txt NEW_trace.txt]
-    python3 tools/r4_compare.py NEW.json                 # one file: only the table against cuFFT
+    python3 tools/r4_compare.py NEW.json                 # one file: only the table against the baselines
 
 Why this exists: docs/R4_PLAN.md accepts or rejects every experiment by one
 rule, and a rule applied by eye gets bent. A change counts only if the median
@@ -63,17 +63,29 @@ def fmt(us: float) -> str:
 # Like against like: the true transform against cuFFT plus its conversion pass,
 # the separable one (no Bracewell pass) against the bare R2C transform.
 # Step 5.3: convolutions, any kernel and even kernels, against cuFFT R2C/C2R.
-OPPONENT = {
-    "FactoredResident": "cuFFT",
-    "FactoredResidentSeparable": "cuFFT_R2C",
-    "ConvHartley": "ConvCufft",
-    "ConvHartleyEven": "ConvCufftEven",
+# R-5 (docs/R5_PLAN.md, step 0.1): integer input. Each family has one or more
+# opponents; an opponent given as several families is the strongest of them
+# present in the same row (the same "u16/3D/512x512x512" after the family), so
+# an integer path is always measured against the fastest cuFFT variant that
+# was built -- conversion kernel, legacy callback or LTO callback.
+CUFFT_INT = ("cuFFTInt", "cuFFTIntCb", "cuFFTIntLto")
+OPPONENTS: dict[str, tuple[tuple[str, ...], ...]] = {
+    "FactoredResident": (("cuFFT",),),
+    "FactoredResidentSeparable": (("cuFFT_R2C",),),
+    "ConvHartley": (("ConvCufft",),),
+    "ConvHartleyEven": (("ConvCufftEven",),),
+    "IntConvertFactored": (CUFFT_INT,),
+    "IntFactored": (CUFFT_INT, ("IntConvertFactored",)),
 }
 OPPONENT_LABEL = {
     "cuFFT": "cuFFT + преобразование в Хартли",
     "cuFFT_R2C": "cuFFT R2C без преобразования",
     "ConvCufft": "свёртка cuFFT R2C + C2R",
     "ConvCufftEven": "свёртка cuFFT R2C + C2R, чётное ядро",
+    "cuFFTInt": "перевод в float + cuFFT R2C + Хартли",
+    "cuFFTIntCb": "cuFFT с колбэком загрузки + Хартли",
+    "cuFFTIntLto": "cuFFT с колбэком LTO + Хартли",
+    "IntConvertFactored": "перевод в float + наш путь",
 }
 
 
@@ -82,14 +94,19 @@ def against_cufft(rows: dict[str, dict[str, float]], reference: dict[str, dict[s
     lines = []
     for name, row in rows.items():
         family, _, case = name.partition("/")
-        opponent = OPPONENT.get(family)
-        if opponent is None or f"{opponent}/{case}" not in known:
-            continue
-        ratio = row["median"] / known[f"{opponent}/{case}"]["median"]
-        word = "быстрее" if ratio < 1.0 else "медленнее"
-        lines.append(f"  {name:<48} {fmt(row['median'])}   {ratio:5.2f}×  {word}, чем {OPPONENT_LABEL[opponent]}")
+        for group in OPPONENTS.get(family, ()):
+            present = [opponent for opponent in group if f"{opponent}/{case}" in known]
+            if not present:
+                continue
+            opponent = min(present, key=lambda o: known[f"{o}/{case}"]["median"])
+            ratio = row["median"] / known[f"{opponent}/{case}"]["median"]
+            word = "быстрее" if ratio < 1.0 else "медленнее"
+            strongest = f" (сильнейший из {len(present)})" if len(group) > 1 and len(present) > 1 else ""
+            lines.append(
+                f"  {name:<48} {fmt(row['median'])}   {ratio:5.2f}×  {word}, чем {OPPONENT_LABEL[opponent]}{strongest}"
+            )
     if lines:
-        print("\nПротив cuFFT (тот же размер и точность):")
+        print("\nПротив эталонов (тот же размер, тип входа и точность):")
         print("\n".join(lines))
 
 

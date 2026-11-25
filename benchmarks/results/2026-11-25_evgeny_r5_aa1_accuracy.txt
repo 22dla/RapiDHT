@@ -1,0 +1,76 @@
+# accuracy_integer 128 256 512, 2026-11-25T17:09:30+04:00, commit 99483a0 + uncommitted changes (see .meta.txt); settings: (none)
+128^3, uint8 full range, uniform 0..255 (mean 127.5); errors / sqrt(N), in LSB of the input
+  floor: quantisation of the input   rms 2.887e-01   (input rounding: 1/sqrt(12))
+  floor: exact spectrum stored as float rms 1.867e-06   largest 1.261e-05   zero frequency 3.453e-03
+  cuFFT + conversion, raw            rms 1.799e-05   largest 4.834e-03   zero frequency 3.453e-03
+  GPUFactored, raw                   rms 1.696e-05   largest 7.536e-03   zero frequency 7.596e-03
+  cuFFT + conversion, minus half range rms 1.748e-05   largest 9.872e-05   zero frequency 0.000e+00
+  GPUFactored, minus half range      rms 1.284e-05   largest 7.288e-05   zero frequency 0.000e+00
+128^3, uint16 full range, uniform 0..65535 (mean 32770.6); errors / sqrt(N), in LSB of the input
+  floor: quantisation of the input   rms 2.887e-01   (input rounding: 1/sqrt(12))
+  floor: exact spectrum stored as float rms 4.782e-04   largest 5.412e-03   zero frequency 7.368e-01
+  cuFFT + conversion, raw            rms 5.631e-03   largest 1.625e+00   zero frequency 7.368e-01
+  GPUFactored, raw                   rms 4.862e-03   largest 1.692e+00   zero frequency 4.920e+00
+  cuFFT + conversion, minus half range rms 4.479e-03   largest 2.699e-02   zero frequency 0.000e+00
+  GPUFactored, minus half range      rms 3.292e-03   largest 1.850e-02   zero frequency 6.905e-04
+  cuFFT + conversion, minus rounded mean rms 4.479e-03   largest 2.699e-02   zero frequency 0.000e+00
+  GPUFactored, minus rounded mean    rms 3.291e-03   largest 1.861e-02   zero frequency 6.905e-04
+128^3, uint16 CT-like band, 30000 +- 2000 (mean 30000.9); errors / sqrt(N), in LSB of the input
+  floor: quantisation of the input   rms 2.887e-01   (input rounding: 1/sqrt(12))
+  floor: exact spectrum stored as float rms 2.915e-05   largest 2.514e-04   zero frequency 1.377e+00
+  cuFFT + conversion, raw            rms 2.229e-03   largest 1.641e+00   zero frequency 1.377e+00
+  GPUFactored, raw                   rms 3.385e-03   largest 1.546e+00   zero frequency 4.280e+00
+  cuFFT + conversion, minus half range rms 3.361e-04   largest 1.176e-01   zero frequency 3.729e-02
+  GPUFactored, minus half range      rms 3.725e-04   largest 2.403e-01   zero frequency 6.698e-01
+  cuFFT + conversion, minus rounded mean rms 2.732e-04   largest 1.945e-03   zero frequency 0.000e+00
+  GPUFactored, minus rounded mean    rms 2.005e-04   largest 1.074e-03   zero frequency 0.000e+00
+256^3, uint8 full range, uniform 0..255 (mean 127.5); errors / sqrt(N), in LSB of the input
+  floor: quantisation of the input   rms 2.887e-01   (input rounding: 1/sqrt(12))
+  floor: exact spectrum stored as float rms 1.874e-06   largest 1.525e-05   zero frequency 1.025e-02
+  cuFFT + conversion, raw            rms 2.121e-05   largest 1.416e-02   zero frequency 1.025e-02
+  GPUFactored, raw                   rms 1.828e-05   largest 1.354e-02   zero frequency 1.025e-02
+  cuFFT + conversion, minus half range rms 2.023e-05   largest 1.325e-04   zero frequency 0.000e+00
+  GPUFactored, minus half range      rms 1.445e-05   largest 8.750e-05   zero frequency 0.000e+00
+256^3, uint16 full range, uniform 0..65535 (mean 32765.6); errors / sqrt(N), in LSB of the input
+  floor: quantisation of the input   rms 2.887e-01   (input rounding: 1/sqrt(12))
+  floor: exact spectrum stored as float rms 4.797e-04   largest 3.906e-03   zero frequency 3.260e+00
+  cuFFT + conversion, raw            rms 6.269e-03   largest 2.884e+00   zero frequency 3.260e+00
+  GPUFactored, raw                   rms 5.918e-03   largest 5.644e+00   zero frequency 1.126e+01
+  cuFFT + conversion, minus half range rms 5.180e-03   largest 3.664e-02   zero frequency 1.465e-03
+  GPUFactored, minus half range      rms 3.700e-03   largest 2.382e-02   zero frequency 4.883e-04
+  cuFFT + conversion, minus rounded mean rms 5.180e-03   largest 3.664e-02   zero frequency 1.465e-03
+  GPUFactored, minus rounded mean    rms 3.700e-03   largest 2.067e-02   zero frequency 1.465e-03
+256^3, uint16 CT-like band, 30000 +- 2000 (mean 30000.5); errors / sqrt(N), in LSB of the input
+  floor: quantisation of the input   rms 2.887e-01   (input rounding: 1/sqrt(12))
+  floor: exact spectrum stored as float rms 2.929e-05   largest 2.441e-04   zero frequency 3.726e+00
+  cuFFT + conversion, raw            rms 2.327e-03   largest 4.347e+00   zero frequency 3.726e+00
+  GPUFactored, raw                   rms 4.128e-03   largest 5.106e+00   zero frequency 1.227e+01
+  cuFFT + conversion, minus half range rms 4.121e-04   largest 5.005e-01   zero frequency 2.744e-01
+  GPUFactored, minus half range      rms 4.484e-04   largest 4.909e-01   zero frequency 2.744e-01
+  cuFFT + conversion, minus rounded mean rms 3.162e-04   largest 2.098e-03   zero frequency 0.000e+00
+  GPUFactored, minus rounded mean    rms 2.258e-04   largest 1.278e-03   zero frequency 0.000e+00
+512^3, uint8 full range, uniform 0..255 (mean 127.5); errors / sqrt(N), in LSB of the input
+  floor: quantisation of the input   rms 2.887e-01   (input rounding: 1/sqrt(12))
+  floor: exact spectrum stored as float rms 1.867e-06   largest 2.121e-05   zero frequency 3.349e-02
+  cuFFT + conversion, raw            rms 2.449e-05   largest 3.643e-02   zero frequency 3.349e-02
+  GPUFactored, raw                   rms 2.468e-05   largest 5.642e-02   zero frequency 1.433e-01
+  cuFFT + conversion, minus half range rms 2.338e-05   largest 1.844e-04   zero frequency 3.453e-04
+  GPUFactored, minus half range      rms 1.715e-05   largest 1.648e-04   zero frequency 3.453e-04
+  cuFFT + conversion, minus rounded mean rms 2.338e-05   largest 1.844e-04   zero frequency 0.000e+00
+  GPUFactored, minus rounded mean    rms 1.715e-05   largest 1.123e-04   zero frequency 3.453e-04
+512^3, uint16 full range, uniform 0..65535 (mean 32768.0); errors / sqrt(N), in LSB of the input
+  floor: quantisation of the input   rms 2.887e-01   (input rounding: 1/sqrt(12))
+  floor: exact spectrum stored as float rms 4.780e-04   largest 5.434e-03   zero frequency 2.840e+00
+  cuFFT + conversion, raw            rms 7.357e-03   largest 1.449e+01   zero frequency 2.840e+00
+  GPUFactored, raw                   rms 7.126e-03   largest 2.358e+01   zero frequency 4.242e+01
+  cuFFT + conversion, minus half range rms 5.987e-03   largest 4.408e-02   zero frequency 3.107e-03
+  GPUFactored, minus half range      rms 4.389e-03   largest 2.663e-02   zero frequency 3.107e-03
+512^3, uint16 CT-like band, 30000 +- 2000 (mean 30000.1); errors / sqrt(N), in LSB of the input
+  floor: quantisation of the input   rms 2.887e-01   (input rounding: 1/sqrt(12))
+  floor: exact spectrum stored as float rms 2.917e-05   largest 3.402e-04   zero frequency 1.037e+01
+  cuFFT + conversion, raw            rms 2.537e-03   largest 8.104e+00   zero frequency 1.037e+01
+  GPUFactored, raw                   rms 5.427e-03   largest 2.353e+01   zero frequency 1.225e+01
+  cuFFT + conversion, minus half range rms 4.659e-04   largest 1.128e+00   zero frequency 9.405e-01
+  GPUFactored, minus half range      rms 5.499e-04   largest 1.721e+00   zero frequency 9.405e-01
+  cuFFT + conversion, minus rounded mean rms 3.655e-04   largest 2.616e-03   zero frequency 0.000e+00
+  GPUFactored, minus rounded mean    rms 2.680e-04   largest 1.614e-03   zero frequency 0.000e+00

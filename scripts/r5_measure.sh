@@ -1,0 +1,181 @@
+#!/usr/bin/env bash
+# One measurement of the R-5 track (integer volumes), the way docs/R5_PLAN.md
+# requires it. A copy of scripts/r4_measure.sh -- same build, gate, record and
+# trace -- with the R-5 families added:
+#
+#   bash scripts/r5_measure.sh <tag> [RAPIDHT_*=value ...]
+#   R5_ACC=1 bash scripts/r5_measure.sh <tag>      # plus accuracy_integer
+#   R5_TASKS=1 bash scripts/r5_measure.sh <tag>    # end-to-end tasks (stage 5)
+#
+# Every run also times the R-4 rows (FactoredResident, FactoredResidentSeparable,
+# f32, 128^3-512^3) and cuFFT, so that rule 8 of the plan -- the float path must
+# not get slower -- is checked in the same session. Until the R-5 families exist
+# (steps 0.2, 0.3, 2.3) their part of the filter matches nothing; that is not an
+# error.
+#
+# Writes into benchmarks/results/:
+#   <date>_<host>_r5_<tag>.json            medians of 7 repetitions (bench_transform)
+#   <date>_<host>_r5_<tag>_trace.txt       time per kernel at 128^3-512^3, f32 (as in R-4
+#                                          until stage 2 adds an integer trace)
+#   <date>_<host>_r5_<tag>_accuracy.txt    with R5_ACC=1: accuracy_integer's report
+#   <date>_<host>_r5_<tag>.meta.txt        what exactly was measured, with the hashes
+#                                          of the cuFFT baselines and of the data files
+#
+# Compare two runs with tools/r4_compare.py; it knows the R-5 families.
+set -euo pipefail
+cd "$(dirname "$0")/.."
+
+if [[ $# -lt 1 || "$1" == *=* ]]; then
+    echo "usage: bash scripts/r5_measure.sh <tag> [VAR=value ...]" >&2
+    exit 2
+fi
+tag=$1
+shift
+for assignment in "$@"; do
+    if [[ "$assignment" != RAPIDHT_*=* ]]; then
+        echo "only RAPIDHT_*=value settings are accepted, got: $assignment" >&2
+        exit 2
+    fi
+done
+
+results=benchmarks/results
+stem="$results/$(date +%F)_$(hostname)_r5_${tag}"
+bench=build-bench/benchmarks/bench_transform
+profile=build-bench/benchmarks/profile_gpu3d
+accuracy=build-bench/benchmarks/accuracy_integer
+# Real volumes read by this run (rule 10 of docs/R5_PLAN.md: path and SHA-256 of
+# each go into .meta.txt; accuracy figures of two runs compare only when the
+# hashes agree). Empty until step 0.4 teaches accuracy_integer to read files:
+# up to then it uses generated white noise only.
+r5_data=()
+mkdir -p "$results"
+
+if [[ -e "$stem.json" ]]; then
+    echo "$stem.json already exists: pick another tag, results are never overwritten" >&2
+    exit 2
+fi
+
+echo "== 1/5 build (never measure a stale binary)"
+cmake --build --preset cuda -j
+cmake --build build-bench -j
+
+echo "== 2/5 correctness gate: the factored tests, host and device"
+ctest --preset cuda -R 'Factored|Integer' --output-on-failure
+
+echo "== 3/5 record what is being measured"
+{
+    echo "tag: $tag"
+    echo "date: $(date --iso-8601=seconds)"
+    echo "settings: ${*:-(none)}"
+    echo "table: $([[ ${R5_TASKS:-0} == 1 ]] && echo tasks || echo 128-512)$([[ ${R5_ACC:-0} == 1 ]] && echo ' + accuracy')"
+    echo "cuda: $(nvcc --version | sed -n 's/.*release \([^,]*\), V\(.*\)/\1 (\2)/p')"
+    echo "commit: $(git rev-parse HEAD)"
+    echo "uncommitted:"
+    git status --short | sed 's/^/  /'
+    echo "sources:"
+    sha256sum src/internal/factored_kernels.cuh src/kernels.cu src/backend_cuda.cpp src/internal/kernels.h \
+        benchmarks/bench_transform.cpp benchmarks/cufft_baseline.h benchmarks/cufft_baseline.cu \
+        benchmarks/accuracy_integer.cpp | sed 's/^/  /'
+    # The end-to-end tasks of stage 5, once they exist.
+    for optional in benchmarks/tasks_gpu.h benchmarks/tasks_gpu.cu; do
+        [[ -e "$optional" ]] && sha256sum "$optional" | sed 's/^/  /'
+    done
+    echo "data:"
+    if [[ ${#r5_data[@]} -eq 0 ]]; then
+        echo "  (none: generated inputs only)"
+    else
+        for file in "${r5_data[@]}"; do
+            sha256sum "$file" | sed 's/^/  /'
+        done
+    fi
+    echo "binaries:"
+    ls -l --time-style=long-iso "$bench" "$profile" "$accuracy" | sed 's/^/  /'
+    echo "gpu:"
+    nvidia-smi --query-gpu=name,driver_version,temperature.gpu,power.draw,memory.used --format=csv,noheader | sed 's/^/  /'
+    echo "other processes on the gpu (they add noise; close what you can):"
+    nvidia-smi --query-compute-apps=pid,process_name,used_memory --format=csv,noheader | cut -c1-120 | sed 's/^/  /'
+} >"$stem.meta.txt"
+cat "$stem.meta.txt"
+
+# The trace goes first, on a cool card, and logs the clock around each size:
+# taken right after the benchmark's 7 repetitions, the 512^3 trace moved by
+# 10-25 % on kernels whose code had not changed (2026-11-15 s4a_a, 2026-11-19
+# s4as), while the benchmark agreed with itself.
+gpu_line() {
+    nvidia-smi --query-gpu=clocks.sm,temperature.gpu,power.draw,clocks_throttle_reasons.active \
+        --format=csv,noheader,nounits 2>/dev/null \
+        | awk -F', ' -v n="$1" -v when="$2" \
+            '{ printf "n=%s # gpu %s sm_mhz=%s temp_c=%s power_w=%s throttle=%s\n", n, when, $1, $2, $3, $4 }' || true
+}
+
+# The SM clock is locked for the trace. The A-A check of 2026-11-19 (aa1,
+# aa2: the same code twice) showed why: at 512^3 every kernel took one of two
+# times, 4.34 or 3.84 ms on x, as the card went from 1665 MHz to its boost of
+# 1935-1950, and the switch came after 5 calls in one run and 13 in the other
+# -- 13 % on the total from the clock alone. 1665 MHz is the clock the card
+# holds below boost, so locking there costs no heat and needs no warm-up. The
+# benchmark is left unlocked so that its figures stay comparable with the
+# earlier ones (it runs long enough to sit at boost). Needs sudo; without it the
+# trace is taken unlocked and says so.
+trace_clock_mhz=1665
+locked=0
+if sudo nvidia-smi -lgc "$trace_clock_mhz,$trace_clock_mhz" >/dev/null; then
+    locked=1
+    trap 'sudo nvidia-smi -rgc >/dev/null || true' EXIT
+fi
+
+echo "== 4/5 time per kernel (before the benchmark, 15 calls a size)"
+: >"${stem}_trace.txt"
+if [[ $locked == 1 ]]; then
+    echo "# sm clock locked at $trace_clock_mhz MHz for the trace" | tee -a "${stem}_trace.txt"
+else
+    echo "# sm clock NOT locked (no sudo): per-kernel figures at 512^3 may move by 10-15 %" | tee -a "${stem}_trace.txt"
+fi
+for n in 128 256 512; do
+    gpu_line "$n" before | tee -a "${stem}_trace.txt"
+    env "$@" RAPIDHT_TRACE_KERNELS=1 "$profile" "$n" 15 f32 factored 2>&1 | sed "s/^/n=$n /" | tee -a "${stem}_trace.txt"
+    gpu_line "$n" after | tee -a "${stem}_trace.txt"
+done
+
+if [[ $locked == 1 ]]; then
+    sudo nvidia-smi -rgc >/dev/null || true
+    trap - EXIT
+fi
+
+echo "== 5/5 benchmark: R-4 rows and the R-5 families, 7 repetitions (clock not locked)"
+# Rule 8: the R-4 rows and cuFFT float run in every measurement. The R-5
+# families (uint8 / uint16 input, float output):
+#   cuFFTInt     conversion kernel into a float buffer + R2C + Hartley pass   (step 0.2a)
+#   cuFFTIntCb   legacy load callback, static cuFFT                           (step 0.2b)
+#   cuFFTIntLto  LTO load callback                                            (step 0.2c)
+#   IntConvertFactored  conversion kernel + FactoredResident                  (step 0.3)
+#   IntFactored  the first pass reads the integers itself                     (step 2.3)
+sizes='(128x128x128|256x256x256|512x512x512)'
+r4_rows="(cuFFT|cuFFT_R2C|FactoredResident|FactoredResidentSeparable)/f32/3D/$sizes"
+r5_rows="(cuFFTInt|cuFFTIntCb|cuFFTIntLto|IntConvertFactored|IntFactored)/(u8|u16)/3D/$sizes"
+filter="^($r4_rows|$r5_rows)\$"
+# R5_TASKS=1 is stage 5: the end-to-end tasks (Task<N>/<implementation>/...),
+# with the R-4 rows kept for rule 8.
+if [[ ${R5_TASKS:-0} == 1 ]]; then
+    filter="^($r4_rows\$|Task)"
+    echo "   (end-to-end tasks: R5_TASKS=1)"
+fi
+env "$@" "$bench" \
+    --benchmark_filter="$filter" \
+    --benchmark_repetitions=7 --benchmark_report_aggregates_only=true \
+    --benchmark_out="$stem.json" --benchmark_out_format=json
+
+# Accuracy goes last: it does not depend on the clock, and the CPU reference in
+# double at 512^3 takes minutes that would otherwise warm the card before the
+# timing.
+if [[ ${R5_ACC:-0} == 1 ]]; then
+    echo "== accuracy (R5_ACC=1): accuracy_integer 128 256 512"
+    {
+        echo "# accuracy_integer 128 256 512, $(date --iso-8601=seconds), commit $(git rev-parse --short HEAD)$( [[ -n $(git status --short --untracked-files=no) ]] && echo ' + uncommitted changes (see .meta.txt)'); settings: ${*:-(none)}"
+        env "$@" "$accuracy" 128 256 512
+    } 2>&1 | tee "${stem}_accuracy.txt"
+fi
+
+echo
+echo "done: $stem.json"
+echo "compare: python3 tools/r4_compare.py <base>.json $stem.json --trace <base>_trace.txt ${stem}_trace.txt"

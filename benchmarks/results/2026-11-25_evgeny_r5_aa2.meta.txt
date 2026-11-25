@@ -1,0 +1,36 @@
+tag: aa2
+date: 2026-11-25T17:10:31+04:00
+settings: (none)
+table: 128-512
+cuda: 13.2 (13.2.51)
+commit: 99483a0ca463c7917cf51f7478a0deac5022f76d
+uncommitted:
+   M tools/r4_compare.py
+  ?? benchmarks/results/2026-11-25_evgeny_r5_aa1.json
+  ?? benchmarks/results/2026-11-25_evgeny_r5_aa1.meta.txt
+  ?? benchmarks/results/2026-11-25_evgeny_r5_aa1_accuracy.txt
+  ?? benchmarks/results/2026-11-25_evgeny_r5_aa1_trace.txt
+  ?? benchmarks/results/2026-11-25_evgeny_r5_aa2.meta.txt
+  ?? scripts/r5_measure.sh
+sources:
+  9e4d2132842076e95b1b429df73944ebd4e8b326a161604bbae21c2fc166728d  src/internal/factored_kernels.cuh
+  96f289fa3cc9ccf530829403d3189b7f2f85d11acc3950c9719fa9478d04ba08  src/kernels.cu
+  00219f6acfe6d833b60361ba32e0e33aadb91e124e238d5bc2ae6a6de9771ecb  src/backend_cuda.cpp
+  36501266c19eb17add2cdbf0afc3085348713f02e60222c38822340b3d91775f  src/internal/kernels.h
+  6489a67b6092584d2a353e2e2ba88d3338df623a9d0b8c71b29be14b985635ca  benchmarks/bench_transform.cpp
+  4d4e51c5384dbdf0d3373ee57979f528cf3867da877666eb39abe4bfaa20aadf  benchmarks/cufft_baseline.h
+  3a623881e828026248cf78e3a885e2f7167d00fef60126f7386ab0106b8f7b67  benchmarks/cufft_baseline.cu
+  c9af12f53e5d58754cb5c13475cd97cd68f17cb29b9051b61e3ff914f0df0cbf  benchmarks/accuracy_integer.cpp
+data:
+  (none: generated inputs only)
+binaries:
+  -rwxrwxr-x 1 evgeny evgeny 1738760 2026-11-25 17:00 build-bench/benchmarks/accuracy_integer
+  -rwxrwxr-x 1 evgeny evgeny 2496752 2026-11-25 17:00 build-bench/benchmarks/bench_transform
+  -rwxrwxr-x 1 evgeny evgeny 1723464 2026-11-25 17:00 build-bench/benchmarks/profile_gpu3d
+gpu:
+  NVIDIA GeForce RTX 3060 Ti, 595.99.02, 41, 6.55 W, 1106 MiB
+other processes on the gpu (they add noise; close what you can):
+  6260, /usr/libexec/gnome-remote-desktop-daemon, 134 MiB
+  6623, /usr/libexec/gnome-remote-desktop-daemon, 292 MiB
+  142907, /usr/bin/ptyxis, 87 MiB
+  6659, /usr/libexec/xdg-desktop-portal-gnome, 4 MiB
