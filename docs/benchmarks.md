@@ -358,6 +358,13 @@ conversion)**, the separable one 9.26 ms (`…_r4_s4z.json` against
 The separable pass along x also takes 16 lines at 512 (step 4.X,
 `…_r4_x512_{cur,wide}.json`): the separable transform 10.02 → 9.72 ms; the
 fused last pass keeps 8, with 16 it was 17 % slower.
+Step 4.XG: the fused x pass at 512³ ran 2.5 times the integer instructions of
+the y pass (`…_r4_x512_ncu2.txt`), from the division by the number of y groups
+in each mirror line's offset, taken once a value. It is now taken once a
+batch: the x pass 3.15 → 2.93 ms, the full transform 9.65 → **9.34 ms (0.874
+times cuFFT plus conversion, 10.68 ms in the same run)**, the separable one
+unchanged at 9.23 ms (`…_r4_xg_b2.json` against `…_r4_xg_a2.json`, back to
+back, 2026-11-25; the first A–B, `…_r4_xg{_a,}.json`, gave −3.2 %).
 
 The axes differ only from 512³ up; at 128³ and 256³ all three take the same
 time (2.3 and 1.7 Bracewell passes).

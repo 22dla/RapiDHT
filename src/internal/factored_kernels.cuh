@@ -1079,10 +1079,49 @@ __device__ __forceinline__ size_t GroupLine(int g, int m, int W, int H, int D, i
     return static_cast<size_t>(W) * (static_cast<size_t>(y) + static_cast<size_t>(H) * static_cast<size_t>(z));
 }
 
+/// Whether every quad q = threadIdx.x + i * blockDim.x of a thread falls in
+/// one group of the batch (q & mask does not depend on i). Always so on the
+/// device (256 threads, at most 64 groups a batch); not with the one-thread
+/// blocks of the host emulation unless a batch is one group.
+__device__ __forceinline__ bool GroupFixedPerThread(Pow2 groupsPerBatch)
+{
+    return (static_cast<int>(blockDim.x) & groupsPerBatch.mask) == 0;
+}
+
+/// The four line offsets of this thread's group in `batch`, for
+/// GroupFixedPerThread. GroupLine divides by groupsY, which is not a power of
+/// two: once a batch instead of once a value (R-4, 2026-11-21_*_r4_x512_ncu2:
+/// the x pass ran 2.5 times the integer instructions of the y pass).
+__device__ __forceinline__ void GroupLinesOfThread(
+    size_t (&line)[4], int batch, Pow2 groupsPerBatch, int W, int H, int D, int groupsY, int groups)
+{
+    const int g = min((batch << groupsPerBatch.shift) + (static_cast<int>(threadIdx.x) & groupsPerBatch.mask), groups - 1);
+    RAPIDHT_UNROLL
+    for (int m = 0; m < 4; ++m) {
+        line[m] = GroupLine(g, m, W, H, D, groupsY);
+    }
+}
+
 template <typename T, int kMaxQuads>
 __device__ __forceinline__ void GroupLoad(const T* data, int batch, T (&reg)[kMaxQuads][4], int quads,
     Pow2 groupsPerBatch, int W, int H, int D, int groupsY, int groups)
 {
+    if (GroupFixedPerThread(groupsPerBatch)) {
+        size_t line[4];
+        GroupLinesOfThread(line, batch, groupsPerBatch, W, H, D, groupsY, groups);
+        RAPIDHT_UNROLL
+        for (int i = 0; i < kMaxQuads; ++i) {
+            const int q = static_cast<int>(threadIdx.x) + i * static_cast<int>(blockDim.x);
+            if (q < quads) {
+                const size_t row = static_cast<size_t>(q >> groupsPerBatch.shift);
+                RAPIDHT_UNROLL
+                for (int m = 0; m < 4; ++m) {
+                    reg[i][m] = data[line[m] + row];
+                }
+            }
+        }
+        return;
+    }
     RAPIDHT_UNROLL
     for (int i = 0; i < kMaxQuads; ++i) {
         const int q = static_cast<int>(threadIdx.x) + i * static_cast<int>(blockDim.x);
@@ -1167,6 +1206,11 @@ __device__ __forceinline__ void FusedLastBody(T* data, FactoredAxisTables<T> t, 
         }
 
         // Bracewell within each group, and the store.
+        const bool fixedGroup = GroupFixedPerThread(quadsPerRow);
+        size_t ownLine[4] = {};
+        if (fixedGroup) {
+            GroupLinesOfThread(ownLine, batch, quadsPerRow, n, H, D, groupsY, groups);
+        }
         for (int q = threadIdx.x; q < quads; q += blockDim.x) {
             const int i = q >> quadsPerRow.shift;
             const int lg = q & quadsPerRow.mask;
@@ -1185,8 +1229,8 @@ __device__ __forceinline__ void FusedLastBody(T* data, FactoredAxisTables<T> t, 
             const int g = min((batch << quadsPerRow.shift) + lg, groups - 1);
             RAPIDHT_UNROLL
             for (int m = 0; m < 4; ++m) {
-                data[GroupLine(g, m, n, H, D, groupsY) + static_cast<size_t>(i)]
-                    = half * (sm[m] + s[m ^ 1] + s[m ^ 2] - sm[m ^ 3]);
+                const size_t line = fixedGroup ? ownLine[m] : GroupLine(g, m, n, H, D, groupsY);
+                data[line + static_cast<size_t>(i)] = half * (sm[m] + s[m ^ 1] + s[m ^ 2] - sm[m ^ 3]);
             }
         }
     }

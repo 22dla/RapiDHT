@@ -1,0 +1,156 @@
+==PROF== Connected to process 11664 (/home/evgeny/projects/RapiDHT/build-bench/benchmarks/profile_gpu3d)
+==PROF== Profiling "FactoredAxisKernelInPlace": 0%....50%....100% - 9 passes
+==PROF== Profiling "FactoredAxisKernelInPlace": 0%....50%....100% - 9 passes
+==PROF== Profiling "FactoredLastAxisBracewellKernelInPlace": 0%....50%....100% - 9 passes
+f32 factored  512^3  (134217728 elements, 512.0 MiB per buffer)  x1 iterations
+  10.17 ms per transform, 38.7 GFLOP of multiply-add arithmetic, 3.80 TFLOP/s
+  device memory held by the transform: 32 MiB built, 44 MiB after resident use, 556 MiB after a host-pointer call
+==PROF== Disconnected from process 11664
+[11664] profile_gpu3d@127.0.0.1
+  void RapiDHT::FactoredAxisKernelInPlace<float, (int)16, (int)4, (int)1, (bool)1, (int)512, (int)32>(T1 *, RapiDHT::FactoredAxisTables<T1>, unsigned long, unsigned long, int, int, unsigned long, int, int, bool, int) (38, 1, 1)x(256, 1, 1), Context 1, Stream 7, Device 0, CC 8.6
+    Section: Command line profiler metrics
+    ----------------------------------------------------------------------------------- ----------- -------------
+    Metric Name                                                                         Metric Unit  Metric Value
+    ----------------------------------------------------------------------------------- ----------- -------------
+    gpu__time_duration.sum                                                                  msecond          3,76
+    l1tex__data_bank_conflicts_pipe_lsu_mem_shared_op_ld.sum                                              524 288
+    l1tex__data_bank_conflicts_pipe_lsu_mem_shared_op_st.sum                                                6 895
+    smsp__average_warps_issue_stalled_barrier_per_issue_active.ratio                           inst          0,25
+    smsp__average_warps_issue_stalled_branch_resolving_per_issue_active.ratio                  inst          0,11
+    smsp__average_warps_issue_stalled_dispatch_stall_per_issue_active.ratio                    inst          0,11
+    smsp__average_warps_issue_stalled_drain_per_issue_active.ratio                             inst          0,00
+    smsp__average_warps_issue_stalled_imc_miss_per_issue_active.ratio                          inst          0,00
+    smsp__average_warps_issue_stalled_lg_throttle_per_issue_active.ratio                       inst          0,00
+    smsp__average_warps_issue_stalled_long_scoreboard_per_issue_active.ratio                   inst          0,58
+    smsp__average_warps_issue_stalled_long_scoreboard_pipe_l1tex_per_issue_active.ratio        inst          0,58
+    smsp__average_warps_issue_stalled_math_pipe_throttle_per_issue_active.ratio                inst          0,07
+    smsp__average_warps_issue_stalled_membar_per_issue_active.ratio                            inst             0
+    smsp__average_warps_issue_stalled_mio_throttle_per_issue_active.ratio                      inst          0,45
+    smsp__average_warps_issue_stalled_mio_throttle_pipe_mio_per_issue_active.ratio             inst          0,45
+    smsp__average_warps_issue_stalled_misc_per_issue_active.ratio                              inst          0,00
+    smsp__average_warps_issue_stalled_no_instruction_per_issue_active.ratio                    inst          0,04
+    smsp__average_warps_issue_stalled_not_selected_per_issue_active.ratio                      inst          0,30
+    smsp__average_warps_issue_stalled_selected_per_issue_active.ratio                          inst          1,00
+    smsp__average_warps_issue_stalled_short_scoreboard_per_issue_active.ratio                  inst          0,84
+    smsp__average_warps_issue_stalled_sleeping_per_issue_active.ratio                          inst             0
+    smsp__average_warps_issue_stalled_tex_throttle_per_issue_active.ratio                      inst             0
+    smsp__average_warps_issue_stalled_wait_per_issue_active.ratio                              inst          0,75
+    smsp__inst_executed.sum                                                                    inst   349 085 904
+    smsp__sass_inst_executed_op_global_ld.sum                                                  inst     2 033 440
+    smsp__sass_inst_executed_op_global_st.sum                                                  inst     1 048 576
+    smsp__sass_inst_executed_op_shared_ld.sum                                                  inst    27 525 120
+    smsp__sass_inst_executed_op_shared_st.sum                                                  inst     3 147 552
+    smsp__sass_thread_inst_executed_op_fadd_pred_on.sum                                        inst   125 829 120
+    smsp__sass_thread_inst_executed_op_ffma_pred_on.sum                                        inst 6 568 280 064
+    smsp__sass_thread_inst_executed_op_fmul_pred_on.sum                                        inst   125 829 120
+    smsp__sass_thread_inst_executed_op_integer_pred_on.sum                                     inst 2 279 335 232
+    ----------------------------------------------------------------------------------- ----------- -------------
+
+    Section: Instruction Statistics
+    ---------------------------------------- ----------- ------------
+    Metric Name                              Metric Unit Metric Value
+    ---------------------------------------- ----------- ------------
+    Avg. Executed Instructions Per Scheduler        inst 2 296 617,79
+    Executed Instructions                           inst  349 085 904
+    Avg. Issued Instructions Per Scheduler          inst    2 296 644
+    Issued Instructions                             inst  349 089 888
+    ---------------------------------------- ----------- ------------
+
+  void RapiDHT::FactoredAxisKernelInPlace<float, (int)8, (int)2, (int)1, (bool)1, (int)512, (int)16>(T1 *, RapiDHT::FactoredAxisTables<T1>, unsigned long, unsigned long, int, int, unsigned long, int, int, bool, int) (38, 1, 1)x(256, 1, 1), Context 1, Stream 7, Device 0, CC 8.6
+    Section: Command line profiler metrics
+    ----------------------------------------------------------------------------------- ----------- -------------
+    Metric Name                                                                         Metric Unit  Metric Value
+    ----------------------------------------------------------------------------------- ----------- -------------
+    gpu__time_duration.sum                                                                  msecond          3,36
+    l1tex__data_bank_conflicts_pipe_lsu_mem_shared_op_ld.sum                                            1 048 576
+    l1tex__data_bank_conflicts_pipe_lsu_mem_shared_op_st.sum                                                2 128
+    smsp__average_warps_issue_stalled_barrier_per_issue_active.ratio                           inst          0,24
+    smsp__average_warps_issue_stalled_branch_resolving_per_issue_active.ratio                  inst          0,11
+    smsp__average_warps_issue_stalled_dispatch_stall_per_issue_active.ratio                    inst          0,14
+    smsp__average_warps_issue_stalled_drain_per_issue_active.ratio                             inst          0,00
+    smsp__average_warps_issue_stalled_imc_miss_per_issue_active.ratio                          inst          0,00
+    smsp__average_warps_issue_stalled_lg_throttle_per_issue_active.ratio                       inst          0,00
+    smsp__average_warps_issue_stalled_long_scoreboard_per_issue_active.ratio                   inst          0,02
+    smsp__average_warps_issue_stalled_long_scoreboard_pipe_l1tex_per_issue_active.ratio        inst          0,02
+    smsp__average_warps_issue_stalled_math_pipe_throttle_per_issue_active.ratio                inst          0,09
+    smsp__average_warps_issue_stalled_membar_per_issue_active.ratio                            inst             0
+    smsp__average_warps_issue_stalled_mio_throttle_per_issue_active.ratio                      inst          0,50
+    smsp__average_warps_issue_stalled_mio_throttle_pipe_mio_per_issue_active.ratio             inst          0,50
+    smsp__average_warps_issue_stalled_misc_per_issue_active.ratio                              inst          0,00
+    smsp__average_warps_issue_stalled_no_instruction_per_issue_active.ratio                    inst          0,05
+    smsp__average_warps_issue_stalled_not_selected_per_issue_active.ratio                      inst          0,35
+    smsp__average_warps_issue_stalled_selected_per_issue_active.ratio                          inst          1,00
+    smsp__average_warps_issue_stalled_short_scoreboard_per_issue_active.ratio                  inst          0,86
+    smsp__average_warps_issue_stalled_sleeping_per_issue_active.ratio                          inst             0
+    smsp__average_warps_issue_stalled_tex_throttle_per_issue_active.ratio                      inst             0
+    smsp__average_warps_issue_stalled_wait_per_issue_active.ratio                              inst          0,60
+    smsp__inst_executed.sum                                                                    inst   358 699 936
+    smsp__sass_inst_executed_op_global_ld.sum                                                  inst     2 033 440
+    smsp__sass_inst_executed_op_global_st.sum                                                  inst     1 048 576
+    smsp__sass_inst_executed_op_shared_ld.sum                                                  inst    27 787 264
+    smsp__sass_inst_executed_op_shared_st.sum                                                  inst     3 147 552
+    smsp__sass_thread_inst_executed_op_fadd_pred_on.sum                                        inst   125 829 120
+    smsp__sass_thread_inst_executed_op_ffma_pred_on.sum                                        inst 6 568 280 064
+    smsp__sass_thread_inst_executed_op_fmul_pred_on.sum                                        inst   125 829 120
+    smsp__sass_thread_inst_executed_op_integer_pred_on.sum                                     inst 2 520 203 200
+    ----------------------------------------------------------------------------------- ----------- -------------
+
+    Section: Instruction Statistics
+    ---------------------------------------- ----------- ------------
+    Metric Name                              Metric Unit Metric Value
+    ---------------------------------------- ----------- ------------
+    Avg. Executed Instructions Per Scheduler        inst    2 359 868
+    Executed Instructions                           inst  358 699 936
+    Avg. Issued Instructions Per Scheduler          inst 2 359 894,12
+    Issued Instructions                             inst  358 703 906
+    ---------------------------------------- ----------- ------------
+
+  void RapiDHT::FactoredLastAxisBracewellKernelInPlace<float, (int)8, (int)1, (int)2, (bool)0, (int)512, (int)8>(T1 *, RapiDHT::FactoredAxisTables<T1>, int, int, int, int, int, int, int) (76, 1, 1)x(256, 1, 1), Context 1, Stream 7, Device 0, CC 8.6
+    Section: Command line profiler metrics
+    ----------------------------------------------------------------------------------- ----------- -------------
+    Metric Name                                                                         Metric Unit  Metric Value
+    ----------------------------------------------------------------------------------- ----------- -------------
+    gpu__time_duration.sum                                                                  msecond          4,27
+    l1tex__data_bank_conflicts_pipe_lsu_mem_shared_op_ld.sum                                            2 113 600
+    l1tex__data_bank_conflicts_pipe_lsu_mem_shared_op_st.sum                                                4 256
+    smsp__average_warps_issue_stalled_barrier_per_issue_active.ratio                           inst          0,43
+    smsp__average_warps_issue_stalled_branch_resolving_per_issue_active.ratio                  inst          0,19
+    smsp__average_warps_issue_stalled_dispatch_stall_per_issue_active.ratio                    inst          0,27
+    smsp__average_warps_issue_stalled_drain_per_issue_active.ratio                             inst          0,00
+    smsp__average_warps_issue_stalled_imc_miss_per_issue_active.ratio                          inst          0,00
+    smsp__average_warps_issue_stalled_lg_throttle_per_issue_active.ratio                       inst          0,00
+    smsp__average_warps_issue_stalled_long_scoreboard_per_issue_active.ratio                   inst          0,32
+    smsp__average_warps_issue_stalled_long_scoreboard_pipe_l1tex_per_issue_active.ratio        inst          0,32
+    smsp__average_warps_issue_stalled_math_pipe_throttle_per_issue_active.ratio                inst          0,31
+    smsp__average_warps_issue_stalled_membar_per_issue_active.ratio                            inst             0
+    smsp__average_warps_issue_stalled_mio_throttle_per_issue_active.ratio                      inst          0,66
+    smsp__average_warps_issue_stalled_mio_throttle_pipe_mio_per_issue_active.ratio             inst          0,66
+    smsp__average_warps_issue_stalled_misc_per_issue_active.ratio                              inst          0,00
+    smsp__average_warps_issue_stalled_no_instruction_per_issue_active.ratio                    inst          0,12
+    smsp__average_warps_issue_stalled_not_selected_per_issue_active.ratio                      inst          0,99
+    smsp__average_warps_issue_stalled_selected_per_issue_active.ratio                          inst             1
+    smsp__average_warps_issue_stalled_short_scoreboard_per_issue_active.ratio                  inst          0,70
+    smsp__average_warps_issue_stalled_sleeping_per_issue_active.ratio                          inst             0
+    smsp__average_warps_issue_stalled_tex_throttle_per_issue_active.ratio                      inst             0
+    smsp__average_warps_issue_stalled_wait_per_issue_active.ratio                              inst          1,22
+    smsp__inst_executed.sum                                                                    inst   554 508 212
+    smsp__sass_inst_executed_op_global_ld.sum                                                  inst     8 193 848
+    smsp__sass_inst_executed_op_global_st.sum                                                  inst     4 227 200
+    smsp__sass_inst_executed_op_shared_ld.sum                                                  inst    35 667 000
+    smsp__sass_inst_executed_op_shared_st.sum                                                  inst     7 137 048
+    smsp__sass_thread_inst_executed_op_fadd_pred_on.sum                                        inst   659 443 200
+    smsp__sass_thread_inst_executed_op_ffma_pred_on.sum                                        inst 6 619 795 200
+    smsp__sass_thread_inst_executed_op_fmul_pred_on.sum                                        inst   262 086 400
+    smsp__sass_thread_inst_executed_op_integer_pred_on.sum                                     inst 6 408 791 488
+    ----------------------------------------------------------------------------------- ----------- -------------
+
+    Section: Instruction Statistics
+    ---------------------------------------- ----------- ------------
+    Metric Name                              Metric Unit Metric Value
+    ---------------------------------------- ----------- ------------
+    Avg. Executed Instructions Per Scheduler        inst 3 648 080,34
+    Executed Instructions                           inst  554 508 212
+    Avg. Issued Instructions Per Scheduler          inst 3 648 119,36
+    Issued Instructions                             inst  554 514 142
+    ---------------------------------------- ----------- ------------
+
