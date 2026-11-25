@@ -300,6 +300,62 @@ noise the ratio is 0.41 / 0.58 / 0.65 / 2.04 (see R-4a below for the 512³
 outlier). Not measured: 2D accuracy (the tool is 3D only) and 1024³ (the
 tool needs about 48 GiB of host memory there, the machine has 32).
 
+### Convolution (R-4 step 5.3, 2026-11-25)
+
+A transform is usually taken for a convolution: forward, multiply by the
+kernel's spectrum, back. Same machine and build, f32, resident, median of 7
+(`…_r4_s53_conv.json`, `R4_CONV=1 bash scripts/r4_measure.sh s53_conv`):
+
+- **Hartley, any kernel** (`ConvHartley/`): the true transform, the product of
+  the convolution theorem `Z(k) = F(k)E(k) + F(−k)O(k)` (E, O the even and
+  odd parts of the kernel's spectrum, one thread a pair k, −k, in place), the
+  true transform again.
+- **Hartley, even kernel** (`ConvHartleyEven/`, the hno-porous windows): the
+  separable transform, a pointwise product, the separable transform.
+- **cuFFT** (`ConvCufft/`, `ConvCufftEven/`): R2C, the product with the
+  kernel's half spectrum (complex, or real for an even kernel), C2R. Both plans
+  share one work area; the kernel is staged in the caller's volume. That is
+  cuFFT at its leanest.
+
+Every case is checked once before it is timed, at four points against the
+definition of circular convolution summed in double and, where cuFFT fits, in
+full against cuFFT (`benchmarks/convolution_gpu.cu`, `bench_transform.cpp`).
+The kernel is a Gaussian, σ = n/32, off-centre for "any kernel".
+
+| | Hartley, any kernel | cuFFT | ratio | Hartley, even kernel | cuFFT, even | ratio | memory, Hartley / cuFFT |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| 64³ | 70.9 µs | 33.6 µs | 2.11 | 68.5 µs | 32.2 µs | 2.13 | 1 / 3.1 MiB |
+| 128³ | 364 µs | 324 µs | 1.13 | 361 µs | 314 µs | 1.15 | 8 / 24 MiB |
+| 256³ | 2.82 ms | 2.49 ms | 1.14 | 2.81 ms | 2.41 ms | 1.17 | 64 / 194 MiB |
+| 512³ | 22.9 ms | 20.0 ms | 1.15 | 22.2 ms | 19.3 ms | 1.15 | 512 / 1 542 MiB |
+| 1024 × 1024 × 512 | 117 ms | does not fit | — | 103 ms | does not fit | — | 2 048 MiB / — |
+| 512² | 62.9 µs | 28.2 µs | 2.23 | 49.9 µs | 27.4 µs | 1.82 | 1 / 3.0 MiB |
+| 1024² | 276 µs | 128 µs | 2.16 | 210 µs | 122 µs | 1.72 | 4 / 12 MiB |
+| 2048² | 1.47 ms | 527 µs | 2.79 | 916 µs | 507 µs | 1.81 | 16 / 48 MiB |
+
+Memory is what each convolution allocates beside the volume (`allocMiB`): for
+Hartley the kernel's spectrum, one volume; for cuFFT the data's half
+spectrum, the kernel's half spectrum and the work area (for an even kernel,
+the real half spectrum). The even-kernel cuFFT figure is 1 285 MiB at 512³.
+The driver sees 32 MiB more for Hartley from 256³ (the library's memory pool)
+and a few MiB more for cuFFT (`extraMiB`).
+
+- **Time.** The convolution is slower than cuFFT's at every size: by 13–17 %
+  on 128³–512³ volumes, and by 1.7–2.8 times at 64³ and in 2D. The transform
+  alone beat cuFFT plus conversion by 12–16 % on the same volumes. In a
+  convolution cuFFT does not need the conversion. So the comparison is two of
+  our transforms against R2C plus C2R, and against the bare R2C the
+  transform was already 1.11–1.17 times slower (step 5.2). The products cost
+  about the same on both sides (one read of the volume and of the kernel's
+  spectrum, one write).
+- **Memory.** A third of cuFFT's (512 against 1 542 MiB at 512³). Only
+  Hartley convolves 1024 × 1024 × 512 (2 GiB) on the 8 GB card: it needs
+  4 GiB, cuFFT about 8. 1024³ fits neither: its volume and one kernel spectrum
+  alone are 8 GiB.
+- The even kernel gains nothing on volumes (the Bracewell pass is already
+  folded into the x pass) and 20–38 % in 2D, where the true transform is the
+  slower one.
+
 ### How it got there
 
 `Modes::GPUFactored` replaces each dense `N x N` multiply by two small ones,

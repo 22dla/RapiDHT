@@ -3,6 +3,7 @@
 #
 #   R4_NO_CUFFT=1 bash scripts/r4_measure.sh <tag> ...   # sweeps: no cuFFT rows
 #   R4_FULL=1 bash scripts/r4_measure.sh <tag>            # step 5.2: all sizes, 2D too
+#   R4_CONV=1 bash scripts/r4_measure.sh <tag>            # step 5.3: convolution against cuFFT
 #   bash scripts/r4_measure.sh <tag> [VAR=value ...]
 #
 #   bash scripts/r4_measure.sh base                           # the code as it stands
@@ -67,7 +68,7 @@ echo "== 3/5 record what is being measured"
     echo "tag: $tag"
     echo "date: $(date --iso-8601=seconds)"
     echo "settings: ${*:-(none)}"
-    echo "table: $([[ ${R4_FULL:-0} == 1 ]] && echo full || echo 128-512)"
+    echo "table: $([[ ${R4_CONV:-0} == 1 ]] && echo convolution || { [[ ${R4_FULL:-0} == 1 ]] && echo full || echo 128-512; })"
     echo "commit: $(git rev-parse HEAD)"
     echo "uncommitted:"
     git status --short | sed 's/^/  /'
@@ -145,7 +146,13 @@ if [[ ${R4_NO_CUFFT:-0} == 1 ]]; then
     echo "   (cuFFT left out: R4_NO_CUFFT=1)"
 fi
 filter="^$families/f32/3D/$sizes"
-if [[ ${R4_FULL:-0} == 1 ]]; then
+# R4_CONV=1 is step 5.3: convolution, forward -- multiply -- back, through the
+# factored transform and through cuFFT R2C/C2R, at the sizes of the full table
+# (1024x1024x512 in place of 1024^3, which fits neither). About 10 minutes.
+if [[ ${R4_CONV:-0} == 1 ]]; then
+    filter='^(ConvHartley|ConvHartleyEven|ConvCufft|ConvCufftEven)/f32/'
+    echo "   (convolution: R4_CONV=1)"
+elif [[ ${R4_FULL:-0} == 1 ]]; then
     filter="^$families/f32/(2D/(512x512|1024x1024|2048x2048)|3D/(64x64x64|128x128x128|256x256x256|512x512x512|1024x1024x1024))\$"
     echo "   (full table: R4_FULL=1)"
 fi

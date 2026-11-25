@@ -15,7 +15,7 @@ FetchContent_MakeAvailable(googlebenchmark)
 
 set(RAPIDHT_BENCH_SOURCES bench_transform.cpp)
 if(RAPIDHT_WITH_CUDA)
-    list(APPEND RAPIDHT_BENCH_SOURCES cufft_baseline.cu)
+    list(APPEND RAPIDHT_BENCH_SOURCES cufft_baseline.cu convolution_gpu.cu)
 endif()
 
 add_executable(bench_transform ${RAPIDHT_BENCH_SOURCES})

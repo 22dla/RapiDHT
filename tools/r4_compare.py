@@ -62,8 +62,19 @@ def fmt(us: float) -> str:
 
 # Like against like: the true transform against cuFFT plus its conversion pass,
 # the separable one (no Bracewell pass) against the bare R2C transform.
-OPPONENT = {"FactoredResident": "cuFFT", "FactoredResidentSeparable": "cuFFT_R2C"}
-OPPONENT_LABEL = {"cuFFT": "cuFFT + преобразование в Хартли", "cuFFT_R2C": "cuFFT R2C без преобразования"}
+# Step 5.3: convolutions, any kernel and even kernels, against cuFFT R2C/C2R.
+OPPONENT = {
+    "FactoredResident": "cuFFT",
+    "FactoredResidentSeparable": "cuFFT_R2C",
+    "ConvHartley": "ConvCufft",
+    "ConvHartleyEven": "ConvCufftEven",
+}
+OPPONENT_LABEL = {
+    "cuFFT": "cuFFT + преобразование в Хартли",
+    "cuFFT_R2C": "cuFFT R2C без преобразования",
+    "ConvCufft": "свёртка cuFFT R2C + C2R",
+    "ConvCufftEven": "свёртка cuFFT R2C + C2R, чётное ядро",
+}
 
 
 def against_cufft(rows: dict[str, dict[str, float]], reference: dict[str, dict[str, float]]) -> None:

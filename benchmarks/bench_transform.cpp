@@ -44,10 +44,12 @@
 
 #include <benchmark/benchmark.h>
 
+#include <algorithm>
 #include <cmath>
 #include <cstdint>
 #include <cstring>
 #include <memory>
+#include <set>
 #include <string>
 #include <vector>
 
@@ -58,6 +60,7 @@
 #ifdef RAPIDHT_WITH_CUDA
 #include <cuda_runtime.h>
 
+#include "convolution_gpu.h"
 #include "cufft_baseline.h"
 #endif
 
@@ -385,6 +388,289 @@ std::string Describe(const Extent& e)
     return name;
 }
 
+#ifdef RAPIDHT_WITH_CUDA
+/*
+ * R-4 step 5.3: circular convolution, forward -- multiply -- back, on data
+ * resident on the device. This is how a transform is used in practice, and the
+ * place where Hartley's in-place, real arithmetic should tell: cuFFT needs a
+ * half spectrum beside the volume, Hartley does not.
+ *
+ *   ConvHartley/      any kernel: true transform, pair product, true transform
+ *   ConvHartleyEven/  kernel even along every axis (the hno-porous windows):
+ *                     separable transform, pointwise product, separable again
+ *   ConvCufft/        R2C, complex product, C2R
+ *   ConvCufftEven/    the same with the real spectrum of an even kernel
+ *
+ * The kernel is a Gaussian, sigma = n/32 per axis; for ConvHartley/ and
+ * ConvCufft/ its centre is moved off the origin, so that it is not even and the
+ * odd part of the product is exercised. Each case is checked once before it is
+ * timed: at four points against the definition of circular convolution summed
+ * in double, and in full against cuFFT where cuFFT fits. A case that fails
+ * either check is skipped with the error, not reported.
+ */
+
+} // namespace
+
+/*
+ * The public API has no way to touch a DeviceVolume between two transforms:
+ * its device pointer is private, shared only with HartleyTransform. That is a
+ * gap for convolution on the device (backlog), but R-4 does not change the
+ * API, so the benchmark gets the pointer through the friendship: it is granted
+ * to every specialisation of HartleyTransform, and this one, for a tag type of
+ * the benchmark's own, does nothing else.
+ */
+namespace rapidht_bench {
+struct PeekTag { };
+} // namespace rapidht_bench
+
+template <>
+class RapiDHT::HartleyTransform<rapidht_bench::PeekTag> {
+public:
+    static float* Data(const RapiDHT::DeviceVolume<float>& volume)
+    {
+        return static_cast<float*>(volume.DeviceData());
+    }
+};
+
+namespace {
+
+using DevicePeek = HartleyTransform<rapidht_bench::PeekTag>;
+
+/// Gaussian with sum 1 in the wrapped layout; separable, so the volume is a
+/// product of three short tables.
+std::vector<float> MakeConvKernel(const Extent& e, bool even)
+{
+    const size_t W = e.width, H = std::max<size_t>(e.height, 1), D = std::max<size_t>(e.depth, 1);
+    auto axis = [](size_t n, long centre) {
+        std::vector<double> t(n, 1.0);
+        if (n == 1) {
+            return t;
+        }
+        const double sigma = std::max(1.5, static_cast<double>(n) / 32.0);
+        double sum = 0.0;
+        for (size_t i = 0; i < n; ++i) {
+            long d = static_cast<long>(i) - centre;
+            d = ((d % static_cast<long>(n)) + static_cast<long>(n)) % static_cast<long>(n);
+            d = std::min(d, static_cast<long>(n) - d);
+            t[i] = std::exp(-0.5 * static_cast<double>(d * d) / (sigma * sigma));
+            sum += t[i];
+        }
+        for (auto& v : t) {
+            v /= sum;
+        }
+        return t;
+    };
+    const std::vector<double> gx = axis(W, even ? 0 : 5), gy = axis(H, even ? 0 : -3), gz = axis(D, even ? 0 : 2);
+    std::vector<float> g(W * H * D);
+    for (size_t k = 0; k < D; ++k) {
+        for (size_t j = 0; j < H; ++j) {
+            for (size_t i = 0; i < W; ++i) {
+                g[i + W * (j + H * k)] = static_cast<float>(gx[i] * gy[j] * gz[k]);
+            }
+        }
+    }
+    return g;
+}
+
+/// (f * g)(p), circular, summed in double: the definition, for spot checks.
+double DirectConvolutionAt(const std::vector<float>& f, const std::vector<float>& g, const Extent& e, size_t p)
+{
+    const size_t W = e.width, H = std::max<size_t>(e.height, 1), D = std::max<size_t>(e.depth, 1);
+    const size_t px = p % W, py = (p / W) % H, pz = p / (W * H);
+    double sum = 0.0;
+    for (size_t k = 0; k < D; ++k) {
+        const size_t gk = (pz + D - k) % D;
+        for (size_t j = 0; j < H; ++j) {
+            const size_t gj = (py + H - j) % H;
+            const float* frow = &f[W * (j + H * k)];
+            const float* grow = &g[W * (gj + H * gk)];
+            for (size_t i = 0; i < W; ++i) {
+                sum += static_cast<double>(frow[i]) * grow[(px + W - i) % W];
+            }
+        }
+    }
+    return sum;
+}
+
+/// Empty when `result` (the convolution of `f` with `g`) agrees with the
+/// definition at four points, else what went wrong.
+std::string SpotCheckConvolution(const std::vector<float>& result, const std::vector<float>& f,
+    const std::vector<float>& g, const Extent& e)
+{
+    const size_t count = result.size();
+    for (size_t p : { size_t { 0 }, count / 3 + 7, (2 * count) / 3 + 11, count - 1 }) {
+        const double reference = DirectConvolutionAt(f, g, e, p);
+        if (std::fabs(result[p] - reference) > 1e-4 * std::max(std::fabs(reference), 1.0)) {
+            return "convolution disagrees with its definition at index " + std::to_string(p) + ": "
+                 + std::to_string(result[p]) + " against " + std::to_string(reference);
+        }
+    }
+    return {};
+}
+
+/// Each case is checked in its first repetition only: the check at 1024^3
+/// sums 4 * 2^30 products on the host.
+bool FirstRun(const std::string& name)
+{
+    static std::set<std::string> seen;
+    return seen.insert(name).second;
+}
+
+void BM_ConvHartley(benchmark::State& state, Extent e, bool even)
+{
+    const size_t count = ElementCount(e.width, e.height, e.depth);
+    const int W = static_cast<int>(e.width), H = static_cast<int>(e.height), D = static_cast<int>(e.depth);
+    const std::vector<float> pristine = MakeSignal<float>(count);
+    const std::vector<float> g = MakeConvKernel(e, even);
+
+    std::unique_ptr<HartleyTransform<float>> transform;
+    std::unique_ptr<RapiDHT::DeviceVolume<float>> volume;
+    std::unique_ptr<RapiDHT::DeviceVolume<float>> spectrum;
+    auto transformOnce = [&](RapiDHT::DeviceVolume<float>& v) {
+        if (even) {
+            transform->ForwardSeparable(v);
+        } else {
+            transform->ForwardTransform(v);
+        }
+    };
+    auto apply = [&] {
+        transformOnce(*volume);
+        float* data = DevicePeek::Data(*volume);
+        const float* kernel = DevicePeek::Data(*spectrum);
+        if (even) {
+            rapidht_bench::MultiplyPointwise(data, kernel, count);
+        } else {
+            rapidht_bench::HartleyConvolveSpectrum(data, kernel, W, H, D);
+        }
+        transformOnce(*volume);
+    };
+
+    double usedBefore = 0.0;
+    try {
+        volume = std::make_unique<RapiDHT::DeviceVolume<float>>(count);
+        volume->Upload(pristine.data());
+        usedBefore = DeviceUsedMiB();
+        transform = std::make_unique<HartleyTransform<float>>(e.width, e.height, e.depth, Modes::GPUFactored);
+        // The kernel's spectrum, with the 1/N of the round trip folded in.
+        spectrum = std::make_unique<RapiDHT::DeviceVolume<float>>(count);
+        spectrum->Upload(g.data());
+        transformOnce(*spectrum);
+        std::vector<float> host(count);
+        spectrum->Download(host.data());
+        for (auto& v : host) {
+            v /= static_cast<float>(count);
+        }
+        spectrum->Upload(host.data());
+        apply(); // untimed: first-call allocations
+    } catch (const std::exception& error) {
+        state.SkipWithError(error.what());
+        return;
+    }
+    // extraMiB is what the driver sees; the library allocates from a CUDA
+    // memory pool that grows in chunks, so small buffers may not show there.
+    // allocMiB is what the convolution itself holds: the kernel's spectrum.
+    state.counters["extraMiB"] = DeviceUsedMiB() - usedBefore;
+    state.counters["allocMiB"] = static_cast<double>(count * sizeof(float)) / (1024.0 * 1024.0);
+
+    if (FirstRun(state.name())) {
+        std::vector<float> ours(count);
+        try {
+            volume->Upload(pristine.data());
+            apply();
+            volume->Download(ours.data());
+        } catch (const std::exception& error) {
+            state.SkipWithError(error.what());
+            return;
+        }
+        if (const std::string error = SpotCheckConvolution(ours, pristine, g, e); !error.empty()) {
+            state.SkipWithError(error);
+            return;
+        }
+        try {
+            std::vector<float> theirs = pristine;
+            float* device = nullptr;
+            if (cudaMalloc(&device, count * sizeof(float)) != cudaSuccess) {
+                throw std::runtime_error("cudaMalloc failed");
+            }
+            try {
+                rapidht_bench::CufftConvolution cufft(W, H, D, g.data(), even, device);
+                cudaMemcpy(device, pristine.data(), count * sizeof(float), cudaMemcpyHostToDevice);
+                cufft.Apply(device);
+                cudaMemcpy(theirs.data(), device, count * sizeof(float), cudaMemcpyDeviceToHost);
+            } catch (...) {
+                cudaFree(device);
+                throw;
+            }
+            cudaFree(device);
+            double worst = 0.0, scale = 0.0;
+            for (size_t i = 0; i < count; ++i) {
+                worst = std::max(worst, std::fabs(double(ours[i]) - double(theirs[i])));
+                scale = std::max(scale, std::fabs(double(theirs[i])));
+            }
+            if (worst > 1e-4 * std::max(scale, 1.0)) {
+                state.SkipWithError("Hartley convolution disagrees with cuFFT's");
+                return;
+            }
+        } catch (const std::exception&) {
+            // cuFFT does not fit beside this case: the definition check above
+            // stands alone. Clear the failed allocation's error, or the next
+            // launch check of the library reports it as its own.
+            cudaGetLastError();
+        }
+    }
+
+    for (auto _ : state) {
+        apply();
+    }
+    state.SetItemsProcessed(static_cast<int64_t>(state.iterations() * count));
+    state.counters["N"] = static_cast<double>(count);
+}
+
+void BM_ConvCufft(benchmark::State& state, Extent e, bool even)
+{
+    const size_t count = ElementCount(e.width, e.height, e.depth);
+    const std::vector<float> pristine = MakeSignal<float>(count);
+    const std::vector<float> g = MakeConvKernel(e, even);
+
+    float* device = nullptr;
+    if (cudaMalloc(&device, count * sizeof(float)) != cudaSuccess) {
+        cudaGetLastError();
+        state.SkipWithError("cudaMalloc failed");
+        return;
+    }
+    try {
+        const double usedBefore = DeviceUsedMiB();
+        rapidht_bench::CufftConvolution cufft(static_cast<int>(e.width), static_cast<int>(e.height),
+            static_cast<int>(e.depth), g.data(), even, device);
+        cudaMemcpy(device, pristine.data(), count * sizeof(float), cudaMemcpyHostToDevice);
+        cufft.Apply(device); // untimed
+        state.counters["extraMiB"] = DeviceUsedMiB() - usedBefore;
+        state.counters["allocMiB"] = static_cast<double>(cufft.DeviceBytes()) / (1024.0 * 1024.0);
+
+        if (FirstRun(state.name())) {
+            std::vector<float> result(count);
+            cudaMemcpy(device, pristine.data(), count * sizeof(float), cudaMemcpyHostToDevice);
+            cufft.Apply(device);
+            cudaMemcpy(result.data(), device, count * sizeof(float), cudaMemcpyDeviceToHost);
+            if (const std::string error = SpotCheckConvolution(result, pristine, g, e); !error.empty()) {
+                throw std::runtime_error(error);
+            }
+        }
+        for (auto _ : state) {
+            cufft.Apply(device);
+        }
+    } catch (const std::exception& error) {
+        cudaFree(device);
+        cudaGetLastError(); // an out-of-memory error must not reach the next case
+        state.SkipWithError(error.what());
+        return;
+    }
+    cudaFree(device);
+    state.SetItemsProcessed(static_cast<int64_t>(state.iterations() * count));
+    state.counters["N"] = static_cast<double>(count);
+}
+#endif
+
 /*
  * Device memory the GPU backend needs for its transform matrices: an axis of
  * length L costs L^2 elements. For volumes this is nothing -- 512^3 needs 6 MiB
@@ -421,6 +707,8 @@ const Extent kExtents2D[] = { { 128, 128, 0 }, { 512, 512, 0 }, { 1024, 1024, 0 
 // the error), and 64^3 / 2048^2 add nothing the CPU table needs.
 const Extent kExtentsR4Only3D[] = { { 64, 64, 64 }, { 1024, 1024, 1024 } };
 const Extent kExtentsR4Only2D[] = { { 2048, 2048, 0 } };
+// R-4 step 5.3: the largest convolution, 2 GiB in float.
+const Extent kExtentsConvLargest[] = { { 1024, 1024, 512 } };
 
 /*
  * R-4: the factored device path. Registered for every extent up to its 2048
@@ -593,6 +881,32 @@ void BM_MinkowskiFields(benchmark::State& state, size_t n)
     state.SetItemsProcessed(static_cast<int64_t>(state.iterations() * n * n * n));
 }
 
+void RegisterConvolution(const Extent* extents, size_t n, const char* rank)
+{
+#ifdef RAPIDHT_WITH_CUDA
+    if (!RapiDHT::IsGpuAvailable()) {
+        return;
+    }
+    for (size_t i = 0; i < n; ++i) {
+        const Extent e = extents[i];
+        const std::string suffix = std::string("f32/") + rank + "/" + Describe(e);
+        for (const bool even : { false, true }) {
+            const std::string tail = even ? "Even/" : "/";
+            benchmark::RegisterBenchmark(("ConvHartley" + tail + suffix).c_str(),
+                [e, even](benchmark::State& s) { BM_ConvHartley(s, e, even); })
+                ->Unit(benchmark::kMicrosecond);
+            benchmark::RegisterBenchmark(("ConvCufft" + tail + suffix).c_str(),
+                [e, even](benchmark::State& s) { BM_ConvCufft(s, e, even); })
+                ->Unit(benchmark::kMicrosecond);
+        }
+    }
+#else
+    (void)extents;
+    (void)n;
+    (void)rank;
+#endif
+}
+
 template <size_t N>
 constexpr size_t CountOf(const Extent (&)[N])
 {
@@ -613,6 +927,12 @@ int main(int argc, char** argv)
     RegisterFactored<float>(kExtents3D, CountOf(kExtents3D), "3D", "f32");
     RegisterCufft(kExtentsR4Only3D, CountOf(kExtentsR4Only3D), "3D");
     RegisterFactored<float>(kExtentsR4Only3D, CountOf(kExtentsR4Only3D), "3D", "f32");
+    RegisterConvolution(kExtentsR4Only3D, 1, "3D"); // 64^3
+    RegisterConvolution(kExtents3D, CountOf(kExtents3D), "3D");
+    // 1024^3 does not fit either way (the volume and the kernel's spectrum
+    // alone are 8 GiB); half of it shows the difference in memory: about
+    // 4 GiB for Hartley, about 8 for cuFFT.
+    RegisterConvolution(kExtentsConvLargest, CountOf(kExtentsConvLargest), "3D");
     RegisterDoubleOnly(kExtents3D, CountOf(kExtents3D), "3D");
     for (const Extent& e : kExtents3D) {
         benchmark::RegisterBenchmark(("MinkowskiFields/f32/3D/" + Describe(e)).c_str(),
@@ -626,6 +946,8 @@ int main(int argc, char** argv)
     RegisterCufft(kExtents2D, CountOf(kExtents2D), "2D");
     RegisterFactored<float>(kExtentsR4Only2D, CountOf(kExtentsR4Only2D), "2D", "f32");
     RegisterCufft(kExtentsR4Only2D, CountOf(kExtentsR4Only2D), "2D");
+    RegisterConvolution(kExtents2D + 1, CountOf(kExtents2D) - 1, "2D"); // from 512^2
+    RegisterConvolution(kExtentsR4Only2D, CountOf(kExtentsR4Only2D), "2D");
     RegisterDoubleOnly(kExtents2D, CountOf(kExtents2D), "2D");
 
     RegisterFor<double>(kExtents1D, CountOf(kExtents1D), "1D", "f64");

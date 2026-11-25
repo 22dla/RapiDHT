@@ -446,14 +446,16 @@ bg=#FFFFFF</panel_attributes>
       <x>1400</x>
       <y>440</y>
       <w>400</w>
-      <h>140</h>
+      <h>170</h>
     </coordinates>
     <panel_attributes>«consumers, link coreht»
 --
 tests — GoogleTest; checked against the
   O(N²) definition and analytic pairs
 benchmarks — Google Benchmark; cuFFT and
-  FFTW baselines; profile_gpu3d for Nsight
+  FFTW baselines; GPU convolution, Hartley
+  against cuFFT (convolution_gpu.cu);
+  profile_gpu3d for Nsight
 examples — fdht1d, fdht2d, fdht3d
 bg=#FFFFFF</panel_attributes>
     <additional_attributes/>
