@@ -2,6 +2,7 @@
 # One measurement of the R-4 track, the way docs/R4_PLAN.md requires it.
 #
 #   R4_NO_CUFFT=1 bash scripts/r4_measure.sh <tag> ...   # sweeps: no cuFFT rows
+#   R4_FULL=1 bash scripts/r4_measure.sh <tag>            # step 5.2: all sizes, 2D too
 #   bash scripts/r4_measure.sh <tag> [VAR=value ...]
 #
 #   bash scripts/r4_measure.sh base                           # the code as it stands
@@ -66,6 +67,7 @@ echo "== 3/5 record what is being measured"
     echo "tag: $tag"
     echo "date: $(date --iso-8601=seconds)"
     echo "settings: ${*:-(none)}"
+    echo "table: $([[ ${R4_FULL:-0} == 1 ]] && echo full || echo 128-512)"
     echo "commit: $(git rev-parse HEAD)"
     echo "uncommitted:"
     git status --short | sed 's/^/  /'
@@ -126,15 +128,26 @@ if [[ $locked == 1 ]]; then
     trap - EXIT
 fi
 
-echo "== 5/5 benchmark: cuFFT and the factored path, f32 volumes, 7 repetitions (clock not locked)"
+echo "== 5/5 benchmark: cuFFT and the factored path, f32, 7 repetitions (clock not locked)"
 # R4_NO_CUFFT=1 leaves cuFFT out -- for sweeps that compare RapiDHT variants
 # with each other, about 40 s a run. Keep it in for A-B runs and published
 # ratios: cuFFT is the same program in A and B, so its time is a free A-A
 # check of the conditions, and a ratio is only fair from the same session.
-filter='^(cuFFT|cuFFT_R2C|FactoredResident|FactoredResidentSeparable)/f32/3D/'
+#
+# R4_FULL=1 is the full table of step 5.2: 2D and 3D, 64^3-1024^3 and
+# 512^2-2048^2, about 10 minutes. Without it only 128^3-512^3 are run, as in
+# every A-B of the track (the sizes 64^3, 1024^3 and 2048^2 were added to
+# bench_transform at step 5.2).
+sizes='(128x128x128|256x256x256|512x512x512)$'
+families='(cuFFT|cuFFT_R2C|FactoredResident|FactoredResidentSeparable)'
 if [[ ${R4_NO_CUFFT:-0} == 1 ]]; then
-    filter='^(FactoredResident|FactoredResidentSeparable)/f32/3D/'
+    families='(FactoredResident|FactoredResidentSeparable)'
     echo "   (cuFFT left out: R4_NO_CUFFT=1)"
+fi
+filter="^$families/f32/3D/$sizes"
+if [[ ${R4_FULL:-0} == 1 ]]; then
+    filter="^$families/f32/(2D/(512x512|1024x1024|2048x2048)|3D/(64x64x64|128x128x128|256x256x256|512x512x512|1024x1024x1024))\$"
+    echo "   (full table: R4_FULL=1)"
 fi
 env "$@" "$bench" \
     --benchmark_filter="$filter" \

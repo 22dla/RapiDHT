@@ -242,6 +242,66 @@ but does not change the picture.
 
 ## The factored device path (R-4, experimental)
 
+### The full table (R-4 step 5.2, 2026-11-25)
+
+Desktop, RTX 3060 Ti, `native` (sm_86) build, f32, data resident on the
+device, median of 7 (`benchmarks/results/2026-11-25_evgeny_r4_s52_full.json`,
+`R4_FULL=1 bash scripts/r4_measure.sh s52_full`; cuFFT from the same run).
+Two pairs, like against like: the true Hartley transform against cuFFT R2C plus
+its conversion to the Hartley spectrum, and the separable transform (no
+Bracewell pass) against the bare R2C transform. A ratio below 1 is faster than
+cuFFT.
+
+![RapiDHT against cuFFT by size](images/r4-scaling.svg)
+
+| | Hartley | cuFFT + conversion | ratio | separable | cuFFT R2C | ratio | extra memory, ours / cuFFT |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| 64³ | 31.8 µs | 20.1 µs | 1.58 | 31.4 µs | 16.4 µs | 1.92 | < 2 / 2.1 MiB |
+| 128³ | 147 µs | 175 µs | **0.84** | 147 µs | 132 µs | 1.11 | < 2 / 16 MiB |
+| 256³ | 1.15 ms | 1.33 ms | **0.87** | 1.17 ms | 1.00 ms | 1.17 | 32 / 129 MiB |
+| 512³ | 9.39 ms | 10.66 ms | **0.88** | 9.27 ms | 8.05 ms | 1.15 | 32 / 1 028 MiB |
+| 1024³ | 142 ms | does not fit | — | 130 ms | does not fit | — | 32 MiB / — |
+| 512² | 27.8 µs | 17.6 µs | 1.59 | 21.9 µs | 13.9 µs | 1.57 | < 2 / 2.0 MiB |
+| 1024² | 118 µs | 70.9 µs | 1.66 | 86.4 µs | 50.9 µs | 1.70 | < 2 / 8.0 MiB |
+| 2048² | 660 µs | 285 µs | 2.32 | 397 µs | 204 µs | 1.95 | < 2 / 32 MiB |
+
+- **Where it wins.** The factored transform beats cuFFT plus conversion on
+  volumes from 128³ to 512³, by 12–16 %. It does not beat the bare R2C
+  transform anywhere (1.11–1.17 at those sizes): Hartley has no half-spectrum
+  saving; `docs/R4_PLAN.md`, section 2, explains why that bar is out of reach
+  on this card.
+- **Where it loses.** At 64³ (1.6 times) and on every 2D image (1.6–2.3
+  times, worst at 2048²). Every R-4 step was measured and tuned on 128³–512³
+  volumes only; 64³ and 2D entered the measurements at step 5.2. Why these
+  cases are slow has not been measured.
+- **Memory.** Ours is the device memory in use after the first call minus with
+  the volume alone (`extraMiB` of `FactoredResident/`, new in step 5.2): no
+  change the driver can see up to 128³ and in 2D, 32 MiB — the granularity
+  of the CUDA memory pool — from 256³. cuFFT's is the half spectrum plus the
+  workspace `cufftGetSize` reports.
+- **Largest volume.** 1024³ (4 GiB) in place, in 142 ms (198 ms at step 0.5,
+  `…_r4_1024.txt`). cuFFT's plan fails there (`cufftPlan3d`, code 5): its
+  half spectrum alone is 4 104 MiB. The largest cube cuFFT fits beside the
+  volume on this card is 512³.
+
+Accuracy, f32 against the CPU backend in double, relative to the RMS of the
+spectrum of zero-mean white noise (SplitMix64), largest error over the volume
+(`…_r4_s52_accuracy.txt`, `benchmarks/accuracy_gpu3d 64 128 256 512`):
+
+| | 64³ | 128³ | 256³ | 512³ |
+| --- | ---: | ---: | ---: | ---: |
+| cuFFT + conversion | 1.40e-6 | 1.41e-6 | 1.90e-6 | 2.21e-6 |
+| factored | 8.24e-7 | 1.00e-6 | 1.16e-6 | 1.48e-6 |
+| factored / cuFFT | **0.59** | **0.71** | **0.61** | **0.67** |
+| matrices | 6.60e-5 | 1.43e-4 | 3.08e-4 | 6.82e-4 |
+
+The RMS error is lower than cuFFT's at every size too. On the tests' LCG
+noise the ratio is 0.41 / 0.58 / 0.65 / 2.04 (see R-4a below for the 512³
+outlier). Not measured: 2D accuracy (the tool is 3D only) and 1024³ (the
+tool needs about 48 GiB of host memory there, the machine has 32).
+
+### How it got there
+
 `Modes::GPUFactored` replaces each dense `N x N` multiply by two small ones,
 `N = N1 * N2` (512 = 32 * 16): 96 multiply-adds per element and axis instead
 of 1 024. Each axis is one kernel that holds a block of lines in shared memory

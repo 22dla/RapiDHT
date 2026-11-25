@@ -1,0 +1,28 @@
+tag: s52_full
+date: 2026-11-25T13:31:41+04:00
+settings: (none)
+table: full
+commit: 0b22698ee6d7e7610c800d7fceec33ab47965f9b
+uncommitted:
+   M benchmarks/bench_transform.cpp
+   M benchmarks/cufft_baseline.cu
+   M benchmarks/cufft_baseline.h
+   M scripts/r4_measure.sh
+   M tools/r4_figures.py
+  ?? benchmarks/results/2026-11-25_evgeny_r4_s52_full.meta.txt
+sources:
+  9e4d2132842076e95b1b429df73944ebd4e8b326a161604bbae21c2fc166728d  src/internal/factored_kernels.cuh
+  96f289fa3cc9ccf530829403d3189b7f2f85d11acc3950c9719fa9478d04ba08  src/kernels.cu
+  00219f6acfe6d833b60361ba32e0e33aadb91e124e238d5bc2ae6a6de9771ecb  src/backend_cuda.cpp
+  36501266c19eb17add2cdbf0afc3085348713f02e60222c38822340b3d91775f  src/internal/kernels.h
+  05a11dd90bf378501e6cbdd7d22502c0838268d1f96992ceb25b7c66cf071831  benchmarks/bench_transform.cpp
+  3a623881e828026248cf78e3a885e2f7167d00fef60126f7386ab0106b8f7b67  benchmarks/cufft_baseline.cu
+binaries:
+  -rwxrwxr-x 1 evgeny evgeny 2363776 2026-11-25 13:29 build-bench/benchmarks/bench_transform
+  -rwxrwxr-x 1 evgeny evgeny 1670576 2026-11-25 13:12 build-bench/benchmarks/profile_gpu3d
+gpu:
+  NVIDIA GeForce RTX 3060 Ti, 595.99.02, 32, 5.70 W, 965 MiB
+other processes on the gpu (they add noise; close what you can):
+  6260, /usr/libexec/gnome-remote-desktop-daemon, 134 MiB
+  6623, /usr/libexec/gnome-remote-desktop-daemon, 292 MiB
+  7341, /opt/Mattermost/com.Mattermost.Desktop --type=gpu-process --gpu-recent-crash-count=0 --ozone-platform=wayland --re

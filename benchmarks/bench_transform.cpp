@@ -82,6 +82,19 @@ size_t ElementCount(size_t width, size_t height, size_t depth)
     return width * (height == 0 ? 1 : height) * (depth == 0 ? 1 : depth);
 }
 
+#ifdef RAPIDHT_WITH_CUDA
+/// Device memory in use, MiB, as the driver reports it (all processes).
+double DeviceUsedMiB()
+{
+    size_t freeBytes = 0, totalBytes = 0;
+    cudaDeviceSynchronize();
+    if (cudaMemGetInfo(&freeBytes, &totalBytes) != cudaSuccess) {
+        return 0.0;
+    }
+    return static_cast<double>(totalBytes - freeBytes) / (1024.0 * 1024.0);
+}
+#endif
+
 template <typename T>
 void BM_Forward(
     benchmark::State& state, size_t width, size_t height, size_t depth, Modes mode, bool separable = false)
@@ -134,16 +147,28 @@ void BM_Resident(benchmark::State& state, size_t width, size_t height, size_t de
     const size_t count = ElementCount(width, height, depth);
     const std::vector<T> pristine = MakeSignal<T>(count);
 
+    // Device memory the transform holds beyond the volume: what the driver
+    // reports in use after the transform is built and has run once, minus
+    // what it reported with the volume alone (R-4 step 5.2). The first call
+    // is untimed; it also takes any lazy allocation out of the measurement.
     std::unique_ptr<HartleyTransform<T>> transform;
     std::unique_ptr<RapiDHT::DeviceVolume<T>> volume;
+    double usedBefore = 0.0;
     try {
-        transform = std::make_unique<HartleyTransform<T>>(width, height, depth, mode);
         volume = std::make_unique<RapiDHT::DeviceVolume<T>>(count);
         volume->Upload(pristine.data());
+        usedBefore = DeviceUsedMiB();
+        transform = std::make_unique<HartleyTransform<T>>(width, height, depth, mode);
+        if (separable) {
+            transform->ForwardSeparable(*volume);
+        } else {
+            transform->ForwardTransform(*volume);
+        }
     } catch (const std::exception& error) {
         state.SkipWithError(error.what());
         return;
     }
+    state.counters["extraMiB"] = DeviceUsedMiB() - usedBefore;
 
     // The input is not restored between iterations: values grow by N each time,
     // but nothing here depends on their magnitude, and restoring would put a
@@ -389,6 +414,14 @@ const Extent kExtents3D[] = { { 128, 128, 128 }, { 256, 256, 256 }, { 512, 512, 
 const Extent kExtents1D[] = { { 1024, 0, 0 }, { 16384, 0, 0 } };
 const Extent kExtents2D[] = { { 128, 128, 0 }, { 512, 512, 0 }, { 1024, 1024, 0 } };
 
+// R-4 step 5.2: the full table of the factored path against cuFFT. These sizes
+// get only FactoredResident[Separable]/ and the cuFFT pair, not the CPU and
+// matrix entries: 1024^3 is 4 GiB in float, past what the matrix path and the
+// cuFFT baseline fit on an 8 GiB card (the cuFFT entry is kept and reports
+// the error), and 64^3 / 2048^2 add nothing the CPU table needs.
+const Extent kExtentsR4Only3D[] = { { 64, 64, 64 }, { 1024, 1024, 1024 } };
+const Extent kExtentsR4Only2D[] = { { 2048, 2048, 0 } };
+
 /*
  * R-4: the factored device path. Registered for every extent up to its 2048
  * limit, matrices or not -- it holds none. Factored/ copies across the bus like
@@ -578,6 +611,8 @@ int main(int argc, char** argv)
     RegisterCufft(kExtents3D, CountOf(kExtents3D), "3D");
     RegisterFactored<double>(kExtents3D, CountOf(kExtents3D), "3D", "f64");
     RegisterFactored<float>(kExtents3D, CountOf(kExtents3D), "3D", "f32");
+    RegisterCufft(kExtentsR4Only3D, CountOf(kExtentsR4Only3D), "3D");
+    RegisterFactored<float>(kExtentsR4Only3D, CountOf(kExtentsR4Only3D), "3D", "f32");
     RegisterDoubleOnly(kExtents3D, CountOf(kExtents3D), "3D");
     for (const Extent& e : kExtents3D) {
         benchmark::RegisterBenchmark(("MinkowskiFields/f32/3D/" + Describe(e)).c_str(),
@@ -588,6 +623,9 @@ int main(int argc, char** argv)
     RegisterFor<double>(kExtents2D, CountOf(kExtents2D), "2D", "f64");
     RegisterFor<float>(kExtents2D, CountOf(kExtents2D), "2D", "f32");
     RegisterFactored<float>(kExtents2D, CountOf(kExtents2D), "2D", "f32");
+    RegisterCufft(kExtents2D, CountOf(kExtents2D), "2D");
+    RegisterFactored<float>(kExtentsR4Only2D, CountOf(kExtentsR4Only2D), "2D", "f32");
+    RegisterCufft(kExtentsR4Only2D, CountOf(kExtentsR4Only2D), "2D");
     RegisterDoubleOnly(kExtents2D, CountOf(kExtents2D), "2D");
 
     RegisterFor<double>(kExtents1D, CountOf(kExtents1D), "1D", "f64");

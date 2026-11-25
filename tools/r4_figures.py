@@ -1,6 +1,6 @@
-"""Draws the two figures of section 1 of docs/R4_PLAN.md from the measurement files.
+"""Draws the figures of docs/R4_PLAN.md and docs/benchmarks.md from the measurement files.
 
-    python3 tools/r4_figures.py          # writes docs/images/r4-history.svg, r4-budget.svg
+    python3 tools/r4_figures.py          # writes docs/images/r4-history.svg, r4-budget.svg, r4-scaling.svg
 
 Why a script: the figures were drawn by hand once (2026-11-13) and then went
 five steps out of date. Here the R-4 points are read from the result files of
@@ -49,6 +49,11 @@ STEPS = [
     ("4.Z\nось z:\n32 линии", "2026-11-20_evgeny_r4_s4z"),
     ("4.XG\nось x:\nадреса групп", "2026-11-25_evgeny_r4_xg_b2"),
 ]
+
+# Step 5.2: the full table, every size against both cuFFT baselines.
+FULL_TABLE = "2026-11-25_evgeny_r4_s52_full"
+SIZES_3D = [64, 128, 256, 512, 1024]
+SIZES_2D = [512, 1024, 2048]
 
 COPY_FLOOR_MS = 2.6  # one pass over 512^3 at the speed of a copy (2.62 ms, step 0.2), as the plan rounds it
 
@@ -201,6 +206,46 @@ def budget(cufft_ms: float, r2c_ms: float) -> None:
     plt.close(fig)
 
 
+def scaling() -> None:
+    """Our time over cuFFT's, per size: below 1 is faster. Two pairs, like against like:
+    the true transform against cuFFT + conversion, the separable one against bare R2C."""
+    fig, axes = plt.subplots(1, 2, figsize=(10.2, 4.2), facecolor=PAPER, gridspec_kw={"width_ratios": [5, 3]})
+    pairs = [
+        ("FactoredResident", "cuFFT", "преобразование Хартли / cuFFT + перевод", BLUE, -13),
+        ("FactoredResidentSeparable", "cuFFT_R2C", "сепарабельное / cuFFT R2C без перевода", ORANGE, 7),
+    ]  # the last number: where the value labels go, points above the marker
+    for ax, rank, sizes in ((axes[0], "3D", SIZES_3D), (axes[1], "2D", SIZES_2D)):
+        style(ax)
+        for ours, theirs, label, color, offset in pairs:
+            xs, ys = [], []
+            for i, n in enumerate(sizes):
+                case = f"f32/{rank}/" + "x".join([str(n)] * (3 if rank == "3D" else 2))
+                try:
+                    ys.append(bench_ms(FULL_TABLE, f"{ours}/{case}") / bench_ms(FULL_TABLE, f"{theirs}/{case}"))
+                    xs.append(i)
+                except KeyError:  # cuFFT does not fit 1024^3 on 8 GiB
+                    continue
+            ax.plot(xs, ys, color=color, linewidth=2, marker="o", markersize=5, label=label, zorder=3)
+            for x, v in zip(xs, ys):
+                ax.annotate(f"{v:.2f}".replace(".", ","), (x, v), textcoords="offset points", xytext=(0, offset),
+                            ha="center", fontsize=8, color=color)
+        ax.axhline(1.0, color=INK, linestyle=(0, (6, 3.6)), linewidth=1)
+        names = [f"{n}³" if rank == "3D" else f"{n}²" for n in sizes]
+        ax.set_xticks(range(len(sizes)), names, fontsize=8, color=MUTED)
+        ax.set_xlim(-0.5, len(sizes) - 0.5)
+        ax.set_ylim(0, 3.0)
+        ax.set_title("объём" if rank == "3D" else "изображение", color=INK, fontsize=9, loc="left")
+        if rank == "3D":
+            ax.text(len(sizes) - 1, 0.25, "cuFFT\nне помещается\nв 8 ГБ", ha="center", fontsize=7.5, color=MUTED)
+    axes[0].set_ylabel("время RapiDHT / время cuFFT", color=MUTED, fontsize=9)
+    axes[0].legend(loc="upper right", fontsize=8, frameon=False, labelcolor=MUTED)
+    fig.suptitle("Факторизованный путь против cuFFT, float, данные на устройстве (ниже 1 — быстрее cuFFT)",
+                 color=INK, fontsize=10, x=0.01, ha="left")
+    fig.tight_layout()
+    fig.savefig(IMAGES / "r4-scaling.svg", facecolor=PAPER, metadata={"Date": None})
+    plt.close(fig)
+
+
 def main() -> None:
     plt.rcParams["svg.hashsalt"] = "rapidht-r4"  # stable ids: re-running without new data changes nothing
     plt.rcParams["svg.fonttype"] = "path"
@@ -208,7 +253,8 @@ def main() -> None:
     r2c = baseline_ms("cuFFT_R2C/f32/3D/512x512x512")
     history(cufft)
     budget(cufft, r2c)
-    print(f"written: {IMAGES / 'r4-history.svg'}, {IMAGES / 'r4-budget.svg'} (cuFFT {cufft:.2f} ms)")
+    scaling()
+    print(f"written: {IMAGES / 'r4-history.svg'}, {IMAGES / 'r4-budget.svg'}, {IMAGES / 'r4-scaling.svg'} (cuFFT {cufft:.2f} ms)")
 
 
 if __name__ == "__main__":

@@ -1,7 +1,7 @@
 /*
  * Project: RapiDHT
  * File: benchmarks/cufft_baseline.cu
- * Brief: The 3D Hartley transform via cuFFT, for comparison.
+ * Brief: The 2D and 3D Hartley transform via cuFFT, for comparison.
  */
 
 #include <cuda_runtime.h>
@@ -91,18 +91,25 @@ struct CufftHartley::Impl {
 CufftHartley::CufftHartley(int width, int height, int depth):
     _impl(std::make_unique<Impl>())
 {
+    // depth == 0 is a 2D image, as in the library; the conversion kernel then
+    // runs on one layer (D = 1 mirrors z = 0 onto itself).
     _impl->width = width;
     _impl->height = height;
-    _impl->depth = depth;
+    _impl->depth = depth > 0 ? depth : 1;
 
     // cuFFT takes the slowest dimension first and makes the last one
     // contiguous, which matches this library's idx = x + W*(y + H*z).
-    Check(cufftPlan3d(&_impl->plan, depth, height, width, CUFFT_R2C), "cufftPlan3d");
-    Check(cufftGetSize3d(_impl->plan, depth, height, width, CUFFT_R2C, &_impl->workspaceBytes),
-        "cufftGetSize3d");
+    if (depth > 0) {
+        Check(cufftPlan3d(&_impl->plan, depth, height, width, CUFFT_R2C), "cufftPlan3d");
+        Check(cufftGetSize3d(_impl->plan, depth, height, width, CUFFT_R2C, &_impl->workspaceBytes),
+            "cufftGetSize3d");
+    } else {
+        Check(cufftPlan2d(&_impl->plan, height, width, CUFFT_R2C), "cufftPlan2d");
+        Check(cufftGetSize2d(_impl->plan, height, width, CUFFT_R2C, &_impl->workspaceBytes), "cufftGetSize2d");
+    }
 
     const size_t half = static_cast<size_t>(width) / 2 + 1;
-    _impl->spectrumBytes = half * height * depth * sizeof(cufftComplex);
+    _impl->spectrumBytes = half * height * _impl->depth * sizeof(cufftComplex);
     Check(cudaMalloc(&_impl->spectrum, _impl->spectrumBytes), "cudaMalloc(spectrum)");
 }
 

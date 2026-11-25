@@ -1,7 +1,7 @@
 /*
  * Project: RapiDHT
  * File: benchmarks/cufft_baseline.h
- * Brief: The 3D Hartley transform computed through cuFFT, as a baseline.
+ * Brief: The 2D and 3D Hartley transform computed through cuFFT, as a baseline.
  *
  * This is the competitor the matrix formulation has to answer for. cuFFT
  * computes the Fourier transform, but for real input the Hartley transform
@@ -13,8 +13,8 @@
  * what this library computes, and the obvious thing a reviewer will ask about.
  *
  * Benchmark scaffolding, not part of the library: it lives here so that the
- * public headers stay free of CUDA, and it is float-only and 3D-only because
- * that is the case being compared.
+ * public headers stay free of CUDA, and it is float-only because that is the
+ * case being compared. 2D images were added for the full table of R-4 step 5.2.
  */
 
 #ifndef RAPIDHT_BENCH_CUFFT_BASELINE_H
@@ -27,7 +27,8 @@ namespace rapidht_bench {
 
 class CufftHartley {
 public:
-    /// Plans an R2C/C2R pair for a W x H x D volume, W contiguous.
+    /// Plans an R2C transform for a W x H x D volume, W contiguous; depth == 0
+    /// is a W x H image.
     CufftHartley(int width, int height, int depth);
     ~CufftHartley();
 

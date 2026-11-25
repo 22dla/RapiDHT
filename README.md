@@ -63,12 +63,12 @@ transform, so this is not a micro-optimisation.
 | | |
 | --- | --- |
 | 🧊 **True multidimensional** | Not the separable product of 1D transforms — the per-axis passes are followed by the Bracewell correction, and the tests check this against a directly evaluated definition |
-| 🖥️ **Three backends** | `CPU` (OpenMP butterflies), `GPU` (CUDA, dense matrices through cuBLAS), `RFFT` (real FFT, 1D only) |
+| 🖥️ **Four backends** | `CPU` (OpenMP butterflies), `GPUFactored` (CUDA, N = N₁·N₂ factorisation in shared memory, in place), `GPU` (CUDA, dense matrices through cuBLAS), `RFFT` (real FFT, 1D only) |
 | 📌 **Device-resident data** | `DeviceVolume` keeps a volume on the card so a pipeline pays for the transfer once |
 | 🧩 **Optional everything** | CUDA and MPI are off by default; the public headers name no CUDA type, so consuming the library needs no toolkit |
 | 🔷 **Minkowski functionals** | Volume, surface, mean curvature and Euler characteristic of binary volumes, their local densities, and their fields over a bank of ball or Gaussian windows (`<rapidht/minkowski.h>`), every scale for one forward transform per density |
 | 🎯 **Both precisions** | `float` and `double`; on consumer GPUs `float` is 26–38× faster |
-| ✅ **Verified, not asserted** | 36 tests, including comparison against an `O(N²)` reference and analytically known transform pairs |
+| ✅ **Verified, not asserted** | 110 tests, including comparison against an `O(N²)` reference and analytically known transform pairs |
 
 ---
 
@@ -202,19 +202,27 @@ written in numpy alone (cell counting with array rolls, FFT convolution).
 
 ## 📊 Performance
 
-At 512³ in single precision, with the volume resident on the device:
+At 512³ in single precision, with the volume resident on the device
+(RTX 3060 Ti, 8 GB):
 
-| | time | vs CPU |
+| | time | extra device memory |
 | --- | ---: | ---: |
 | CPU, 6 cores | 248 ms | — |
-| **GPU, resident** | **44 ms** | **5.6×** |
-| cuFFT + conversion | 12 ms | ~21× |
+| GPU, dense matrices | 44 ms | 556 MiB |
+| **GPU, factored** (`Modes::GPUFactored`) | **9.4 ms** | **32 MiB** |
+| cuFFT R2C + conversion to Hartley | 10.7 ms | 1 028 MiB |
+| cuFFT R2C alone (a Fourier half spectrum, not Hartley) | 8.0 ms | 1 028 MiB |
 
-The resident GPU backend is 5.6× the CPU one in `float` and 3.7× behind cuFFT,
-while needing half cuFFT's extra device memory. In `double` the CPU backend is
-the faster one, by 2.4–3.8×, because a GeForce runs FP64 at 1/64 of FP32. The
-full picture, including profiling and an extrapolation to datacentre hardware,
-is in **[docs/benchmarks.md](docs/benchmarks.md)**.
+![RapiDHT against cuFFT by size](docs/images/r4-scaling.svg)
+
+The factored GPU path computes the Hartley transform faster than cuFFT plus
+its conversion on volumes from 128³ to 512³ (0.84–0.88 of its time), with
+1/32 of its extra memory and a smaller rounding error. It transforms 1024³ in
+place (142 ms), where cuFFT does not fit on the card. It is slower than cuFFT
+at 64³ (1.6×) and on 2D images (1.6–2.3×), and slower than the bare R2C
+transform everywhere. In `double` the CPU backend is the faster one, because a
+GeForce runs FP64 at 1/64 of FP32. The full tables, the method and the history
+are in **[docs/benchmarks.md](docs/benchmarks.md)**.
 
 ---
 

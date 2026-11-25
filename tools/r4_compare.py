@@ -36,6 +36,8 @@ def load(path: str) -> dict[str, dict[str, float]]:
     rows: dict[str, dict[str, float]] = {}
     plain: dict[str, list[float]] = {}
     for bench in data.get("benchmarks", []):
+        if bench.get("error_occurred"):  # e.g. cuFFT at 1024^3: does not fit, no time to compare
+            continue
         name = bench.get("run_name", bench["name"])
         unit = {"ns": 1e-3, "us": 1.0, "ms": 1e3, "s": 1e6}[bench.get("time_unit", "ns")]
         if bench.get("run_type") == "aggregate":
