@@ -44,7 +44,7 @@ bg=#E8F1FB</panel_attributes>
       <x>40</x>
       <y>70</y>
       <w>440</w>
-      <h>430</h>
+      <h>490</h>
     </coordinates>
     <panel_attributes>*HartleyTransform&lt;T&gt;*
 «T = float | double, move-only»
@@ -72,6 +72,10 @@ bg=#E8F1FB</panel_attributes>
 -DHT1DCuda, DHT2DCuda, DHT3DCuda  — host data
 -DHT1DOnDevice, DHT2DOnDevice, DHT3DOnDevice
 -TransformOnDevice(inOut, scratch)
+-FactoredOnDevice(data)  — R-4
+-FactoredPasses&lt;TIn&gt;(in, data, offset)  — R-5
+-FactoredFromIntegers&lt;TIn&gt;(in: uint8/16*, out, offset)
+    — R-5, reached through internal::DeviceAccess
 bg=#FFFFFF</panel_attributes>
     <additional_attributes/>
   </element>
@@ -221,7 +225,7 @@ bg=#FFFFFF</panel_attributes>
       <x>40</x>
       <y>1030</y>
       <w>380</w>
-      <h>180</h>
+      <h>210</h>
     </coordinates>
     <panel_attributes>«header» kernels.h
 «launchers, defined in kernels.cu»
@@ -232,6 +236,8 @@ VectorMatrixMultiplication
 BracewellTransform2D, BracewellTransform3D
 ScaleOnDevice(data, count, factor)
 FactoredAxis(data, tables, strides...)  — R-4
+FactoredAxisFrom(in: TIn*, out, offset, ...)  — R-5
+ConvertFromIntegers, AddToFirst  — R-5
 BracewellInPlace2D, BracewellInPlace3D
 bg=#FFFFFF</panel_attributes>
     <additional_attributes/>
@@ -390,7 +396,7 @@ bg=#FFFFFF</panel_attributes>
     <id>UMLClass</id>
     <coordinates>
       <x>920</x>
-      <y>1310</y>
+      <y>1510</y>
       <w>400</w>
       <h>110</h>
     </coordinates>
@@ -622,7 +628,7 @@ implements</panel_attributes>
       <x>900</x>
       <y>1120</y>
       <w>390</w>
-      <h>200</h>
+      <h>230</h>
     </coordinates>
     <panel_attributes>«header» factored.h  +  «source» factored.cpp
 «R-4, compiled in every build»
@@ -635,6 +641,25 @@ MakeFactoredTables&lt;T&gt;(n)
 FactoredDhtLanes(tile, work, lanes, tables)
     — host reference of FactoredAxisKernel,
       tested against the O(N²) definition
+FactoredDhtLanesFrom(in: TIn*, offset, ...)  — R-5:
+    step 1 reads integers; bit for bit the float path
+bg=#FFFFFF</panel_attributes>
+    <additional_attributes/>
+  </element>
+<element>
+    <id>UMLClass</id>
+    <coordinates>
+      <x>900</x>
+      <y>1360</y>
+      <w>390</w>
+      <h>130</h>
+    </coordinates>
+    <panel_attributes>«header» internal/device_access.h
+*internal::DeviceAccess*  «R-5, friend of HartleyTransform»
+--
+ForwardFromIntegers(transform, in: uint8/16*, out, offset)
+    — the integer path until the API decision (R-5 step 6.1);
+      used by bench_transform and test_factored, not installed
 bg=#FFFFFF</panel_attributes>
     <additional_attributes/>
   </element>
