@@ -691,6 +691,28 @@ conversion kernel, largest error in LSB (cuFFT in brackets):
 - RMS error under the default policy: 0.001--0.003 LSB on the real volumes,
   100--300 times below the noise of rounding the input.
 
+### The bus (R-5 step 0.6, 2026-11-25)
+
+One way, host to device, `H2D/` rows of
+`benchmarks/results/2026-11-25_evgeny_r5_s06.json` (`R5_BUS=1`):
+
+| | pageable | pinned |
+| --- | ---: | ---: |
+| u8, 512³ (128 MiB) | 15.1 ms | 10.9 ms |
+| u16, 512³ (256 MiB) | 30.2 ms | 21.8 ms |
+| f32, 512³ (512 MiB) | 60.5 ms | 43.6 ms |
+| 1024³, each type | 8 times the above | 8 times the above |
+| rate | 8.25 GiB/s | 11.47 GiB/s |
+
+The rate depends on neither type nor size, so the bus costs bytes: a uint16
+tomogram sent as uint16 takes half the time of the float the library accepts
+today. From the host, "uint16 → Hartley spectrum" at 512³ is 39--43 ms on every
+path (bus 30.2 ms + 9--13 ms on the device), against 69.9 ms for today's float
+input -- the type of the input matters more there than any kernel
+(`docs/images/r5-budget.svg`).
+
+![R-5 budget at 512^3, uint16](images/r5-budget.svg)
+
 ## Integer volumes: the cuFFT baseline (R-5 step 0.2, 2026-11-25)
 
 cuFFT has no integer input type. Three ways to give it a uint8 / uint16 volume

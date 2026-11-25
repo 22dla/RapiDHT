@@ -7,6 +7,7 @@
 #   R5_ACC=1 bash scripts/r5_measure.sh <tag>      # plus accuracy_integer
 #   R5_TASKS=1 bash scripts/r5_measure.sh <tag>    # end-to-end tasks (stage 5)
 #   R5_LARGE=1 bash scripts/r5_measure.sh <tag>    # R-5 families also at 1024x1024x512, 1024^3
+#   R5_BUS=1 bash scripts/r5_measure.sh <tag>      # plus host to device, 512^3 and 1024^3 (step 0.6)
 #
 # Every run also times the R-4 rows (FactoredResident, FactoredResidentSeparable,
 # f32, 128^3-512^3) and cuFFT, so that rule 8 of the plan -- the float path must
@@ -78,7 +79,7 @@ echo "== 3/5 record what is being measured"
     echo "tag: $tag"
     echo "date: $(date --iso-8601=seconds)"
     echo "settings: ${*:-(none)}"
-    echo "table: $([[ ${R5_TASKS:-0} == 1 ]] && echo tasks || echo 128-512)$([[ ${R5_LARGE:-0} == 1 ]] && echo ' + large')$([[ ${R5_ACC:-0} == 1 ]] && echo ' + accuracy')"
+    echo "table: $([[ ${R5_TASKS:-0} == 1 ]] && echo tasks || echo 128-512)$([[ ${R5_LARGE:-0} == 1 ]] && echo ' + large')$([[ ${R5_BUS:-0} == 1 ]] && echo ' + bus')$([[ ${R5_ACC:-0} == 1 ]] && echo ' + accuracy')"
     echo "cuda: $(nvcc --version | sed -n 's/.*release \([^,]*\), V\(.*\)/\1 (\2)/p')"
     echo "commit: $(git rev-parse HEAD)"
     echo "uncommitted:"
@@ -174,6 +175,12 @@ if [[ ${R5_LARGE:-0} == 1 ]]; then
 fi
 r5_rows="(cuFFTInt|cuFFTIntCb|cuFFTIntLto|IntConvertFactored|IntFactored)/(u8|u16)/3D/$r5_sizes"
 filter="^($r4_rows|$r5_rows)\$"
+# R5_BUS=1 (step 0.6): one way over the bus for uint8, uint16 and float, from
+# ordinary and pinned host memory -- about a minute, so not in every run.
+if [[ ${R5_BUS:-0} == 1 ]]; then
+    filter="^($r4_rows|$r5_rows|H2D/(u8|u16|f32)/(pageable|pinned)/3D/(512x512x512|1024x1024x1024))\$"
+    echo "   (host to device: R5_BUS=1)"
+fi
 # R5_TASKS=1 is stage 5: the end-to-end tasks (Task<N>/<implementation>/...),
 # with the R-4 rows kept for rule 8.
 if [[ ${R5_TASKS:-0} == 1 ]]; then

@@ -294,6 +294,50 @@ void BM_CufftR2C(benchmark::State& state, size_t width, size_t height, size_t de
     state.counters["N"] = static_cast<double>(count);
 }
 
+/*
+ * R-5 step 0.6: one way over the bus, host to device, for the input types of
+ * the integer track. A tomogram arrives as uint8 / uint16; today the library
+ * accepts only float, so the user converts on the host and sends twice (uint16)
+ * or four times (uint8) the bytes. pageable is ordinary memory (what a user's
+ * std::vector is: the driver stages it), pinned is cudaMallocHost.
+ */
+template <typename T>
+void BM_HostToDevice(benchmark::State& state, size_t count, bool pinned)
+{
+    T* device = nullptr;
+    if (cudaMalloc(&device, count * sizeof(T)) != cudaSuccess) {
+        cudaGetLastError();
+        state.SkipWithError("cudaMalloc failed");
+        return;
+    }
+    T* host = nullptr;
+    std::vector<T> pageable;
+    if (pinned) {
+        if (cudaMallocHost(&host, count * sizeof(T)) != cudaSuccess) {
+            cudaGetLastError();
+            cudaFree(device);
+            state.SkipWithError("cudaMallocHost failed");
+            return;
+        }
+        std::memset(host, 1, count * sizeof(T)); // touch every page before timing
+    } else {
+        pageable.assign(count, T { 1 });
+        host = pageable.data();
+    }
+
+    for (auto _ : state) {
+        cudaMemcpy(device, host, count * sizeof(T), cudaMemcpyHostToDevice);
+    }
+
+    if (pinned) {
+        cudaFreeHost(host);
+    }
+    cudaFree(device);
+    state.SetBytesProcessed(static_cast<int64_t>(state.iterations() * count * sizeof(T)));
+    state.counters["N"] = static_cast<double>(count);
+    state.counters["MiB"] = static_cast<double>(count * sizeof(T)) / (1024.0 * 1024.0);
+}
+
 /// Host to device and back, nothing else. Subtract from the GPU figure for the
 /// same extent to separate the transform from the transfer.
 template <typename T>
@@ -1070,6 +1114,36 @@ void RegisterIntegerInput(const Extent* extents, size_t n)
 #endif
 }
 
+/// R-5 step 0.6: host to device, the three input types, ordinary and pinned
+/// host memory.
+void RegisterHostToDevice(const Extent* extents, size_t n)
+{
+#ifdef RAPIDHT_WITH_CUDA
+    if (!RapiDHT::IsGpuAvailable()) {
+        return;
+    }
+    for (size_t i = 0; i < n; ++i) {
+        const Extent e = extents[i];
+        const size_t count = ElementCount(e.width, e.height, e.depth);
+        for (const bool pinned : { false, true }) {
+            const std::string tail = std::string(pinned ? "/pinned/3D/" : "/pageable/3D/") + Describe(e);
+            benchmark::RegisterBenchmark(("H2D/u8" + tail).c_str(),
+                [count, pinned](benchmark::State& s) { BM_HostToDevice<uint8_t>(s, count, pinned); })
+                ->Unit(benchmark::kMillisecond);
+            benchmark::RegisterBenchmark(("H2D/u16" + tail).c_str(),
+                [count, pinned](benchmark::State& s) { BM_HostToDevice<uint16_t>(s, count, pinned); })
+                ->Unit(benchmark::kMillisecond);
+            benchmark::RegisterBenchmark(("H2D/f32" + tail).c_str(),
+                [count, pinned](benchmark::State& s) { BM_HostToDevice<float>(s, count, pinned); })
+                ->Unit(benchmark::kMillisecond);
+        }
+    }
+#else
+    (void)extents;
+    (void)n;
+#endif
+}
+
 /// cuFFT is registered for volumes in single precision only: that is the
 /// comparison being made, and keeping it narrow keeps the run short.
 void RegisterCufft(const Extent* extents, size_t n, const char* rank)
@@ -1202,6 +1276,8 @@ int main(int argc, char** argv)
     RegisterFactored<float>(kExtentsR4Only3D, CountOf(kExtentsR4Only3D), "3D", "f32");
     RegisterIntegerInput(kExtents3D, CountOf(kExtents3D));
     RegisterIntegerInput(kExtentsR5Large3D, CountOf(kExtentsR5Large3D));
+    RegisterHostToDevice(kExtents3D + 2, 1); // 512^3
+    RegisterHostToDevice(kExtentsR5Large3D + 1, 1); // 1024^3
     RegisterConvolution(kExtentsR4Only3D, 1, "3D"); // 64^3
     RegisterConvolution(kExtents3D, CountOf(kExtents3D), "3D");
     // 1024^3 does not fit either way (the volume and the kernel's spectrum
