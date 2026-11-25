@@ -531,6 +531,63 @@ The review of this track and the plan from here are in `docs/R4_PLAN.md`.
 
 ---
 
+## Integer volumes: accuracy (R-5, 2026-11-25)
+
+Tomographs write uint8 or uint16 volumes. Would integer arithmetic make the
+transform more accurate on them? `benchmarks/accuracy_integer` transforms
+white integer noise in float on the device and compares the result with the CPU
+backend in double, which is exact here. Errors are given in units of the
+input's least significant bit (error / √N), against two floors that no
+arithmetic inside the transform can go below (`…_r5_integer_accuracy.txt`):
+
+- **Input quantisation.** The noise of rounding to integers reaches each
+  coefficient with RMS 0.289 LSB. Its largest value over 512³ coefficients is
+  about 1.6 LSB.
+- **Float output.** The exact spectrum rounded to float.
+
+512³, over the non-zero frequencies, in LSB:
+
+| input | | cuFFT + conversion, RMS / largest | factored, RMS / largest | float output floor, RMS |
+| --- | --- | ---: | ---: | ---: |
+| uint8, 0..255 | raw | 2.4e-5 / 0.036 | 2.5e-5 / 0.056 | 1.9e-6 |
+| | minus 128 | 2.3e-5 / 1.8e-4 | 1.7e-5 / 1.6e-4 | |
+| uint16, 0..65535 | raw | 7.4e-3 / **14.5** | 7.1e-3 / **23.6** | 4.8e-4 |
+| | minus 32768 | 6.0e-3 / 0.044 | 4.4e-3 / 0.027 | |
+| uint16, 30000 ± 2000 (a tomogram's band) | raw | 2.5e-3 / **8.1** | 5.4e-3 / **23.5** | 2.9e-5 |
+| | minus 32768 | 4.7e-4 / 1.13 | 5.5e-4 / 1.72 | |
+| | minus the rounded mean | 3.7e-4 / 2.6e-3 | 2.7e-4 / 1.6e-3 | |
+
+- **The RMS error is no issue.** It is 40–20 000 times below the input's own
+  rounding noise in every case, raw or not.
+- **The largest error is the issue, and it comes from the mean.** On raw
+  uint16 data the worst coefficients are off by 8–24 LSB, 5–15 times the worst
+  quantisation noise. The large mean puts a large zero-frequency coefficient
+  into every partial sum, and the coefficients that share its lines inherit
+  its rounding. This holds for cuFFT and for the factored path alike; raw, the
+  factored path is the worse of the two (1.6–2.9 times).
+- **Subtracting an integer offset fixes it.** The subtraction is exact, and it
+  changes only the zero-frequency coefficient, by offset × N, which is added
+  back exactly. Minus the rounded mean, the largest error at 512³ falls from
+  23.5 to 0.0016 LSB (factored) and from 8.1 to 0.0026 (cuFFT). Half the range
+  is enough for full-range data. It is not enough for a narrow band far from
+  it: 1.1–1.7 LSB remain.
+- **Integer arithmetic inside the transform would not help in practice.**
+  Centred, the factored path is 9 times above the float output floor (RMS
+  4.4e-3 against 4.8e-4 LSB on full-range uint16). Fixed point with ≥ 24-bit
+  twiddles could close that gap, but both figures lie 65 times or more below
+  the input's quantisation noise, so the result would not be more accurate as
+  data. Fixed point would also need about 43-bit accumulators for uint16 at 512³
+  (16 bits of data, 27 of growth), that is int64, which a GeForce emulates.
+- Centred, the factored path is the more accurate one: RMS 0.73 and largest
+  0.6–0.9 of cuFFT's.
+
+So integer input calls for one integer operation, the offset at the input,
+not for integer arithmetic. A first pass that reads uint8 / uint16 can
+subtract it at no cost; the mean needs one reduction over the input (or a
+known level, such as air or the matrix).
+
+---
+
 ## FFTW, for reference
 
 `FFTW_DHT` in double takes 15 871 / 144 146 / 1 500 455 µs on the same volumes

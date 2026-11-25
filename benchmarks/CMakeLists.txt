@@ -41,6 +41,10 @@ endif()
 if(RAPIDHT_WITH_CUDA)
     add_executable(accuracy_gpu3d accuracy_gpu3d.cpp cufft_baseline.cu)
     target_link_libraries(accuracy_gpu3d PRIVATE coreht rapidht_warnings CUDA::cudart CUDA::cufft)
+    # R-5: float error on uint8 / uint16 volumes against the floors of the input
+    # and of a float output.
+    add_executable(accuracy_integer accuracy_integer.cpp cufft_baseline.cu)
+    target_link_libraries(accuracy_integer PRIVATE coreht rapidht_warnings CUDA::cudart CUDA::cufft)
     # R-4 step 0.5: does the cuFFT baseline fit a given volume at all.
     add_executable(capacity_gpu3d capacity_gpu3d.cpp cufft_baseline.cu)
     target_link_libraries(capacity_gpu3d PRIVATE rapidht_warnings CUDA::cudart CUDA::cufft)
