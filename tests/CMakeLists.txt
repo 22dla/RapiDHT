@@ -30,5 +30,10 @@ foreach(SUITE ${RAPIDHT_TEST_SUITES})
     if(SUITE MATCHES "^test_factored")
         target_include_directories(${SUITE} PRIVATE "${CMAKE_SOURCE_DIR}/src")
     endif()
+    # R-5: test_factored puts integer volumes on the device itself (cudaMalloc),
+    # which no public type does yet.
+    if(SUITE STREQUAL "test_factored" AND RAPIDHT_WITH_CUDA)
+        target_link_libraries(${SUITE} PRIVATE CUDA::cudart)
+    endif()
     install(TARGETS ${SUITE} DESTINATION bin)
 endforeach()

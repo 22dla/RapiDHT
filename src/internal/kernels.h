@@ -92,6 +92,27 @@ void FactoredAxis(T* data, const FactoredAxisTables<T>& tables, size_t axisStrid
     size_t laneLength, size_t otherStride, size_t otherLength);
 
 /**
+ * R-5: FactoredAxis reading integers (TIn = std::uint8_t or std::uint16_t) from
+ * `in` and writing T to `out`, `offset` subtracted from every value as it is
+ * read -- the first pass of a transform of an integer volume, not in place.
+ * `in` is not written. Where the pipelined kernel applies it reads the
+ * integers itself; elsewhere they are converted into `out` and the usual pass
+ * runs there.
+ */
+template <typename T, typename TIn>
+void FactoredAxisFrom(const TIn* in, T* out, T offset, const FactoredAxisTables<T>& tables, size_t axisStride,
+    size_t laneStride, size_t laneLength, size_t otherStride, size_t otherLength);
+
+/// R-5: out[i] = T(in[i]) - offset for i < count, elementwise.
+template <typename T, typename TIn>
+void ConvertFromIntegers(const TIn* in, T* out, T offset, size_t count);
+
+/// R-5: data[0] += value, computed in double -- the offset subtracted on
+/// reading, returned to the zero-frequency coefficient as offset * N.
+template <typename T>
+void AddToFirst(T* data, double value);
+
+/**
  * The last pass along x (the fastest axis) of a true 2D or 3D transform with
  * the Bracewell correction folded in (R-4 step 3.3): call it after the z and y
  * passes, in place of FactoredAxis along x and BracewellInPlace*. Width is

@@ -11,6 +11,14 @@
 
 #include "internal/factored.h"
 
+#include <rapidht/device_volume.h>
+#include <rapidht/transform.h>
+#ifdef RAPIDHT_WITH_CUDA
+#include <cuda_runtime.h>
+
+#include "internal/device_access.h"
+#endif
+
 #include <gtest/gtest.h>
 
 #include <cstdint>
@@ -320,3 +328,98 @@ TEST(Factored, FusedBracewellGroupMatchesDefinition_Float)
 {
     ExpectFusedMatchesDefinition<float>(2e-5);
 }
+
+#ifdef RAPIDHT_WITH_CUDA
+namespace {
+
+struct IntegerShape {
+    size_t width, height, depth;
+};
+
+/*
+ * R-5 step 2.3 on the device: the transform of an integer volume
+ * (DeviceAccess::ForwardFromIntegers -- the first present pass reads the
+ * integers, offset * N back into H(0)) against the float path on the same
+ * values converted beforehand, with the same offset returned to H(0) the same
+ * way. Same passes, same kernel variants, same arithmetic: bit for bit.
+ */
+template <typename TIn>
+void ExpectIntegerInputMatchesConvertedFloat(const IntegerShape& s, double offset, bool separable)
+{
+    const size_t count = s.width * (s.height == 0 ? 1 : s.height) * (s.depth == 0 ? 1 : s.depth);
+    std::vector<TIn> host(count);
+    for (size_t i = 0; i < count; ++i) {
+        host[i] = static_cast<TIn>(static_cast<uint32_t>((i + 1) * 2654435761u) >> (32 - 8 * sizeof(TIn)));
+    }
+
+    HartleyTransform<float> transform(s.width, s.height, s.depth, Modes::GPUFactored);
+    TIn* in = nullptr;
+    ASSERT_EQ(cudaMalloc(&in, count * sizeof(TIn)), cudaSuccess);
+    ASSERT_EQ(cudaMemcpy(in, host.data(), count * sizeof(TIn), cudaMemcpyHostToDevice), cudaSuccess);
+    DeviceVolume<float> out(count);
+    internal::DeviceAccess::ForwardFromIntegers(transform, in, out, offset, separable);
+    std::vector<float> got(count);
+    out.Download(got.data());
+    // The input is read, never written.
+    std::vector<TIn> after(count);
+    ASSERT_EQ(cudaMemcpy(after.data(), in, count * sizeof(TIn), cudaMemcpyDeviceToHost), cudaSuccess);
+    cudaFree(in);
+    ASSERT_EQ(after, host);
+
+    std::vector<float> expected(count);
+    for (size_t i = 0; i < count; ++i) {
+        expected[i] = static_cast<float>(host[i]) - static_cast<float>(offset);
+    }
+    DeviceVolume<float> viaFloat(count);
+    viaFloat.Upload(expected.data());
+    if (separable) {
+        transform.ForwardSeparable(viaFloat);
+    } else {
+        transform.ForwardTransform(viaFloat);
+    }
+    viaFloat.Download(expected.data());
+    if (offset != 0.0) {
+        expected[0] = static_cast<float>(static_cast<double>(expected[0]) + offset * static_cast<double>(count));
+    }
+    ASSERT_EQ(got, expected);
+}
+
+} // namespace
+
+TEST(Factored, IntegerInputMatchesConvertedFloat_GPU)
+{
+    SKIP_IF_NO_GPU();
+    // Cubes on each kernel variant of z (128, 256 and 512 take different ones),
+    // unequal axes, 2D and 1D (the first present pass is y, then x), a 2D
+    // transform of height 1 (its first pass is the fused last one, so the
+    // integers are converted first) and axes too short for the pipelined
+    // kernel (converted first as well).
+    const IntegerShape shapes[] = { { 128, 128, 128 }, { 32, 64, 256 }, { 64, 32, 512 }, { 512, 256, 0 },
+        { 1024, 0, 0 }, { 64, 1, 0 }, { 8, 4, 16 } };
+    for (const IntegerShape& s : shapes) {
+        for (const bool separable : { false, true }) {
+            if (separable && s.height == 0) {
+                continue; // 1D has no separable variant
+            }
+            SCOPED_TRACE(std::to_string(s.width) + "x" + std::to_string(s.height) + "x" + std::to_string(s.depth)
+                         + (separable ? ", separable" : ""));
+            for (const double offset : { 0.0, 128.0, 77.0 }) {
+                ExpectIntegerInputMatchesConvertedFloat<uint8_t>(s, offset, separable);
+            }
+            for (const double offset : { 0.0, 32768.0, 12345.0 }) {
+                ExpectIntegerInputMatchesConvertedFloat<uint16_t>(s, offset, separable);
+            }
+        }
+    }
+}
+
+TEST(Factored, IntegerInputAtBenchmarkSizes_GPU)
+{
+    SKIP_IF_NO_GPU();
+    // The sizes the benchmark times: the first pass along z at 512^3 takes the
+    // four-tile in-place kernel, which the shapes above do not reach.
+    ExpectIntegerInputMatchesConvertedFloat<uint16_t>({ 256, 256, 256 }, 32768.0, false);
+    ExpectIntegerInputMatchesConvertedFloat<uint16_t>({ 512, 512, 512 }, 25914.0, false);
+    ExpectIntegerInputMatchesConvertedFloat<uint8_t>({ 512, 512, 512 }, 128.0, true);
+}
+#endif

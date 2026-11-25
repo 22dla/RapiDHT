@@ -87,6 +87,9 @@ target_link_libraries(bench_transform PRIVATE coreht benchmark::benchmark rapidh
 # CUDA private, as it should, so the benchmark asks for both on its own account.
 if(RAPIDHT_WITH_CUDA)
     rapidht_use_cufft_baseline(bench_transform)
+    # R-5 step 2.3: IntFactored/ reaches the integer path through
+    # src/internal/device_access.h, which is not public API until step 6.1.
+    target_include_directories(bench_transform PRIVATE "${PROJECT_SOURCE_DIR}/src")
     if(TARGET rapidht_cufft_callback)
         target_link_libraries(bench_transform PRIVATE rapidht_cufft_callback)
         target_compile_definitions(bench_transform PRIVATE RAPIDHT_BENCH_WITH_CUFFT_CALLBACK)

@@ -63,6 +63,7 @@
 #ifdef RAPIDHT_WITH_CUDA
 #include <cuda_runtime.h>
 
+#include "internal/device_access.h"
 #include "convolution_gpu.h"
 #include "cufft_baseline.h"
 #endif
@@ -710,7 +711,7 @@ using DevicePeek = HartleyTransform<rapidht_bench::PeekTag>;
  * are the cuFFTInt, cuFFTIntCb and cuFFTIntLto rows of the same type and size.
  */
 template <typename TIn>
-void BM_IntConvertFactored(benchmark::State& state, Extent e)
+void BM_IntConvertFactored(benchmark::State& state, Extent e, bool fromIntegers = false)
 {
     static std::map<std::string, double> checked; // row -> largest error, LSB
     const std::string row = state.name();
@@ -734,6 +735,12 @@ void BM_IntConvertFactored(benchmark::State& state, Extent e)
         HartleyTransform<float> transform(e.width, e.height, e.depth, Modes::GPUFactored);
         float* out = DevicePeek::Data(volume);
         auto forward = [&] {
+            if (fromIntegers) {
+                // R-5 step 2.3, IntFactored/: the first pass reads the
+                // integers itself and returns the offset to H(0); synchronous.
+                RapiDHT::internal::DeviceAccess::ForwardFromIntegers(transform, in, volume, offset);
+                return;
+            }
             rapidht_bench::ConvertIntToFloat(in, input, out, count, offset);
             transform.ForwardTransform(volume);
             rapidht_bench::AddToFirst(out, dc);
@@ -1164,6 +1171,9 @@ void RegisterIntegerInput(const Extent* extents, size_t n)
         benchmark::RegisterBenchmark(("IntConvertFactored/u8/3D/" + Describe(e)).c_str(),
             [e](benchmark::State& s) { BM_IntConvertFactored<uint8_t>(s, e); })
             ->Unit(benchmark::kMicrosecond);
+        benchmark::RegisterBenchmark(("IntFactored/u8/3D/" + Describe(e)).c_str(),
+            [e](benchmark::State& s) { BM_IntConvertFactored<uint8_t>(s, e, true); })
+            ->Unit(benchmark::kMicrosecond);
         for (const auto& [family, load] : variants) {
             benchmark::RegisterBenchmark((std::string(family) + "/u16/3D/" + Describe(e)).c_str(),
                 [e, load = load](benchmark::State& s) { BM_CufftInt<uint16_t>(s, e, load); })
@@ -1171,6 +1181,9 @@ void RegisterIntegerInput(const Extent* extents, size_t n)
         }
         benchmark::RegisterBenchmark(("IntConvertFactored/u16/3D/" + Describe(e)).c_str(),
             [e](benchmark::State& s) { BM_IntConvertFactored<uint16_t>(s, e); })
+            ->Unit(benchmark::kMicrosecond);
+        benchmark::RegisterBenchmark(("IntFactored/u16/3D/" + Describe(e)).c_str(),
+            [e](benchmark::State& s) { BM_IntConvertFactored<uint16_t>(s, e, true); })
             ->Unit(benchmark::kMicrosecond);
     }
 #else

@@ -15,9 +15,11 @@
 #include <cublas_v2.h>
 #include <cuda_runtime.h>
 
+#include <cstdint>
 #include <cstdio>
 #include <cstdlib>
 #include <iterator>
+#include <type_traits>
 
 namespace RapiDHT {
 
@@ -277,8 +279,25 @@ private:
 template <typename T>
 void HartleyTransform<T>::FactoredOnDevice(T* deviceData, bool separable)
 {
+    FactoredPasses(static_cast<const T*>(deviceData), deviceData, T(0), separable);
+}
+
+/*
+ * R-5: TIn = T is FactoredOnDevice, in place. For integer TIn the first
+ * present pass reads `in` (FactoredAxisFrom, not in place) and every later one
+ * runs in place on `deviceData`; at the end offset * N goes back into the zero
+ * coefficient. Where the first present pass is the fused last one (a 2D
+ * transform of height 1) or no pass runs at all, the integers are converted
+ * into deviceData first and the passes run as for float.
+ */
+template <typename T>
+template <typename TIn>
+void HartleyTransform<T>::FactoredPasses(const TIn* in, T* deviceData, T offset, bool separable)
+{
     PROFILE_FUNCTION();
     KernelTrace trace;
+    constexpr bool kFromIntegers = !std::is_same<TIn, T>::value;
+    bool inputRead = !kFromIntegers; // the integers are in deviceData now
 
     const size_t W = Width();
     const size_t H = (Height() == 0 ? 1 : Height());
@@ -332,11 +351,29 @@ void HartleyTransform<T>::FactoredOnDevice(T* deviceData, bool separable)
         // combination along (R-4 step 3.3): its groups of four mirror lines
         // hold every term, which saves a whole pass over the volume.
         const bool last = &g == &passes[std::size(passes) - 1];
+        if constexpr (kFromIntegers) {
+            if (!inputRead) {
+                inputRead = true;
+                if (!(last && !separable && Height() > 0)) {
+                    FactoredAxisFrom(in, deviceData, offset, tables, g.axisStride, g.laneStride, g.laneLength,
+                        g.otherStride, g.otherLength);
+                    continue;
+                }
+                ConvertFromIntegers(in, deviceData, offset, W * H * D);
+            }
+        }
         if (last && !separable && Height() > 0 && FactoredLastAxisBracewell(deviceData, tables, H, D)) {
             bracewellDone = true;
             continue;
         }
         FactoredAxis(deviceData, tables, g.axisStride, g.laneStride, g.laneLength, g.otherStride, g.otherLength);
+    }
+    if constexpr (kFromIntegers) {
+        if (!inputRead) {
+            ConvertFromIntegers(in, deviceData, offset, W * H * D); // every axis of length 1
+        }
+    } else {
+        (void)in;
     }
 
     if (!separable && !bracewellDone) {
@@ -345,6 +382,12 @@ void HartleyTransform<T>::FactoredOnDevice(T* deviceData, bool separable)
             BracewellInPlace3D(deviceData, static_cast<int>(W), static_cast<int>(H), static_cast<int>(D));
         } else if (Height() > 0) {
             BracewellInPlace2D(deviceData, static_cast<int>(W), static_cast<int>(H));
+        }
+    }
+    if constexpr (kFromIntegers) {
+        if (offset != T(0)) {
+            trace.Mark("offset");
+            AddToFirst(deviceData, static_cast<double>(offset) * static_cast<double>(W * H * D));
         }
     }
     trace.Mark("end");
@@ -383,5 +426,9 @@ template void HartleyTransform<float>::DHT3DCuda(float*, bool);
 template void HartleyTransform<float>::DHT3DOnDevice(float*, float*, bool);
 template void HartleyTransform<float>::FactoredOnDevice(float*, bool);
 template void HartleyTransform<float>::FactoredOnHost(float*, bool);
+template void HartleyTransform<float>::FactoredPasses<std::uint8_t>(const std::uint8_t*, float*, float, bool);
+template void HartleyTransform<float>::FactoredPasses<std::uint16_t>(const std::uint16_t*, float*, float, bool);
+template void HartleyTransform<double>::FactoredPasses<std::uint8_t>(const std::uint8_t*, double*, double, bool);
+template void HartleyTransform<double>::FactoredPasses<std::uint16_t>(const std::uint16_t*, double*, double, bool);
 
 } // namespace RapiDHT

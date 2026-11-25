@@ -16,6 +16,8 @@
 #endif
 
 #include <cmath>
+#include <cstdint>
+#include <stdexcept>
 #include <string>
 
 namespace RapiDHT {
@@ -361,10 +363,41 @@ void HartleyTransform<T>::InverseTransform(DeviceVolume<T>& volume)
 #endif
 }
 
+template <typename T>
+template <typename TIn>
+void HartleyTransform<T>::FactoredFromIntegers(const TIn* deviceIn, DeviceVolume<T>& out, T offset, bool separable)
+{
+    PROFILE_FUNCTION();
+
+    CheckResidentVolume(out);
+    if (_mode != Modes::GPUFactored) {
+        throw std::invalid_argument("A transform of integer input needs Modes::GPUFactored.");
+    }
+    if (deviceIn == nullptr) {
+        throw std::invalid_argument("The integer input holds no allocation.");
+    }
+#ifdef RAPIDHT_WITH_CUDA
+    FactoredPasses(deviceIn, static_cast<T*>(out.DeviceData()), offset, separable);
+#else
+    (void)offset;
+    (void)separable;
+    ThrowGpuUnavailable();
+#endif
+}
+
 template class DeviceVolume<float>;
 template class DeviceVolume<double>;
 
 template class HartleyTransform<float>;
 template class HartleyTransform<double>;
+
+template void HartleyTransform<float>::FactoredFromIntegers<std::uint8_t>(
+    const std::uint8_t*, DeviceVolume<float>&, float, bool);
+template void HartleyTransform<float>::FactoredFromIntegers<std::uint16_t>(
+    const std::uint16_t*, DeviceVolume<float>&, float, bool);
+template void HartleyTransform<double>::FactoredFromIntegers<std::uint8_t>(
+    const std::uint8_t*, DeviceVolume<double>&, double, bool);
+template void HartleyTransform<double>::FactoredFromIntegers<std::uint16_t>(
+    const std::uint16_t*, DeviceVolume<double>&, double, bool);
 
 } // namespace RapiDHT
