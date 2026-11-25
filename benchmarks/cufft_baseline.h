@@ -58,6 +58,57 @@ private:
     std::unique_ptr<Impl> _impl;
 };
 
+/*
+ * R-5 step 0.2: the same Hartley transform through cuFFT, but from an integer
+ * volume (uint8 or uint16, as a tomograph writes it) into a float one. cuFFT has
+ * no integer input type, so there are three ways to feed it, and the strongest
+ * of them is the baseline R-5 has to beat:
+ *
+ *   Convert         a kernel converts the input into the float output buffer,
+ *                   R2C reads it from there (one extra pass over the volume);
+ *   LegacyCallback  a load callback reads the integers inside cuFFT's first
+ *                   kernel (CUFFT_CB_LD_REAL; needs the static cuFFT and
+ *                   separate compilation, so it lives in its own shared library,
+ *                   rapidht_cufft_callback, that hides that cuFFT);
+ *   LtoCallback     the same callback, compiled to LTO-IR and linked into the
+ *                   plan by cuFFT at run time (cufftXtSetJITCallback, CUDA 12.6
+ *                   Update 2 and later), with the ordinary shared cuFFT.
+ *
+ * Every variant subtracts `offset` from each voxel as it reads it -- exact in
+ * float for integers of up to 24 bits -- and adds offset * N back to the zero
+ * coefficient in the Hartley pass, at no cost. The result is the transform of
+ * the input itself. The input is never written. Extra device memory is the
+ * same for all three: the half spectrum and cuFFT's workspace, besides the
+ * caller's input and float output.
+ */
+enum class IntInput { U8,
+    U16 };
+enum class IntLoad { Convert,
+    LegacyCallback,
+    LtoCallback };
+
+class CufftIntHartley {
+public:
+    virtual ~CufftIntHartley() = default;
+
+    /// deviceIn: W*H*D integers of the type given at construction;
+    /// deviceOut: W*H*D floats. Synchronises before it returns.
+    virtual void Forward(const void* deviceIn, float* deviceOut) = 0;
+
+    /// The half spectrum plus cuFFT's workspace.
+    virtual size_t ExtraDeviceBytes() const = 0;
+};
+
+/// Convert and LtoCallback; LegacyCallback is refused here (MakeCufftIntCallback).
+/// Throws std::runtime_error when cuFFT refuses the plan or the memory.
+std::unique_ptr<CufftIntHartley> MakeCufftIntHartley(
+    int width, int height, int depth, IntInput input, IntLoad load, double offset);
+
+/// LegacyCallback. Defined in cufft_int_callback.cu, which only targets that
+/// link rapidht_cufft_callback have.
+std::unique_ptr<CufftIntHartley> MakeCufftIntCallback(
+    int width, int height, int depth, IntInput input, double offset);
+
 } // namespace rapidht_bench
 
 #endif // RAPIDHT_BENCH_CUFFT_BASELINE_H

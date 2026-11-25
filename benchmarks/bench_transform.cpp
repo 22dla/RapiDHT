@@ -48,9 +48,12 @@
 #include <cmath>
 #include <cstdint>
 #include <cstring>
+#include <map>
 #include <memory>
 #include <set>
+#include <stdexcept>
 #include <string>
+#include <utility>
 #include <vector>
 
 #ifdef RAPIDHT_BENCH_WITH_FFTW
@@ -390,6 +393,157 @@ std::string Describe(const Extent& e)
 
 #ifdef RAPIDHT_WITH_CUDA
 /*
+ * R-5 step 0.2: cuFFT from an integer volume, the baseline of the integer
+ * track (docs/R5_PLAN.md). Three ways to feed the integers to cuFFT, one row
+ * family each:
+ *
+ *   cuFFTInt/     conversion kernel into the float output, then R2C
+ *   cuFFTIntCb/   legacy load callback (static cuFFT, rapidht_cufft_callback)
+ *   cuFFTIntLto/  LTO load callback (cufftXtSetJITCallback)
+ *
+ * Input: white integer noise over the full range of the type, resident on the
+ * device; output: the float Hartley transform of that input, in a buffer of
+ * its own (the input is not written). The offset subtracted on reading is half
+ * the range -- it costs no reduction, and which offset is used does not change
+ * the time.
+ *
+ * Before any timing each variant is checked against the CPU backend in double,
+ * which is exact on integer input (every partial sum is far below 2^53). The
+ * error is reported like accuracy_integer does, in LSB of the input
+ * (|error| / sqrt(N)), over the non-zero frequencies: errLSB. A case whose
+ * largest error passes 0.5 LSB is skipped instead of timed: rounding alone
+ * gives 0.04 at 512^3 (2026-11-25_evgeny_r5_aa1_accuracy.txt), a wrong
+ * transform gives the size of the signal. The zero frequency, about offset * N,
+ * is checked on its own against float rounding.
+ *
+ * Memory: peakMiB is what the device holds once the case has run once --
+ * input, output, the half spectrum and cuFFT's workspace -- by cudaMemGetInfo;
+ * extraMiB is that minus the input and the output.
+ */
+template <typename TIn>
+std::vector<TIn> MakeIntegerNoise(size_t count)
+{
+    std::vector<TIn> data(count);
+    uint64_t state = 0x9E3779B97F4A7C15ull; // SplitMix64: reproducible, fast
+    for (auto& v : data) {
+        uint64_t z = (state += 0x9E3779B97F4A7C15ull);
+        z = (z ^ (z >> 30)) * 0xBF58476D1CE4E5B9ull;
+        z = (z ^ (z >> 27)) * 0x94D049BB133111EBull;
+        v = static_cast<TIn>((z ^ (z >> 31)) >> (64 - 8 * sizeof(TIn)));
+    }
+    return data;
+}
+
+/// The CPU transform in double of the integer noise for one type and extent.
+/// Kept for the last pair asked for: the variants of one row run one after
+/// another, and 512^3 takes seconds and a GiB.
+template <typename TIn>
+const std::vector<double>& IntegerReference(const std::vector<TIn>& input, const Extent& e)
+{
+    static std::string key;
+    static std::vector<double> reference;
+    const std::string wanted = std::to_string(sizeof(TIn)) + "/" + Describe(e);
+    if (key != wanted) {
+        key.clear();
+        reference.assign(input.begin(), input.end());
+        HartleyTransform<double> cpu(e.width, e.height, e.depth, Modes::CPU);
+        cpu.ForwardTransform(reference.data());
+        key = wanted;
+    }
+    return reference;
+}
+
+/// Largest error over the non-zero frequencies in LSB of the input, or a
+/// negative number when the zero frequency is off by more than float rounding.
+double IntegerErrorLsb(const std::vector<float>& got, const std::vector<double>& reference)
+{
+    const double dcError = std::fabs(double(got[0]) - reference[0]);
+    if (dcError > 1e-6 * std::fabs(reference[0]) + 1.0) {
+        return -1.0;
+    }
+    double worst = 0.0;
+    for (size_t i = 1; i < got.size(); ++i) {
+        worst = std::max(worst, std::fabs(double(got[i]) - reference[i]));
+    }
+    return worst / std::sqrt(static_cast<double>(got.size()));
+}
+
+template <typename TIn>
+void BM_CufftInt(benchmark::State& state, Extent e, rapidht_bench::IntLoad load)
+{
+    using rapidht_bench::IntLoad;
+    // Checked once per row: Google Benchmark calls the function again for
+    // every repetition, and the check reads the whole volume on the CPU.
+    static std::map<std::string, double> checked; // row -> largest error, LSB
+    const std::string row = state.name();
+
+    const size_t count = ElementCount(e.width, e.height, e.depth);
+    const rapidht_bench::IntInput input = sizeof(TIn) == 1 ? rapidht_bench::IntInput::U8 : rapidht_bench::IntInput::U16;
+    const double offset = std::ldexp(1.0, 8 * static_cast<int>(sizeof(TIn)) - 1); // half the range
+    const std::vector<TIn> host = MakeIntegerNoise<TIn>(count);
+
+    const double usedStart = DeviceUsedMiB();
+    TIn* in = nullptr;
+    float* out = nullptr;
+    if (cudaMalloc(&in, count * sizeof(TIn)) != cudaSuccess || cudaMalloc(&out, count * sizeof(float)) != cudaSuccess) {
+        cudaFree(in);
+        cudaGetLastError(); // clear the allocation error
+        state.SkipWithError("cudaMalloc failed: input and output do not fit");
+        return;
+    }
+    try {
+        std::unique_ptr<rapidht_bench::CufftIntHartley> cufft;
+        if (load == IntLoad::LegacyCallback) {
+#ifdef RAPIDHT_BENCH_WITH_CUFFT_CALLBACK
+            cufft = rapidht_bench::MakeCufftIntCallback(
+                static_cast<int>(e.width), static_cast<int>(e.height), static_cast<int>(e.depth), input, offset);
+#else
+            throw std::runtime_error("built without rapidht_cufft_callback");
+#endif
+        } else {
+            cufft = rapidht_bench::MakeCufftIntHartley(static_cast<int>(e.width), static_cast<int>(e.height),
+                static_cast<int>(e.depth), input, load, offset);
+        }
+        cudaMemcpy(in, host.data(), count * sizeof(TIn), cudaMemcpyHostToDevice);
+        cufft->Forward(in, out); // untimed: the check, and any lazy allocation
+        const double peak = DeviceUsedMiB() - usedStart;
+        state.counters["peakMiB"] = peak;
+        state.counters["extraMiB"]
+            = peak - static_cast<double>(count * (sizeof(TIn) + sizeof(float))) / (1024.0 * 1024.0);
+
+        if (checked.find(row) == checked.end()) {
+            std::vector<float> got(count);
+            cudaMemcpy(got.data(), out, count * sizeof(float), cudaMemcpyDeviceToHost);
+            const double error = IntegerErrorLsb(got, IntegerReference(host, e));
+            if (error < 0.0 || error > 0.5) {
+                throw std::runtime_error(error < 0.0 ? "zero frequency disagrees with the CPU in double"
+                                                     : "disagrees with the CPU in double: largest error "
+                                                           + std::to_string(error) + " LSB");
+            }
+            checked[row] = error;
+        }
+        state.counters["errLSB"] = checked[row];
+
+        for (auto _ : state) {
+            cufft->Forward(in, out);
+        }
+    } catch (const std::exception& error) {
+        cudaFree(in);
+        cudaFree(out);
+        cudaGetLastError();
+        state.SkipWithError(error.what());
+        return;
+    }
+    cudaFree(in);
+    cudaFree(out);
+    state.SetItemsProcessed(static_cast<int64_t>(state.iterations() * count));
+    state.SetBytesProcessed(static_cast<int64_t>(state.iterations() * count * (sizeof(TIn) + sizeof(float))));
+    state.counters["N"] = static_cast<double>(count);
+}
+#endif
+
+#ifdef RAPIDHT_WITH_CUDA
+/*
  * R-4 step 5.3: circular convolution, forward -- multiply -- back, on data
  * resident on the device. This is how a transform is used in practice, and the
  * place where Hartley's in-place, real arithmetic should tell: cuFFT needs a
@@ -707,6 +861,9 @@ const Extent kExtents2D[] = { { 128, 128, 0 }, { 512, 512, 0 }, { 1024, 1024, 0 
 // the error), and 64^3 / 2048^2 add nothing the CPU table needs.
 const Extent kExtentsR4Only3D[] = { { 64, 64, 64 }, { 1024, 1024, 1024 } };
 const Extent kExtentsR4Only2D[] = { { 2048, 2048, 0 } };
+// R-5 step 0.2: the integer baselines also at the two large sizes, to find
+// where cuFFT stops fitting (1024^3 uint16 needs 2 GiB in, 4 out, 4 spectrum).
+const Extent kExtentsR5Large3D[] = { { 1024, 1024, 512 }, { 1024, 1024, 1024 } };
 // R-4 step 5.3: the largest convolution, 2 GiB in float.
 const Extent kExtentsConvLargest[] = { { 1024, 1024, 512 } };
 
@@ -795,6 +952,40 @@ void RegisterFor(const Extent* extents, size_t n, const char* rank, const char* 
 #endif
         }
     }
+}
+
+/// R-5 step 0.2: the integer cuFFT baselines, 3D. Per extent the two types and
+/// the three variants run one after another, so that the CPU reference of one
+/// type and size is computed once (IntegerReference).
+void RegisterCufftInt(const Extent* extents, size_t n)
+{
+#ifdef RAPIDHT_WITH_CUDA
+    if (!RapiDHT::IsGpuAvailable()) {
+        return;
+    }
+    using rapidht_bench::IntLoad;
+    const std::pair<const char*, IntLoad> variants[] = {
+        { "cuFFTInt", IntLoad::Convert },
+        { "cuFFTIntCb", IntLoad::LegacyCallback },
+        { "cuFFTIntLto", IntLoad::LtoCallback },
+    };
+    for (size_t i = 0; i < n; ++i) {
+        const Extent e = extents[i];
+        for (const auto& [family, load] : variants) {
+            benchmark::RegisterBenchmark((std::string(family) + "/u8/3D/" + Describe(e)).c_str(),
+                [e, load = load](benchmark::State& s) { BM_CufftInt<uint8_t>(s, e, load); })
+                ->Unit(benchmark::kMicrosecond);
+        }
+        for (const auto& [family, load] : variants) {
+            benchmark::RegisterBenchmark((std::string(family) + "/u16/3D/" + Describe(e)).c_str(),
+                [e, load = load](benchmark::State& s) { BM_CufftInt<uint16_t>(s, e, load); })
+                ->Unit(benchmark::kMicrosecond);
+        }
+    }
+#else
+    (void)extents;
+    (void)n;
+#endif
 }
 
 /// cuFFT is registered for volumes in single precision only: that is the
@@ -927,6 +1118,8 @@ int main(int argc, char** argv)
     RegisterFactored<float>(kExtents3D, CountOf(kExtents3D), "3D", "f32");
     RegisterCufft(kExtentsR4Only3D, CountOf(kExtentsR4Only3D), "3D");
     RegisterFactored<float>(kExtentsR4Only3D, CountOf(kExtentsR4Only3D), "3D", "f32");
+    RegisterCufftInt(kExtents3D, CountOf(kExtents3D));
+    RegisterCufftInt(kExtentsR5Large3D, CountOf(kExtentsR5Large3D));
     RegisterConvolution(kExtentsR4Only3D, 1, "3D"); // 64^3
     RegisterConvolution(kExtents3D, CountOf(kExtents3D), "3D");
     // 1024^3 does not fit either way (the volume and the kernel's spectrum

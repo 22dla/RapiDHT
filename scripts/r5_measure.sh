@@ -6,6 +6,7 @@
 #   bash scripts/r5_measure.sh <tag> [RAPIDHT_*=value ...]
 #   R5_ACC=1 bash scripts/r5_measure.sh <tag>      # plus accuracy_integer
 #   R5_TASKS=1 bash scripts/r5_measure.sh <tag>    # end-to-end tasks (stage 5)
+#   R5_LARGE=1 bash scripts/r5_measure.sh <tag>    # R-5 families also at 1024x1024x512, 1024^3
 #
 # Every run also times the R-4 rows (FactoredResident, FactoredResidentSeparable,
 # f32, 128^3-512^3) and cuFFT, so that rule 8 of the plan -- the float path must
@@ -67,7 +68,7 @@ echo "== 3/5 record what is being measured"
     echo "tag: $tag"
     echo "date: $(date --iso-8601=seconds)"
     echo "settings: ${*:-(none)}"
-    echo "table: $([[ ${R5_TASKS:-0} == 1 ]] && echo tasks || echo 128-512)$([[ ${R5_ACC:-0} == 1 ]] && echo ' + accuracy')"
+    echo "table: $([[ ${R5_TASKS:-0} == 1 ]] && echo tasks || echo 128-512)$([[ ${R5_LARGE:-0} == 1 ]] && echo ' + large')$([[ ${R5_ACC:-0} == 1 ]] && echo ' + accuracy')"
     echo "cuda: $(nvcc --version | sed -n 's/.*release \([^,]*\), V\(.*\)/\1 (\2)/p')"
     echo "commit: $(git rev-parse HEAD)"
     echo "uncommitted:"
@@ -75,6 +76,7 @@ echo "== 3/5 record what is being measured"
     echo "sources:"
     sha256sum src/internal/factored_kernels.cuh src/kernels.cu src/backend_cuda.cpp src/internal/kernels.h \
         benchmarks/bench_transform.cpp benchmarks/cufft_baseline.h benchmarks/cufft_baseline.cu \
+        benchmarks/cufft_common.cuh benchmarks/cufft_int_callback.cu benchmarks/cufft_int_lto_callback.cu \
         benchmarks/accuracy_integer.cpp | sed 's/^/  /'
     # The end-to-end tasks of stage 5, once they exist.
     for optional in benchmarks/tasks_gpu.h benchmarks/tasks_gpu.cu; do
@@ -152,7 +154,15 @@ echo "== 5/5 benchmark: R-4 rows and the R-5 families, 7 repetitions (clock not 
 #   IntFactored  the first pass reads the integers itself                     (step 2.3)
 sizes='(128x128x128|256x256x256|512x512x512)'
 r4_rows="(cuFFT|cuFFT_R2C|FactoredResident|FactoredResidentSeparable)/f32/3D/$sizes"
-r5_rows="(cuFFTInt|cuFFTIntCb|cuFFTIntLto|IntConvertFactored|IntFactored)/(u8|u16)/3D/$sizes"
+r5_sizes=$sizes
+# R5_LARGE=1: where does each integer path stop fitting? The R-4 rows stay at
+# 128^3-512^3. The CPU reference of the check takes about a minute at
+# 1024x1024x512.
+if [[ ${R5_LARGE:-0} == 1 ]]; then
+    r5_sizes='(128x128x128|256x256x256|512x512x512|1024x1024x512|1024x1024x1024)'
+    echo "   (large sizes: R5_LARGE=1)"
+fi
+r5_rows="(cuFFTInt|cuFFTIntCb|cuFFTIntLto|IntConvertFactored|IntFactored)/(u8|u16)/3D/$r5_sizes"
 filter="^($r4_rows|$r5_rows)\$"
 # R5_TASKS=1 is stage 5: the end-to-end tasks (Task<N>/<implementation>/...),
 # with the R-4 rows kept for rule 8.

@@ -613,6 +613,56 @@ not for integer arithmetic. A first pass that reads uint8 / uint16 can
 subtract it at no cost; the mean needs one reduction over the input (or a
 known level, such as air or the matrix).
 
+## Integer volumes: the cuFFT baseline (R-5 step 0.2, 2026-11-25)
+
+cuFFT has no integer input type. Three ways to give it a uint8 / uint16 volume
+resident on the device, each writing the float Hartley transform into a buffer
+of its own (`benchmarks/cufft_baseline.{h,cu}`, `cufft_int_callback.cu`,
+`cufft_int_lto_callback.cu`):
+
+- **convert** (`cuFFTInt/`): a kernel converts the integers into the float
+  output buffer, R2C reads them from there, the Hartley pass writes the result
+  back;
+- **legacy callback** (`cuFFTIntCb/`): `CUFFT_CB_LD_REAL` reads the integers
+  inside cuFFT's first kernel; needs the static cuFFT, so it lives in a shared
+  library of its own that hides that cuFFT from the rest of the benchmark;
+- **LTO callback** (`cuFFTIntLto/`): the same callback as LTO-IR, linked into
+  the plan at run time (`cufftXtSetJITCallback`), shared cuFFT.
+
+All three subtract an offset (half the range) on reading and add offset · N
+back to the zero coefficient inside the Hartley pass. Every row is checked
+against the CPU in double before it is timed (largest error over the non-zero
+frequencies: at most 0.058 LSB, limit 0.5). CUDA 13.2, desktop, median of 7,
+`benchmarks/results/2026-11-25_evgeny_r5_s02.json` (`R5_LARGE=1 bash
+scripts/r5_measure.sh s02`):
+
+| | convert | legacy callback | LTO callback | float cuFFT + conversion, same run |
+| --- | ---: | ---: | ---: | ---: |
+| u8, 128³ | 203 µs | 395 µs | **169 µs** | 175 µs |
+| u16, 128³ | 208 µs | 396 µs | **170 µs** | |
+| u8, 256³ | 1.540 ms | 2.800 ms | **1.292 ms** | 1.333 ms |
+| u16, 256³ | 1.579 ms | 2.825 ms | **1.275 ms** | |
+| u8, 512³ | 12.30 ms | 15.19 ms | **9.72 ms** | 10.66 ms |
+| u16, 512³ | 12.62 ms | 15.42 ms | **10.03 ms** | |
+| u8, 1024 × 1024 × 512 | 50.9 ms | fails | **41.1 ms** | |
+| u16, 1024 × 1024 × 512 | 52.1 ms | fails | **41.8 ms** | |
+| 1024³, either type | does not fit | does not fit | does not fit | |
+
+- **The LTO callback is the strongest baseline at every size**, 17–20 % faster
+  than the conversion kernel, and with integer input it beats float cuFFT
+  itself (u16 512³: 10.03 against 10.66 ms) -- it reads 2 bytes a voxel
+  instead of 4. It is the opponent of the integer track from here on.
+- The legacy callback is the slowest: 1.2–1.9 times the conversion kernel, as
+  reported for CUDA 12.x on NVIDIA's forum. At 1024 × 1024 × 512 its
+  `cufftExecR2C` returns `CUFFT_EXEC_FAILED`; the cause was not looked into.
+- Memory is the same for all three: input, output, the half spectrum
+  (514 MiB at 512³), and no workspace worth counting. Peak: 1.15 GiB (u8) and
+  1.25 GiB (u16) at 512³, 4.5 and 5.0 GiB at 1024 × 1024 × 512. 1024³ fails on
+  the spectrum (4 GiB beside a 4 GiB output).
+- Pitfall: cuFFT finds an LTO callback by its C++ name. An `extern "C"`
+  callback is an undefined symbol to it, and the plan fails with
+  `CUFFT_NVJITLINK_FAILURE`.
+
 ---
 
 ## FFTW, for reference

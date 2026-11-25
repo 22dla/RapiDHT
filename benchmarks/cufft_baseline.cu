@@ -1,70 +1,105 @@
 /*
  * Project: RapiDHT
  * File: benchmarks/cufft_baseline.cu
- * Brief: The 2D and 3D Hartley transform via cuFFT, for comparison.
+ * Brief: The 2D and 3D Hartley transform via cuFFT, for comparison; from float
+ *        input, and (R-5) from uint8 / uint16 input.
  */
 
 #include <cuda_runtime.h>
 #include <cufft.h>
+#include <cufftXt.h>
 
+#include <cstdint>
 #include <stdexcept>
 #include <string>
 
 #include "cufft_baseline.h"
+#include "cufft_common.cuh"
+// The LTO-IR of the load callbacks (cufft_int_lto_callback.cu), as a byte
+// array: built by nvcc -dlto -fatbin and bin2c, see benchmarks/CMakeLists.txt.
+#include "cufft_int_lto_fatbin.h"
 
 namespace rapidht_bench {
 namespace {
 
-void Check(cudaError_t status, const char* what)
-{
-    if (status != cudaSuccess) {
-        throw std::runtime_error(std::string(what) + ": " + cudaGetErrorString(status));
-    }
-}
-
-void Check(cufftResult status, const char* what)
-{
-    if (status != CUFFT_SUCCESS) {
-        throw std::runtime_error(std::string(what) + ": cuFFT error " + std::to_string(status));
-    }
-}
-
 /*
- * Turns the half spectrum cuFFT produces into the full real Hartley transform.
- *
- * For real input, H(k) = Re(X(k)) - Im(X(k)), and cuFFT stores only
- * k1 <= W/2, leaving the rest to Hermitian symmetry X(-k) = conj X(k). A thread
- * owns one stored coefficient X(k1, y, z) and writes both of its outputs,
- *
- *     H(k1, y, z)     = Re X - Im X
- *     H(W-k1, -y, -z) = Re X + Im X        (0 < k1 < W/2),
- *
- * since X(W-k1, -y, -z) = conj X(k1, y, z). Columns k1 = 0 and k1 = W/2 are
- * their own mirrors in x and are stored in full, so they write one output.
- * so the spectrum is read once: two volumes of traffic. Looping over the
- * outputs instead reads every coefficient twice, three volumes, and was 10 %
- * slower in total at 128^3-512^3 (R-4 step 0.3, benchmarks/results/
- * 2026-11-13_*_r4_cufft_{rows,pairs}.json). The baseline is to be beaten at its
- * strongest, so this is the one kept.
+ * Integer to float, minus the offset: the first pass of variant (a). Four
+ * voxels a thread, read as one ushort4 / uchar4 and written as one float4, so
+ * that the pass runs at the bandwidth of the card -- it is the part of the
+ * baseline a load callback is meant to save, and it should not be slower than
+ * it has to be. W is a power of two of at least 4, so the count divides by 4.
  */
-__global__ void SpectrumToHartley(const cufftComplex* __restrict__ spectrum, float* __restrict__ out,
-    int W, int H, int D)
+template <typename TIn, typename TIn4>
+__global__ void IntToFloat(const TIn4* __restrict__ in, float4* __restrict__ out, size_t quads, float offset)
 {
-    const int half = W / 2 + 1;
-    const int x = blockIdx.x * blockDim.x + threadIdx.x;
-    const int y = blockIdx.y * blockDim.y + threadIdx.y;
-    const int z = blockIdx.z * blockDim.z + threadIdx.z;
-    if (x >= half || y >= H || z >= D) {
+    const size_t i = static_cast<size_t>(blockIdx.x) * blockDim.x + threadIdx.x;
+    if (i >= quads) {
         return;
     }
-    const cufftComplex c = spectrum[static_cast<size_t>(half) * (y + static_cast<size_t>(H) * z) + x];
-    out[static_cast<size_t>(W) * (y + static_cast<size_t>(H) * z) + x] = c.x - c.y;
-    if (x > 0 && 2 * x < W) {
-        const int ym = (y == 0) ? 0 : H - y;
-        const int zm = (z == 0) ? 0 : D - z;
-        out[static_cast<size_t>(W) * (ym + static_cast<size_t>(H) * zm) + (W - x)] = c.x + c.y;
-    }
+    const TIn4 v = in[i];
+    out[i] = make_float4(static_cast<float>(v.x) - offset, static_cast<float>(v.y) - offset,
+        static_cast<float>(v.z) - offset, static_cast<float>(v.w) - offset);
 }
+
+/// (a) Conversion kernel into the caller's float output, R2C from there.
+class CufftIntConvert final : public CufftIntBase {
+public:
+    CufftIntConvert(int width, int height, int depth, IntInput input, double offset):
+        CufftIntBase(width, height, depth, input, offset)
+    {
+        MakePlan();
+    }
+
+    void Forward(const void* deviceIn, float* deviceOut) override
+    {
+        const size_t quads = Count() / 4;
+        const unsigned block = 256;
+        const unsigned grid = static_cast<unsigned>((quads + block - 1) / block);
+        const float offset = static_cast<float>(_offset);
+        if (_input == IntInput::U8) {
+            IntToFloat<std::uint8_t><<<grid, block>>>(
+                static_cast<const uchar4*>(deviceIn), reinterpret_cast<float4*>(deviceOut), quads, offset);
+        } else {
+            IntToFloat<std::uint16_t><<<grid, block>>>(
+                static_cast<const ushort4*>(deviceIn), reinterpret_cast<float4*>(deviceOut), quads, offset);
+        }
+        Check(cudaGetLastError(), "IntToFloat launch");
+        // The output buffer holds the float input until R2C has read it, then
+        // the Hartley pass overwrites it with the result.
+        TransformAndConvert(deviceOut, deviceOut);
+    }
+};
+
+/// (c) LTO load callback: cuFFT links it into its own kernels when the plan is
+/// made, so it has to be attached before cufftMakePlan3d.
+class CufftIntLto final : public CufftIntBase {
+public:
+    CufftIntLto(int width, int height, int depth, IntInput input, double offset):
+        CufftIntBase(width, height, depth, input, offset)
+    {
+        const float hostOffset = static_cast<float>(offset);
+        Check(cudaMalloc(&_callerInfo, sizeof(float)), "cudaMalloc(callerInfo)");
+        Check(cudaMemcpy(_callerInfo, &hostOffset, sizeof(float), cudaMemcpyHostToDevice), "cudaMemcpy(callerInfo)");
+        void* info = _callerInfo;
+        const char* symbol = input == IntInput::U8 ? "rapidht_load_u8_lto" : "rapidht_load_u16_lto";
+        Check(cufftXtSetJITCallback(_plan, symbol, rapidht_lto_fatbin, sizeof(rapidht_lto_fatbin), CUFFT_CB_LD_REAL,
+                  &info),
+            "cufftXtSetJITCallback");
+        MakePlan();
+    }
+
+    ~CufftIntLto() override
+    {
+        if (_callerInfo != nullptr) {
+            cudaFree(_callerInfo);
+        }
+    }
+
+    void Forward(const void* deviceIn, float* deviceOut) override { TransformAndConvert(deviceIn, deviceOut); }
+
+private:
+    float* _callerInfo = nullptr;
+};
 
 } // namespace
 
@@ -119,12 +154,7 @@ void CufftHartley::Forward(float* deviceInOut)
 {
     Check(cufftExecR2C(_impl->plan, deviceInOut, _impl->spectrum), "cufftExecR2C");
 
-    const int half = _impl->width / 2 + 1;
-    dim3 block(32, 4, 2);
-    dim3 grid((half + block.x - 1) / block.x, (_impl->height + block.y - 1) / block.y,
-        (_impl->depth + block.z - 1) / block.z);
-    SpectrumToHartley<<<grid, block>>>(_impl->spectrum, deviceInOut, _impl->width, _impl->height, _impl->depth);
-    Check(cudaGetLastError(), "SpectrumToHartley launch");
+    LaunchSpectrumToHartley<false>(_impl->spectrum, deviceInOut, _impl->width, _impl->height, _impl->depth, 0.0);
     Check(cudaDeviceSynchronize(), "SpectrumToHartley");
 }
 
@@ -149,6 +179,22 @@ size_t CufftHartley::SpectrumBytes() const
 size_t CufftHartley::WorkspaceBytes() const
 {
     return _impl->workspaceBytes;
+}
+
+std::unique_ptr<CufftIntHartley> MakeCufftIntHartley(
+    int width, int height, int depth, IntInput input, IntLoad load, double offset)
+{
+    switch (load) {
+        case IntLoad::Convert:
+            return std::make_unique<CufftIntConvert>(width, height, depth, input, offset);
+        case IntLoad::LtoCallback:
+            return std::make_unique<CufftIntLto>(width, height, depth, input, offset);
+        case IntLoad::LegacyCallback:
+            // Not here: it needs the static cuFFT, which only targets linking
+            // rapidht_cufft_callback have (MakeCufftIntCallback).
+            break;
+    }
+    throw std::runtime_error("MakeCufftIntHartley: Convert or LtoCallback only");
 }
 
 } // namespace rapidht_bench
