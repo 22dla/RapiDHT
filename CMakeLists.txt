@@ -161,6 +161,34 @@ if(RAPIDHT_WITH_CUDA)
 
     enable_language(CUDA)
     find_package(CUDAToolkit REQUIRED)
+    # FindCUDAToolkit takes headers from nvcc's toolkit but looks the libraries
+    # up on the usual search path, so a distribution CUDA package left next to
+    # a newer NVIDIA toolkit (Ubuntu's nvidia-cuda-dev puts libcudart.so and
+    # libcufft.so into /usr/lib/<arch>) gets linked instead of the toolkit's
+    # own: the build passes, the tests pass, and every cuFFT timing is of the
+    # old library. Refuse such a mix. The runtime library's file name carries
+    # its full version on Linux (libcudart.so.13.2.51); elsewhere it does not,
+    # and the check is skipped.
+    if(TARGET CUDA::cudart AND CUDA_cudart_LIBRARY)
+        file(REAL_PATH "${CUDA_cudart_LIBRARY}" _rapidht_cudart_real)
+        get_filename_component(_rapidht_cudart_name "${_rapidht_cudart_real}" NAME)
+        # Two steps: ${CMAKE_MATCH_n} inside the same if() would be expanded
+        # before MATCHES sets it.
+        set(_rapidht_cudart_version "")
+        if(_rapidht_cudart_name MATCHES "\\.so\\.([0-9]+)\\.([0-9]+)")
+            set(_rapidht_cudart_version "${CMAKE_MATCH_1}.${CMAKE_MATCH_2}")
+        endif()
+        if(_rapidht_cudart_version AND NOT _rapidht_cudart_version STREQUAL
+               "${CUDAToolkit_VERSION_MAJOR}.${CUDAToolkit_VERSION_MINOR}")
+            message(FATAL_ERROR
+                "nvcc is CUDA ${CUDAToolkit_VERSION} (${CUDAToolkit_NVCC_EXECUTABLE}), "
+                "but the CUDA libraries found are version "
+                "${_rapidht_cudart_version}:\n  ${_rapidht_cudart_real}\n"
+                "Another CUDA installation is on the library search path. "
+                "Remove it (on Ubuntu: sudo apt purge nvidia-cuda-dev) or point "
+                "CUDAToolkit_ROOT at the toolkit to use, then configure with --fresh.")
+        endif()
+    endif()
     message(STATUS "RapiDHT: CUDA backend ON (toolkit ${CUDAToolkit_VERSION})")
     message(STATUS "RapiDHT: CUDA architectures = ${CMAKE_CUDA_ARCHITECTURES}")
     message(STATUS "RapiDHT: CUDA host compiler = ${CMAKE_CUDA_HOST_COMPILER}")

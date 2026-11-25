@@ -15,14 +15,14 @@
 | | 💻 Ноутбук | 🖥 Десктоп |
 |---|---|---|
 | Железо | i7-1360P, 16 ГБ, без дискретной GPU | i5-12400, 32 ГБ, RTX 3060 Ti 8 ГБ (sm_86) |
-| ОС | Windows 11, Visual Studio 2022 | Ubuntu; CUDA 12.4, системный GCC 15 (+ gcc-13) |
+| ОС | Windows 11, Visual Studio 2022 | Ubuntu; CUDA 13.2 (`/usr/local/cuda-13.2`, драйвер 595.99 — новее 13.2 не ставить), системный GCC 15 |
 | Пресет | `windows-cpu` | `cuda`, `bench`, `dev` |
 
 Пресеты в `CMakePresets.json` разделены условием по ОС: `windows-cpu` виден только на Windows, `cpu`/`cuda`/`bench`/`dev` — только на Linux.
 - `windows-cpu` — MSVC через Ninja: генератор Visual Studio не пишет `compile_commands.json`, без которого clangd не видит include-пути. Нужен `ninja` в PATH (`winget install Ninja-build.Ninja`); из терминала — только Developer PowerShell for VS 2022, VS Code поднимает окружение сам. VS Code копирует базу в корень (`"cmake.copyCompileCommands"` в `.vscode/settings.json`).
 - На Linux конфигурация сама кладёт в корень симлинк на `compile_commands.json` активной сборки.
 - Пресеты `cuda`, `bench`, `dev` собирают код устройства под установленную карту (`CMAKE_CUDA_ARCHITECTURES=native`, на десктопе — sm_86); без пресета по умолчанию `all-major`, в нём нет sm_86, и RTX 3060 Ti исполняет код sm_80 — на 128³ это на 19 % медленнее (R-4, шаг 2.0а). Цифры для сравнения снимаются только сборкой под `native`.
-- Компилятор для CUDA-сборки подбирается сам (`cmake/CudaHostCompiler.cmake`, подключён до `project()`): если nvcc не принимает системный `c++`, берётся самый новый установленный `g++-N`, который он принимает, и парный `gcc-N` — всё собирается одним GCC (смешение двух даёт ошибку линковки `__cxa_call_terminate` только в Release). На десктопе CUDA 12.4 не принимает GCC 15 → выбирается `g++-13`. Явно заданный компилятор (`-DCMAKE_CXX_COMPILER`, `CXX`, пресет, toolchain-файл) не трогается. `CMakeUserPresets.json` не нужен.
+- Компилятор для CUDA-сборки подбирается сам (`cmake/CudaHostCompiler.cmake`, подключён до `project()`): если nvcc не принимает системный `c++`, берётся самый новый установленный `g++-N`, который он принимает, и парный `gcc-N` — всё собирается одним GCC (смешение двух даёт ошибку линковки `__cxa_call_terminate` только в Release). На десктопе CUDA 13.2 принимает системный GCC 15 — подмены нет (на 12.4 выбирался `g++-13`). Если версия найденной `libcudart` не совпадает с nvcc (остатки пакета Ubuntu `nvidia-cuda-dev` в `/usr/lib`), конфигурация останавливается. Смена toolkit — `cmake --preset <имя> --fresh`. Явно заданный компилятор (`-DCMAKE_CXX_COMPILER`, `CXX`, пресет, toolchain-файл) не трогается. `CMakeUserPresets.json` не нужен.
 
 ## Сборка и тесты
 ```bash

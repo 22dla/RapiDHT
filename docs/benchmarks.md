@@ -356,6 +356,33 @@ and a few MiB more for cuFFT (`extraMiB`).
   folded into the x pass) and 20–38 % in 2D, where the true transform is the
   slower one.
 
+### CUDA 13.2 against 12.4 (R-5 step 0.0a, 2026-11-25)
+
+Every R-4 figure above was taken with Ubuntu's CUDA 12.4 (nvcc 12.4.131,
+cuFFT 11.2, host compiler g++-13). From R-5 on the desktop builds with NVIDIA's
+CUDA 13.2 (nvcc 13.2.51, cuFFT 12.2, host compiler the system GCC 15, which
+13.2 accepts). Same code, same `native` (sm_86) build, f32, resident, median of
+7; base `…_r4_s51_b2.json` (12.4), new `…_r4_cuda13_base.json` (13.2), verdict
+by `tools/r4_compare.py`:
+
+| | 128³ | 256³ | 512³ |
+| --- | ---: | ---: | ---: |
+| cuFFT C2C + Hartley conversion | 175.0 µs (+0.1 %) | 1.333 ms (+0.0 %) | 10.657 ms (−0.0 %) |
+| cuFFT R2C | 132.7 µs (+0.2 %) | 1.003 ms (−0.0 %) | 8.043 ms (−0.0 %) |
+| FactoredResident | 147.8 µs (+0.6 %) | 1.152 ms (−1.3 %) | 9.383 ms (−0.1 %) |
+| FactoredResidentSeparable | 147.3 µs (+0.5 %) | 1.170 ms (−1.7 %) | 9.247 ms (−0.1 %) |
+
+All twelve rows are within noise (3 % threshold): the toolkit moves neither
+cuFFT nor the factored kernels, and the ratios against cuFFT stay as they were
+(0.84–0.88 of cuFFT + conversion, 1.11–1.17 of bare R2C). The R-4 figures may
+still be read next to R-5 ones, but R-5 compares only runs taken on 13.2.
+
+The first 13.2 build linked cudart, cuBLAS and cuFFT 12.4: Ubuntu's
+`nvidia-cuda-dev` had stayed behind with `libcudart.so` and `libcufft.so` in
+`/usr/lib/x86_64-linux-gnu`, which FindCUDAToolkit preferred, while the headers
+came from 13.2. The tests passed. `CMakeLists.txt` now refuses to configure when
+the runtime library's version differs from nvcc's.
+
 ### How it got there
 
 `Modes::GPUFactored` replaces each dense `N x N` multiply by two small ones,
