@@ -597,8 +597,13 @@ TEST(Correctness, RejectsNonPowerOfTwoExtentIn2DAnd3DWithoutTouchingData)
         size_t width, height, depth;
     };
     const Case cases[] = {
-        { 12, 8, 0 }, { 8, 12, 0 }, // 2D: each axis
-        { 12, 8, 8 }, { 8, 12, 8 }, { 8, 8, 12 }, // 3D: each axis
+        // 2D: each axis
+        { 12, 8, 0 },
+        { 8, 12, 0 },
+        // 3D: each axis
+        { 12, 8, 8 },
+        { 8, 12, 8 },
+        { 8, 8, 12 },
     };
     for (const auto& c : cases) {
         SCOPED_TRACE(std::to_string(c.width) + "x" + std::to_string(c.height) + "x" + std::to_string(c.depth));

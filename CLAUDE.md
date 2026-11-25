@@ -34,7 +34,7 @@ cmake --preset cpu && cmake --build --preset cpu -j && ctest --preset cpu
 # ноутбук (Windows)
 cmake --preset windows-cpu; cmake --build --preset windows-cpu; ctest --preset windows-cpu
 ```
-Ожидается 109 тестов; без GPU 21 из них пропускается (`SKIP_IF_NO_GPU()`), на десктопе (CUDA) пропускаются только 2 — `DeviceVolumeIsRejectedWithoutCuda` и `GpuModeIsRejectedWhenNotCompiledIn`, они для сборки без CUDA.
+Ожидается 112 тестов; без GPU 21 из них пропускается (`SKIP_IF_NO_GPU()`), на десктопе (CUDA) пропускаются только 2 — `DeviceVolumeIsRejectedWithoutCuda` и `GpuModeIsRejectedWhenNotCompiledIn`, они для сборки без CUDA.
 
 Python-пакет (`pyproject.toml`, scikit-build-core + nanobind; собирается в `build-python/`):
 ```bash
@@ -43,7 +43,7 @@ pip install ".[test]" && pytest          # 23 теста; в окружении 
 После правок C++ пакет пересобрать той же командой.
 
 ## Правила кода
-- Форматирование — `clang-format-18` по `.clang-format`; CI падает на любом расхождении. Перед коммитом: `clang-format-18 -i` на изменённых `.h/.cpp/.cu` (кроме `3dparty/`).
+- Форматирование — clang-format 21.1.8 по `.clang-format` (в CI — колесо с PyPI той же версии, на десктопе — `clang-format-21`); CI падает на любом расхождении. Перед коммитом: `clang-format-21 -i` на изменённых `.h/.cpp/.cu/.cuh` (кроме `3dparty/`). На Windows — `pip install clang-format==21.1.8`: clang-format из Visual Studio другой версии.
 - Предупреждения — ошибки в пресете `dev` (`RAPIDHT_WARNINGS_AS_ERRORS=ON`); новый код должен собираться без предупреждений на GCC и MSVC.
 - Публичный API — Doxygen-комментарии в `include/rapidht/`; публичные заголовки не должны упоминать CUDA-типы (состояние устройства — за `Impl`).
 - Тесты проверяют математику, а не только обратимость: сверка с прямым вычислением определения O(N²) (`tests/test_support.h`) и аналитическими парами. Любой новый алгоритм — с тестом против эталона, в float и double, на неквадратных размерах.

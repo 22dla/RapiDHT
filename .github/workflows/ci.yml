@@ -20,25 +20,26 @@ jobs:
       - name: Check out the repository
         uses: actions/checkout@v4
 
-      # Pinned to a major version on purpose. clang-format's output shifts
+      # Pinned to an exact release on purpose. clang-format's output shifts
       # between releases, so an unpinned "latest" would eventually reformat the
       # tree out from under everyone and fail on code nobody touched. Bump this
-      # deliberately, in a commit that also reformats.
+      # deliberately, in a commit that also reformats. The PyPI wheel rather
+      # than apt: Ubuntu 24.04 does not package clang-format 21, and the wheel
+      # pins the patch release too. Keep it equal to the version on the
+      # desktop (clang-format-21, Ubuntu 26.04).
       - name: Install clang-format
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends clang-format-18
+        run: pipx install clang-format==21.1.8
 
       - name: Report the version
-        run: clang-format-18 --version
+        run: clang-format --version
 
       # Everything we own, which is everything outside 3dparty. --dry-run with
       # -Werror reports the diff and exits non-zero rather than editing files.
       - name: Check formatting
         run: |
-          git ls-files -z '*.h' '*.cpp' '*.cu' \
+          git ls-files -z '*.h' '*.cpp' '*.cu' '*.cuh' \
             | grep -zv '^3dparty/' \
-            | xargs -0 clang-format-18 --dry-run -Werror
+            | xargs -0 clang-format --dry-run -Werror
 
   build-and-test:
     name: ${{ matrix.name }}

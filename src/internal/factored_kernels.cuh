@@ -894,6 +894,16 @@ __device__ __forceinline__ void FactoredSpecialize(FactoredAxisTables<T>& t, int
     }
 }
 
+/// How PipelinedAxisBody fetches the next batch: in four parts of kPart slots
+/// (kSplit) or at once. A type rather than constexpr locals because MSVC
+/// does not treat an enclosing function's constexpr locals as constants
+/// inside a generic lambda (C2131), and the fetch hook is one.
+template <int kItems, int kMaxQuads>
+struct PipelineFetchParts {
+    static constexpr bool kSplit = kItems != 0 && kMaxQuads >= 16;
+    static constexpr int kPart = kSplit ? kMaxQuads / 4 : kMaxQuads;
+};
+
 /*
  * Requires n1, n2 and lanes to be multiples of 4 and blockDim.x * kMaxQuads
  * >= n * lanes / 4. Shared memory exactly as FactoredAxisKernelFast.
@@ -961,9 +971,9 @@ __device__ __forceinline__ void PipelinedAxisBody(T* data, FactoredAxisTables<T>
         // the steps and halfway through step 2 (FactoredComputeTile's hook).
         const int next = batch + static_cast<int>(gridDim.x);
         const bool fetch = next < batches && ablate != kAblateCompute;
-        constexpr bool kSplit = kItems != 0 && kMaxQuads >= 16;
-        constexpr int kPart = kSplit ? kMaxQuads / 4 : kMaxQuads;
-        const bool split = kSplit && ablate != kAblateIo; // without the steps there are no hooks
+        using Parts = PipelineFetchParts<kItems, kMaxQuads>;
+        constexpr int kPart = Parts::kPart;
+        const bool split = Parts::kSplit && ablate != kAblateIo; // without the steps there are no hooks
         if (fetch) {
             if (split) {
                 PipelineLoad<T, kMaxQuads, 0, kPart>(batchBase(next), reg, quads, quadsPerRow, axisStride, laneStride, vec);
@@ -979,10 +989,10 @@ __device__ __forceinline__ void PipelinedAxisBody(T* data, FactoredAxisTables<T>
             } else {
                 FactoredComputeTile<T, kItems, kFold>(
                     tile, c1s, c2s, chT, t, lanes, lanesP, n1P, n2P, quadsPerRow, workStride, [&](auto phase) {
-                        if constexpr (kSplit) {
+                        if constexpr (Parts::kSplit) {
                             constexpr int kQuarter = 1 + FactoredPhaseIndex(decltype(phase) {});
                             if (fetch && split) {
-                                PipelineLoad<T, kMaxQuads, kQuarter * kPart, (kQuarter + 1) * kPart>(
+                                PipelineLoad<T, kMaxQuads, kQuarter * Parts::kPart, (kQuarter + 1) * Parts::kPart>(
                                     batchBase(next), reg, quads, quadsPerRow, axisStride, laneStride, vec);
                             }
                         }
