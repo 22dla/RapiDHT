@@ -19,6 +19,7 @@
 #   <date>_<host>_r5_<tag>_trace.txt       time per kernel at 128^3-512^3, f32 (as in R-4
 #                                          until stage 2 adds an integer trace)
 #   <date>_<host>_r5_<tag>_accuracy.txt    with R5_ACC=1: accuracy_integer's report
+#   <date>_<host>_r5_<tag>_accuracy_table.txt  ... and its verdict (tools/r5_accuracy_table.py)
 #   <date>_<host>_r5_<tag>.meta.txt        what exactly was measured, with the hashes
 #                                          of the cuFFT baselines and of the data files
 #
@@ -190,7 +191,8 @@ env "$@" "$bench" \
 # The inputs (step 0.4): white noise; the synthetic cylinder, u16 and u8; the
 # centre of each column (inside the field of view) as a 128^3 box and whole;
 # a 128^3 box of each full slice on the diagonal, where the edge of the field
-# of view crosses it (52 % zeros outside the circle -- the hard case). Real volumes are uint16 only.
+# of view crosses it (52 % zeros outside the circle -- the hard case), and the
+# full slices whole (1024x1024x512, about two minutes each). Real volumes are uint16 only.
 if [[ ${R5_ACC:-0} == 1 ]]; then
     echo "== accuracy (R5_ACC=1)"
     {
@@ -203,8 +205,11 @@ if [[ ${R5_ACC:-0} == 1 ]]; then
             env "$@" "$accuracy" --raw "$korneev/${column}_center512.raw" 512x512x512 u16 --crop 192 192 192 128 128 128
             env "$@" "$accuracy" --raw "$korneev/${column}_center512.raw" 512x512x512 u16
             env "$@" "$accuracy" --raw "$korneev/${column}_full1024x512.raw" 1024x1024x512 u16 --crop 86 86 192 128 128 128
+            env "$@" "$accuracy" --raw "$korneev/${column}_full1024x512.raw" 1024x1024x512 u16
         done
     } 2>&1 | tee "${stem}_accuracy.txt"
+    # The default offset policy and criteria C3 / C4 by the rules of the plan.
+    python3 tools/r5_accuracy_table.py "${stem}_accuracy.txt" | tee "${stem}_accuracy_table.txt"
 fi
 
 echo

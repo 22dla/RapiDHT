@@ -653,6 +653,44 @@ Largest error over the non-zero frequencies, in LSB, rounded mean subtracted;
   1.6 LSB (`s04` run by hand, not in the table): the large zero coefficient
   leaks into others in the factored passes. Not looked into.
 
+### Offset policies and the round trip (R-5 step 0.5, 2026-11-25)
+
+Six offsets subtracted on reading, cheapest first: none, half the range, a
+known level (here the histogram mode, standing for air or the matrix), the
+mean of every 512th and of every 64th line along x, the exact rounded mean.
+`benchmarks/results/2026-11-25_evgeny_r5_s05_accuracy.txt`, verdict by
+`tools/r5_accuracy_table.py` (`…_s05_accuracy_table.txt`); "floors" is the
+largest error over the float floor of the same input. Factored path with the
+conversion kernel, largest error in LSB (cuFFT in brackets):
+
+| input, 512³ unless stated | none | half range | known level | every 512th line | every 64th line | exact mean |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| C6197A centre | 11.1 (10.9) | 3.68 (3.27) | 1.58 (0.91) | 0.71 (0.82) | **0.53** (0.82) | 0.84 (0.82) |
+| C6203A centre | 10.6 (8.25) | 4.71 (1.43) | 3.88 (1.95) | 1.05 (1.28) | **0.94** (1.28) | 0.84 (1.28) |
+| C6197A full slice, 1024 × 1024 × 512 | 17.6 (16.4) | 11.9 (16.4) | 15.7 (16.4) | 8.0 (16.4) | **7.7** (16.4) | 7.7 (16.4) |
+| C6203A full slice, 1024 × 1024 × 512 | 14.4 (19.6) | 32.2 (19.6) | 14.7 (19.6) | 12.3 (19.6) | **30.0** (19.6) | 30.0 (19.6) |
+| synthetic cylinder, uint16 | 11.1 (20.1) | 6.66 (8.05) | 7.24 (6.04) | 6.89 (6.04) | **6.66** (6.04) | 6.66 (6.04) |
+| synthetic cylinder, uint8 | 0.048 (0.024) | 0.044 (0.024) | 0.031 (0.024) | 0.031 (0.024) | **0.020** (0.024) | 0.020 (0.024) |
+
+- **Default policy: the mean of every 64th line** -- the cheapest that keeps
+  the factored path within RMS 0.01 LSB and 10 float floors on every input of
+  512³ and more (1/64 of a reduction pass). The mean of every 512th line
+  fails one input (synthetic uint8, 10.4 floors); none, half the range and the
+  histogram mode fail several, the narrow CT-like band of white noise worst
+  (half the range: 5 000 floors).
+- **Round trip: every voxel of every input comes back**, under every policy,
+  for both libraries: the float spectrum transformed back and rounded never
+  misses (largest |x' - x| 0.082, against 0.5). A first look at C4 on the
+  float path; stage 4 checks it on integer output.
+- **C3 holds on all inputs but one**: on the C6203A full slice the factored
+  path's largest error under the mean is 30 LSB against cuFFT's 19.6 (1.53,
+  limit 1.5), while with no offset or the sampled mean of every 512th line it
+  is 12--14 (below cuFFT). The mean does not help there -- the hypothesis is
+  the leak of a large zero coefficient seen on the constant corner (step 0.4),
+  not measured. C3 is accepted on the R-5 kernel (step 3.2), not on this path.
+- RMS error under the default policy: 0.001--0.003 LSB on the real volumes,
+  100--300 times below the noise of rounding the input.
+
 ## Integer volumes: the cuFFT baseline (R-5 step 0.2, 2026-11-25)
 
 cuFFT has no integer input type. Three ways to give it a uint8 / uint16 volume

@@ -39,11 +39,17 @@
  *                tools/r5_tiff_to_raw.py writes them; --crop takes a box of it
  *                (the box, not the file, must be a power of two per axis).
  *
- * Each is transformed raw, and with an integer offset subtracted first: half
- * the range (no extra pass needed), and the rounded mean (one reduction). The
- * subtraction is exact, and it changes only the zero-frequency coefficient, by
- * offset * N, which is added back in double before comparing. Errors are taken
- * over the non-zero frequencies; the zero frequency is reported on its own.
+ * Each is transformed raw, and with an integer offset subtracted first, by
+ * the policies of R-5 step 0.5, cheapest first: half the range (no pass over
+ * the data), a known level (here the histogram mode, standing for air or the
+ * matrix), the mean of every 512th and every 64th line, the rounded mean (one
+ * full reduction). The subtraction is exact, and it changes only the
+ * zero-frequency coefficient, by offset * N, which is added back in double
+ * before comparing. Errors are taken over the non-zero frequencies; the zero
+ * frequency is reported on its own. Under each row: the largest error by band
+ * of frequency with the worst coefficient, and the round trip -- the float
+ * spectrum transformed back, rounded, compared voxel by voxel with the input.
+ * tools/r5_accuracy_table.py turns the report into a table and a verdict.
  *
  * The reference is the CPU backend in double: for these inputs every partial
  * sum is far below 2^53, so it is exact to well below the floors above.
@@ -327,6 +333,109 @@ std::string Extent(const Volume& v)
     return std::to_string(v.width) + "x" + std::to_string(v.height) + "x" + std::to_string(v.depth);
 }
 
+/*
+ * Where the worst coefficients are (R-5 step 0.5). Frequencies are folded,
+ * k' = min(k, n - k) per axis, and the radius is rho = |(kx'/W, ky'/H, kz'/D)|,
+ * from 0 (the zero frequency) to sqrt(3)/2. The largest error is reported per
+ * band of rho, and the worst coefficient with its frequency and the size of its
+ * exact value -- on a tomogram the worst errors sit on the few large
+ * low-frequency coefficients, whose float rounding alone exceeds the rest.
+ */
+void ByFrequency(const std::vector<float>& actual, const std::vector<double>& reference, const Volume& v)
+{
+    const double bands[] = { 1.0 / 64.0, 1.0 / 16.0, 1.0 / 4.0 };
+    double worstInBand[4] = { 0.0, 0.0, 0.0, 0.0 };
+    double worst = -1.0;
+    size_t worstAt = 0;
+    const size_t W = v.width, H = v.height, D = v.depth;
+    for (size_t z = 0; z < D; ++z) {
+        const double fz = static_cast<double>(std::min(z, D - z)) / static_cast<double>(D);
+        for (size_t y = 0; y < H; ++y) {
+            const double fy = static_cast<double>(std::min(y, H - y)) / static_cast<double>(H);
+            const size_t row = W * (y + H * z);
+            for (size_t x = 0; x < W; ++x) {
+                const size_t i = row + x;
+                if (i == 0) {
+                    continue;
+                }
+                const double error = std::fabs(static_cast<double>(actual[i]) - reference[i]);
+                const double fx = static_cast<double>(std::min(x, W - x)) / static_cast<double>(W);
+                const double rho = std::sqrt(fx * fx + fy * fy + fz * fz);
+                int band = 3;
+                while (band > 0 && rho < bands[band - 1]) {
+                    --band;
+                }
+                worstInBand[band] = std::max(worstInBand[band], error);
+                if (error > worst) {
+                    worst = error;
+                    worstAt = i;
+                }
+            }
+        }
+    }
+    const double unit = std::sqrt(static_cast<double>(v.Count()));
+    const size_t kx = worstAt % W, ky = (worstAt / W) % H, kz = worstAt / (W * H);
+    std::printf("      largest by |k|/k_max: <1/64 %8.2e  <1/16 %8.2e  <1/4 %8.2e  >=1/4 %8.2e;"
+                " worst at k=(%zu,%zu,%zu), |H|/sqrt(N) %.3g\n",
+        worstInBand[0] / unit, worstInBand[1] / unit, worstInBand[2] / unit, worstInBand[3] / unit,
+        std::min(kx, W - kx), std::min(ky, H - ky), std::min(kz, D - kz), std::fabs(reference[worstAt]) / unit);
+}
+
+/*
+ * The round trip on the float path (a first look at criterion C4 of R-5): the
+ * float spectrum through the same transform again -- the Hartley transform is
+ * its own inverse up to 1/N -- then / N and + offset in double, rounded to the
+ * nearest integer. Counts the voxels that do not come back exactly; the
+ * largest |x' - x| before rounding says how far from 0.5 that is.
+ */
+void RoundTrip(const std::vector<float>& spectrum, double offset, const Volume& v, bool cufft)
+{
+    const std::vector<float> back = OnDevice(spectrum, v, cufft);
+    const double scale = 1.0 / static_cast<double>(v.Count());
+    size_t mismatched = 0;
+    double largest = 0.0;
+    for (size_t i = 0; i < back.size(); ++i) {
+        const double x = static_cast<double>(back[i]) * scale + offset;
+        largest = std::max(largest, std::fabs(x - v.data[i]));
+        if (std::round(x) != v.data[i]) {
+            ++mismatched;
+        }
+    }
+    std::printf("      round trip: %zu of %zu voxels not restored (%.3g %%), largest |x' - x| %.3e\n", mismatched,
+        back.size(), 100.0 * static_cast<double>(mismatched) / static_cast<double>(back.size()), largest);
+}
+
+/// The mean over every `step`-th line along x (lines y + H*z = 0, step, ...),
+/// rounded: the sampled-mean offset policies of step 0.5.
+double SampledMean(const Volume& v, size_t step)
+{
+    double sum = 0.0;
+    size_t count = 0;
+    for (size_t line = 0; line < v.height * v.depth; line += step) {
+        const double* x = v.data.data() + v.width * line;
+        for (size_t i = 0; i < v.width; ++i) {
+            sum += x[i];
+        }
+        count += v.width;
+    }
+    return std::round(sum / static_cast<double>(count));
+}
+
+/// A level the user may know without a pass over the data, such as air or the
+/// matrix: here the mode of the histogram, in bins of 64 for uint16 (1 for
+/// uint8), at the centre of its bin.
+double HistogramMode(const Volume& v)
+{
+    const bool u8 = v.halfRange < 256.0;
+    const size_t bin = u8 ? 1 : 64;
+    std::vector<size_t> counts((u8 ? 256 : 65536) / bin, 0);
+    for (double x : v.data) {
+        ++counts[static_cast<size_t>(x) / bin];
+    }
+    const size_t mode = static_cast<size_t>(std::max_element(counts.begin(), counts.end()) - counts.begin());
+    return static_cast<double>(mode * bin + bin / 2);
+}
+
 void Run(const Volume& v)
 {
     const size_t count = v.Count();
@@ -347,19 +456,38 @@ void Run(const Volume& v)
         1.0 / std::sqrt(12.0));
     Row("floor: exact spectrum stored as float", OutputFloor(reference));
 
-    const double offsets[] = { 0.0, v.halfRange, std::round(mean) };
-    const char* offsetNames[] = { "raw", "minus half range", "minus rounded mean" };
-    for (int o = 0; o < 3; ++o) {
-        if (o == 2 && offsets[2] == offsets[1]) {
-            continue;
-        }
+    // The offset policies of step 0.5, cheapest first (docs/R5_PLAN.md, rule
+    // for the default policy). Every one is printed, equal values included,
+    // so that tools/r5_accuracy_table.py finds each policy on every input.
+    struct Policy {
+        const char* name;
+        double offset;
+    };
+    const Policy policies[] = {
+        { "raw", 0.0 },
+        { "minus half range", v.halfRange },
+        { "minus known level", HistogramMode(v) },
+        { "minus mean of every 512th line", SampledMean(v, 512) },
+        { "minus mean of every 64th line", SampledMean(v, 64) },
+        { "minus rounded mean", std::round(mean) },
+    };
+    std::printf("  offsets:");
+    for (const Policy& p : policies) {
+        std::printf(" %s = %.0f;", p.name, p.offset);
+    }
+    std::printf("\n");
+
+    for (const Policy& p : policies) {
         std::vector<float> single(count);
         for (size_t i = 0; i < count; ++i) {
-            single[i] = static_cast<float>(v.data[i] - offsets[o]); // exact: integers below 2^24
+            single[i] = static_cast<float>(v.data[i] - p.offset); // exact: integers below 2^24
         }
         for (const bool cufft : { true, false }) {
-            const std::string label = std::string(cufft ? "cuFFT + conversion, " : "GPUFactored, ") + offsetNames[o];
-            Row(label.c_str(), Measure(OnDevice(single, v, cufft), offsets[o], reference));
+            const std::string label = std::string(cufft ? "cuFFT + conversion, " : "GPUFactored, ") + p.name;
+            const std::vector<float> spectrum = OnDevice(single, v, cufft);
+            Row(label.c_str(), Measure(spectrum, p.offset, reference));
+            ByFrequency(spectrum, reference, v);
+            RoundTrip(spectrum, p.offset, v, cufft);
         }
     }
     std::fflush(stdout);
