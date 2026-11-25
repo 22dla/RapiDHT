@@ -47,6 +47,12 @@ struct float4 {
 struct double2 {
     double x, y;
 };
+struct uchar4 {
+    unsigned char x, y, z, w;
+};
+struct ushort4 {
+    unsigned short x, y, z, w;
+};
 inline float4 make_float4(float x, float y, float z, float w)
 {
     return { x, y, z, w };
@@ -238,6 +244,64 @@ std::vector<double> RunTransform(
     return std::vector<double>(v.begin(), v.end());
 }
 
+/*
+ * R-5 step 2.2: the first pass reading integers. z (the first pass of a 3D
+ * transform on the device) through FactoredAxisKernelInPlaceFrom or
+ * ...PipelinedFrom from `in` into `out`, then y and x in place and the
+ * Bracewell pass, as RunTransform. Returns the result as double.
+ */
+template <typename T, typename TIn>
+std::vector<double> RunTransformFromIntegers(
+    const std::vector<TIn>& in, T offset, size_t W, size_t H, size_t D, Kernel kernel, size_t lanes)
+{
+    std::vector<T> v(in.size());
+    const auto tx = MakeAxisTables<T>(W);
+    const auto ty = MakeAxisTables<T>(H);
+    const auto tz = MakeAxisTables<T>(D);
+
+    // z from the integers, every block in turn, as RunAxis does.
+    size_t zLanes = lanes;
+    while (zLanes > W) {
+        zLanes /= 2;
+    }
+    const size_t blocksPerOther = W / zLanes;
+    const size_t batches = blocksPerOther * H;
+    const size_t grid = batches < kHostGrid ? batches : kHostGrid;
+    blockDim = { 1, 1, 1 };
+    threadIdx = { 0, 0, 0 };
+    gridDim = { static_cast<unsigned>(grid), 1, 1 };
+    const bool vec = W % 4 == 0;
+    const int ws = static_cast<int>(FactoredWorkStride<T>(static_cast<size_t>(tz.view.n2), zLanes));
+    for (size_t b = 0; b < grid; ++b) {
+        blockIdx = { static_cast<unsigned>(b), 0, 0 };
+        const int l = static_cast<int>(zLanes), po = static_cast<int>(blocksPerOther), bt = static_cast<int>(batches);
+        if (kernel == Kernel::InPlace) {
+            FactoredAxisKernelInPlaceFrom<T, TIn, kHostMaxQuads, kHostItems, 1, false>(
+                in.data(), v.data(), offset, tz.view, W * H, 1, l, po, W, bt, ws, vec);
+        } else if (kernel == Kernel::InPlaceFold) {
+            FactoredAxisKernelInPlaceFrom<T, TIn, kHostMaxQuads, kHostItems, 1, true>(
+                in.data(), v.data(), offset, tz.view, W * H, 1, l, po, W, bt, ws, vec);
+        } else {
+            FactoredAxisKernelPipelinedFrom<T, TIn, kHostMaxQuads, false>(
+                in.data(), v.data(), offset, tz.view, W * H, 1, l, po, W, bt, ws, vec);
+        }
+    }
+    RunAxis(v.data(), ty.view, W, 1, W, W * H, D, kernel, lanes);
+    RunAxis(v.data(), tx.view, 1, W, H, W * H, D, kernel, lanes);
+
+    blockDim = { 1, 1, 1 };
+    threadIdx = { 0, 0, 0 };
+    for (size_t z = 0; z <= D / 2; ++z) {
+        for (size_t x = 0; x <= H / 2; ++x) {
+            for (size_t y = 0; y <= W / 2; ++y) {
+                blockIdx = { static_cast<unsigned>(y), static_cast<unsigned>(x), static_cast<unsigned>(z) };
+                BracewellInPlace3DKernel<T>(v.data(), static_cast<int>(W), static_cast<int>(H), static_cast<int>(D));
+            }
+        }
+    }
+    return std::vector<double>(v.begin(), v.end());
+}
+
 struct Shape {
     size_t width, height, depth;
 };
@@ -286,6 +350,70 @@ const Shape kFastShapes[] = {
 };
 
 } // namespace
+
+/// Integers over the full range of TIn, from a fixed formula.
+template <typename TIn>
+std::vector<TIn> MakeIntegers(size_t count)
+{
+    std::vector<TIn> v(count);
+    for (size_t i = 0; i < count; ++i) {
+        v[i] = static_cast<TIn>(static_cast<uint32_t>((i + 1) * 2654435761u) >> (32 - 8 * sizeof(TIn)));
+    }
+    return v;
+}
+
+// Unequal axes, several blocks along the lane axis, 4 to 16 lines.
+const Shape kIntegerShapes[] = { { 16, 16, 16 }, { 32, 16, 16 }, { 16, 32, 32 } };
+
+template <typename T, typename TIn>
+void ExpectIntegerFirstPassMatchesDefinition(double tolerance)
+{
+    const double offsets[] = { 0.0, sizeof(TIn) == 1 ? 128.0 : 32768.0, sizeof(TIn) == 1 ? 77.0 : 12345.0 };
+    for (const Shape& s : kIntegerShapes) {
+        const Dims dims = Dims::Of(s.width, s.height, s.depth);
+        const auto in = MakeIntegers<TIn>(dims.Total());
+        // O(N^2) once a shape: an offset c changes only H(0), by -c * N.
+        const auto uncentred = ReferenceDht(std::vector<double>(in.begin(), in.end()), dims);
+        for (const double offset : offsets) {
+            auto expected = uncentred;
+            expected[0] -= offset * static_cast<double>(in.size());
+            // The float path on the same values converted beforehand: rule 9
+            // of docs/R5_PLAN.md wants the integer pass to match it bit for bit.
+            std::vector<T> converted(in.size());
+            for (size_t i = 0; i < in.size(); ++i) {
+                converted[i] = static_cast<T>(in[i]) - static_cast<T>(offset);
+            }
+            for (const Kernel kernel : { Kernel::InPlace, Kernel::InPlaceFold, Kernel::Pipelined }) {
+                for (const size_t lanes : { size_t { 4 }, size_t { 16 } }) {
+                    SCOPED_TRACE(Describe(s) + ", offset " + std::to_string(offset) + ", variant "
+                                 + std::to_string(static_cast<int>(kernel)) + ", " + std::to_string(lanes) + " lines");
+                    const auto got = RunTransformFromIntegers<T, TIn>(
+                        in, static_cast<T>(offset), s.width, s.height, s.depth, kernel, lanes);
+                    ExpectClose(got, expected, tolerance);
+                    const std::vector<double> input(converted.begin(), converted.end());
+                    // RunTransform runs x, y, z; the order of the separable
+                    // passes changes the rounding, so compare against the
+                    // same order: z first from the converted floats.
+                    const auto viaFloat = RunTransformFromIntegers<T, T>(
+                        converted, T(0), s.width, s.height, s.depth, kernel, lanes);
+                    ASSERT_EQ(got, viaFloat);
+                }
+            }
+        }
+    }
+}
+
+TEST(FactoredKernels, IntegerFirstPassMatchesDefinition_Float)
+{
+    ExpectIntegerFirstPassMatchesDefinition<float, uint8_t>(2e-5);
+    ExpectIntegerFirstPassMatchesDefinition<float, uint16_t>(2e-5);
+}
+
+TEST(FactoredKernels, IntegerFirstPassMatchesDefinition_Double)
+{
+    ExpectIntegerFirstPassMatchesDefinition<double, uint8_t>(1e-11);
+    ExpectIntegerFirstPassMatchesDefinition<double, uint16_t>(1e-11);
+}
 
 TEST(FactoredKernels, GenericMatchesDefinition_Double)
 {

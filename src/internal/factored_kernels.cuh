@@ -20,6 +20,7 @@
 #include "internal/kernels.h"
 
 #include <cstddef>
+#include <type_traits>
 
 // `RAPIDHT_UNROLL` for nvcc; nothing for the host compiler of the tests, which
 // would warn about an unknown pragma.
@@ -229,6 +230,28 @@ __device__ __forceinline__ void Load4(const double* p, double (&out)[4])
     out[1] = a.y;
     out[2] = b.x;
     out[3] = b.y;
+}
+
+/// R-5: four consecutive integers as one vector load (uchar4 / ushort4; p is
+/// 4- / 8-byte aligned, which the quads of a batch are), converted to T.
+template <typename T>
+__device__ __forceinline__ void Load4(const unsigned char* p, T (&out)[4])
+{
+    const uchar4 q = *reinterpret_cast<const uchar4*>(p);
+    out[0] = static_cast<T>(q.x);
+    out[1] = static_cast<T>(q.y);
+    out[2] = static_cast<T>(q.z);
+    out[3] = static_cast<T>(q.w);
+}
+
+template <typename T>
+__device__ __forceinline__ void Load4(const unsigned short* p, T (&out)[4])
+{
+    const ushort4 q = *reinterpret_cast<const ushort4*>(p);
+    out[0] = static_cast<T>(q.x);
+    out[1] = static_cast<T>(q.y);
+    out[2] = static_cast<T>(q.z);
+    out[3] = static_cast<T>(q.w);
 }
 
 __device__ __forceinline__ void Store4(float* p, const float (&in)[4])
@@ -443,6 +466,31 @@ __device__ __forceinline__ void LoadQuad(const T* p, size_t s, bool vec, T (&out
     }
 }
 
+/// R-5: the same from integers, each converted to T and `offset` subtracted
+/// in registers -- exact for integers below 2^24 and an integer offset, so the
+/// values are those of a float input converted beforehand, bit for bit.
+template <typename TIn, typename T>
+__device__ __forceinline__ void LoadQuadFrom(const TIn* p, size_t s, bool vec, T offset, T (&out)[4])
+{
+    if constexpr (std::is_same<TIn, T>::value) {
+        (void)offset; // the float path: no offset, the code of LoadQuad
+        LoadQuad(p, s, vec, out);
+    } else {
+        if (vec) {
+            Load4(p, out);
+        } else {
+            RAPIDHT_UNROLL
+            for (int j = 0; j < 4; ++j) {
+                out[j] = static_cast<T>(p[static_cast<size_t>(j) * s]);
+            }
+        }
+        RAPIDHT_UNROLL
+        for (int j = 0; j < 4; ++j) {
+            out[j] -= offset;
+        }
+    }
+}
+
 template <typename T>
 __device__ __forceinline__ void StoreQuad(T* p, size_t s, bool vec, const T (&in)[4])
 {
@@ -459,9 +507,9 @@ __device__ __forceinline__ void StoreQuad(T* p, size_t s, bool vec, const T (&in
 /// Issues this thread's global loads of a batch: quad q = threadIdx.x +
 /// i * blockDim.x is position q / (lanes/4), lines 4 * (q % (lanes/4)) + 0..3.
 /// Only the slots i in [kFrom, kTo), so that a batch can be fetched in parts.
-template <typename T, int kMaxQuads, int kFrom = 0, int kTo = kMaxQuads>
-__device__ __forceinline__ void PipelineLoad(
-    const T* base, T (&reg)[kMaxQuads][4], int quads, Pow2 quadsPerRow, size_t axisStride, size_t laneStride, bool vec)
+template <typename T, int kMaxQuads, int kFrom = 0, int kTo = kMaxQuads, typename TIn = T>
+__device__ __forceinline__ void PipelineLoad(const TIn* base, T (&reg)[kMaxQuads][4], int quads, Pow2 quadsPerRow,
+    size_t axisStride, size_t laneStride, bool vec, T offset)
 {
     RAPIDHT_UNROLL
     for (int i = kFrom; i < kTo; ++i) {
@@ -469,7 +517,7 @@ __device__ __forceinline__ void PipelineLoad(
         if (q < quads) {
             const size_t row = static_cast<size_t>(q >> quadsPerRow.shift);
             const size_t line = static_cast<size_t>(q & quadsPerRow.mask) * 4;
-            LoadQuad(base + row * axisStride + line * laneStride, laneStride, vec, reg[i]);
+            LoadQuadFrom(base + row * axisStride + line * laneStride, laneStride, vec, offset, reg[i]);
         }
     }
 }
@@ -893,9 +941,10 @@ struct PipelineFetchParts {
  * Requires n1, n2 and lanes to be multiples of 4 and blockDim.x * kMaxQuads
  * >= n * lanes / 4. Shared memory exactly as FactoredAxisKernelFast.
  */
-template <typename T, int kMaxQuads, int kItems, bool kFold, int kN, int kLanes>
-__device__ __forceinline__ void PipelinedAxisBody(T* data, FactoredAxisTables<T> t, size_t axisStride, size_t laneStride,
-    int lanes, int blocksPerOther, size_t otherStride, int batches, int workStride, bool vec)
+template <typename T, int kMaxQuads, int kItems, bool kFold, int kN, int kLanes, typename TIn = T>
+__device__ __forceinline__ void PipelinedAxisBody(const TIn* in, T* data, T offset, FactoredAxisTables<T> t,
+    size_t axisStride, size_t laneStride, int lanes, int blocksPerOther, size_t otherStride, int batches,
+    int workStride, bool vec)
 {
     extern __shared__ __align__(16) unsigned char sharedPipe[];
     FactoredSpecialize<T, kN, kLanes>(t, lanes, workStride);
@@ -926,19 +975,22 @@ __device__ __forceinline__ void PipelinedAxisBody(T* data, FactoredAxisTables<T>
     const Pow2 quadsPerRow = MakePow2(lanes / 4); // also the lane groups of steps 1-2
     const Pow2 batchP = MakePow2(blocksPerOther);
     const int quads = n << quadsPerRow.shift;
-    auto batchBase = [&](int batch) -> T* {
+    // The batch's first element. R-5: the loads read `in` and the stores
+    // write `data`, at the same offsets -- for float in place they are the
+    // same pointer, and the code is that of the pass before R-5.
+    auto batchOffset = [&](int batch) -> size_t {
         const int other = batch >> batchP.shift;
         const int firstLane = (batch & batchP.mask) << lanesP.shift;
-        return data + static_cast<size_t>(other) * otherStride + static_cast<size_t>(firstLane) * laneStride;
+        return static_cast<size_t>(other) * otherStride + static_cast<size_t>(firstLane) * laneStride;
     };
 
     T reg[kMaxQuads][4];
     int batch = static_cast<int>(blockIdx.x);
     if (batch < batches) {
-        PipelineLoad(batchBase(batch), reg, quads, quadsPerRow, axisStride, laneStride, vec);
+        PipelineLoad(in + batchOffset(batch), reg, quads, quadsPerRow, axisStride, laneStride, vec, offset);
     }
     for (; batch < batches; batch += static_cast<int>(gridDim.x)) {
-        T* base = batchBase(batch);
+        T* base = data + batchOffset(batch);
         __syncthreads(); // the previous batch's store has finished reading the tile
         if constexpr (kItems == 0) {
             PipelineFill(tile, reg, quads);
@@ -960,9 +1012,9 @@ __device__ __forceinline__ void PipelinedAxisBody(T* data, FactoredAxisTables<T>
         if (fetch) {
             if constexpr (Parts::kSplit) {
                 PipelineLoad<T, kMaxQuads, 0, Parts::kPart>(
-                    batchBase(next), reg, quads, quadsPerRow, axisStride, laneStride, vec);
+                    in + batchOffset(next), reg, quads, quadsPerRow, axisStride, laneStride, vec, offset);
             } else {
-                PipelineLoad(batchBase(next), reg, quads, quadsPerRow, axisStride, laneStride, vec);
+                PipelineLoad(in + batchOffset(next), reg, quads, quadsPerRow, axisStride, laneStride, vec, offset);
             }
         }
 
@@ -976,7 +1028,7 @@ __device__ __forceinline__ void PipelinedAxisBody(T* data, FactoredAxisTables<T>
                         constexpr int kQuarter = 1 + FactoredPhaseIndex(decltype(phase) {});
                         if (fetch) {
                             PipelineLoad<T, kMaxQuads, kQuarter * Parts::kPart, (kQuarter + 1) * Parts::kPart>(
-                                batchBase(next), reg, quads, quadsPerRow, axisStride, laneStride, vec);
+                                in + batchOffset(next), reg, quads, quadsPerRow, axisStride, laneStride, vec, offset);
                         }
                     }
                 });
@@ -1002,7 +1054,18 @@ __global__ void FactoredAxisKernelPipelined(T* data, FactoredAxisTables<T> t, si
     int lanes, int blocksPerOther, size_t otherStride, int batches, int workStride, bool vec)
 {
     PipelinedAxisBody<T, kMaxQuads, 0, kFold, kN, kLanes>(
-        data, t, axisStride, laneStride, lanes, blocksPerOther, otherStride, batches, workStride, vec);
+        data, data, T(0), t, axisStride, laneStride, lanes, blocksPerOther, otherStride, batches, workStride, vec);
+}
+
+/// R-5: the same pass reading integers from `in` and writing T to `out` (not
+/// in place): the first pass of a transform of a uint8 / uint16 volume.
+template <typename T, typename TIn, int kMaxQuads, bool kFold, int kN = 0, int kLanes = 0>
+__global__ void FactoredAxisKernelPipelinedFrom(const TIn* in, T* out, T offset, FactoredAxisTables<T> t,
+    size_t axisStride, size_t laneStride, int lanes, int blocksPerOther, size_t otherStride, int batches,
+    int workStride, bool vec)
+{
+    PipelinedAxisBody<T, kMaxQuads, 0, kFold, kN, kLanes, TIn>(
+        in, out, offset, t, axisStride, laneStride, lanes, blocksPerOther, otherStride, batches, workStride, vec);
 }
 
 /// The same with the steps in place (R-4 step 4B), kItems tiles a thread,
@@ -1013,7 +1076,18 @@ __global__ void __launch_bounds__(256, kMinBlocks) FactoredAxisKernelInPlace(T* 
     int workStride, bool vec)
 {
     PipelinedAxisBody<T, kMaxQuads, kItems, kFold, kN, kLanes>(
-        data, t, axisStride, laneStride, lanes, blocksPerOther, otherStride, batches, workStride, vec);
+        data, data, T(0), t, axisStride, laneStride, lanes, blocksPerOther, otherStride, batches, workStride, vec);
+}
+
+/// R-5: FactoredAxisKernelInPlace reading integers from `in` and writing T to
+/// `out`; "in place" names the steps in shared memory, not the buffers.
+template <typename T, typename TIn, int kMaxQuads, int kItems, int kMinBlocks, bool kFold, int kN = 0, int kLanes = 0>
+__global__ void __launch_bounds__(256, kMinBlocks) FactoredAxisKernelInPlaceFrom(const TIn* in, T* out, T offset,
+    FactoredAxisTables<T> t, size_t axisStride, size_t laneStride, int lanes, int blocksPerOther, size_t otherStride,
+    int batches, int workStride, bool vec)
+{
+    PipelinedAxisBody<T, kMaxQuads, kItems, kFold, kN, kLanes, TIn>(
+        in, out, offset, t, axisStride, laneStride, lanes, blocksPerOther, otherStride, batches, workStride, vec);
 }
 
 /*
