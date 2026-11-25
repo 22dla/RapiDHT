@@ -11,6 +11,7 @@
 #include "internal/factored.h"
 
 #include <cmath>
+#include <cstdint>
 #include <stdexcept>
 #include <string>
 
@@ -85,14 +86,25 @@ FactoredTables<T> MakeFactoredTables(size_t n)
     return t;
 }
 
-template <typename T>
-void FactoredDhtLanes(T* tile, T* work, size_t lanes, const FactoredTables<T>& tables)
+namespace {
+
+/*
+ * The steps, with the input of step 1 taken through `load(index, lane)`: the
+ * tile itself for FactoredDhtLanes, integers minus an offset for
+ * FactoredDhtLanesFrom. Only step 1 reads the input; from there on both are
+ * the same code, which is what makes them agree bit for bit.
+ */
+template <typename T, typename Load>
+void FactoredLanes(Load load, T* tile, T* work, size_t lanes, const FactoredTables<T>& tables)
 {
     const size_t n = tables.split.n;
     const size_t n1 = tables.split.n1;
     const size_t n2 = tables.split.n2;
     if (n == 1) {
-        return; // the DHT of one value is that value
+        for (size_t l = 0; l < lanes; ++l) {
+            tile[l] = load(0, l); // the DHT of one value is that value
+        }
+        return;
     }
     auto at = [lanes](T* base, size_t index, size_t lane) -> T& { return base[index * lanes + lane]; };
 
@@ -102,7 +114,7 @@ void FactoredDhtLanes(T* tile, T* work, size_t lanes, const FactoredTables<T>& t
             for (size_t l = 0; l < lanes; ++l) {
                 T sum = 0;
                 for (size_t j1 = 0; j1 < n1; ++j1) {
-                    sum += tables.c1[k1 * n1 + j1] * at(tile, n2 * j1 + j2, l);
+                    sum += tables.c1[k1 * n1 + j1] * load(n2 * j1 + j2, l);
                 }
                 at(work, k1 * n2 + j2, l) = sum;
             }
@@ -168,6 +180,26 @@ void FactoredDhtLanes(T* tile, T* work, size_t lanes, const FactoredTables<T>& t
     }
 }
 
+} // namespace
+
+template <typename T>
+void FactoredDhtLanes(T* tile, T* work, size_t lanes, const FactoredTables<T>& tables)
+{
+    FactoredLanes([tile, lanes](size_t index, size_t lane) { return tile[index * lanes + lane]; }, tile, work, lanes,
+        tables);
+}
+
+template <typename TIn, typename T>
+void FactoredDhtLanesFrom(
+    const TIn* in, T offset, T* tile, T* work, size_t lanes, const FactoredTables<T>& tables)
+{
+    FactoredLanes(
+        [in, offset, lanes](size_t index, size_t lane) {
+            return static_cast<T>(in[index * lanes + lane]) - offset;
+        },
+        tile, work, lanes, tables);
+}
+
 template <typename T>
 void FactoredDhtBracewellGroup(T* tile, T* work, const FactoredTables<T>& tables)
 {
@@ -197,6 +229,14 @@ template FactoredTables<float> MakeFactoredTables<float>(size_t);
 template FactoredTables<double> MakeFactoredTables<double>(size_t);
 template void FactoredDhtLanes<float>(float*, float*, size_t, const FactoredTables<float>&);
 template void FactoredDhtLanes<double>(double*, double*, size_t, const FactoredTables<double>&);
+template void FactoredDhtLanesFrom<std::uint8_t, float>(
+    const std::uint8_t*, float, float*, float*, size_t, const FactoredTables<float>&);
+template void FactoredDhtLanesFrom<std::uint16_t, float>(
+    const std::uint16_t*, float, float*, float*, size_t, const FactoredTables<float>&);
+template void FactoredDhtLanesFrom<std::uint8_t, double>(
+    const std::uint8_t*, double, double*, double*, size_t, const FactoredTables<double>&);
+template void FactoredDhtLanesFrom<std::uint16_t, double>(
+    const std::uint16_t*, double, double*, double*, size_t, const FactoredTables<double>&);
 template void FactoredDhtBracewellGroup<float>(float*, float*, const FactoredTables<float>&);
 template void FactoredDhtBracewellGroup<double>(double*, double*, const FactoredTables<double>&);
 

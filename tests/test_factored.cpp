@@ -13,6 +13,8 @@
 
 #include <gtest/gtest.h>
 
+#include <cstdint>
+#include <cstring>
 #include <string>
 #include <vector>
 
@@ -64,7 +66,96 @@ void ExpectLinesMatchDefinition(double tolerance)
     }
 }
 
+/// Integers of type TIn over its full range, different per lane, from a
+/// fixed formula (Knuth's multiplicative hash): no two lanes alike.
+template <typename TIn>
+std::vector<TIn> IntegerLines(size_t n, size_t lanes)
+{
+    std::vector<TIn> in(n * lanes);
+    for (size_t i = 0; i < n; ++i) {
+        for (size_t l = 0; l < lanes; ++l) {
+            const uint32_t h = static_cast<uint32_t>((i * 7 + l * 131 + 1) * 2654435761u);
+            in[i * lanes + l] = static_cast<TIn>(h >> (32 - 8 * sizeof(TIn)));
+        }
+    }
+    return in;
+}
+
+/// Offsets of R-5: none, half the range, and an arbitrary one.
+template <typename TIn>
+std::vector<double> IntegerOffsets()
+{
+    return sizeof(TIn) == 1 ? std::vector<double> { 0.0, 128.0, 77.0 } : std::vector<double> { 0.0, 32768.0, 12345.0 };
+}
+
+/// R-5 step 2.1: FactoredDhtLanesFrom against the definition of the DHT of
+/// (x - offset), line by line.
+template <typename TIn, typename T>
+void ExpectIntegerLinesMatchDefinition(double tolerance)
+{
+    constexpr size_t lanes = 3;
+    for (size_t n = 1; n <= 1024; n <<= 1) {
+        const auto tables = MakeFactoredTables<T>(n);
+        const auto in = IntegerLines<TIn>(n, lanes);
+        for (const double offset : IntegerOffsets<TIn>()) {
+            SCOPED_TRACE("n " + std::to_string(n) + ", offset " + std::to_string(offset));
+            std::vector<T> tile(n * lanes), work(n * lanes);
+            FactoredDhtLanesFrom(in.data(), static_cast<T>(offset), tile.data(), work.data(), lanes, tables);
+            for (size_t l = 0; l < lanes; ++l) {
+                std::vector<double> line(n), got(n);
+                for (size_t i = 0; i < n; ++i) {
+                    line[i] = static_cast<double>(in[i * lanes + l]) - offset;
+                    got[i] = static_cast<double>(tile[i * lanes + l]);
+                }
+                ExpectClose(got, ReferenceDht(line, Dims::Of(n, 0, 0)), tolerance);
+            }
+        }
+    }
+}
+
+/// Rule 9 of docs/R5_PLAN.md: reading the integers in step 1 is the float path
+/// on a pre-converted input, bit for bit.
+template <typename TIn, typename T>
+void ExpectIntegerLinesBitIdenticalToConverted()
+{
+    constexpr size_t lanes = 5;
+    for (size_t n = 1; n <= 1024; n <<= 1) {
+        const auto tables = MakeFactoredTables<T>(n);
+        const auto in = IntegerLines<TIn>(n, lanes);
+        for (const double offset : IntegerOffsets<TIn>()) {
+            SCOPED_TRACE("n " + std::to_string(n) + ", offset " + std::to_string(offset));
+            std::vector<T> fromIntegers(n * lanes), converted(n * lanes), work(n * lanes);
+            FactoredDhtLanesFrom(in.data(), static_cast<T>(offset), fromIntegers.data(), work.data(), lanes, tables);
+            for (size_t i = 0; i < n * lanes; ++i) {
+                converted[i] = static_cast<T>(in[i]) - static_cast<T>(offset);
+            }
+            FactoredDhtLanes(converted.data(), work.data(), lanes, tables);
+            ASSERT_EQ(0, std::memcmp(fromIntegers.data(), converted.data(), n * lanes * sizeof(T)));
+        }
+    }
+}
+
 } // namespace
+
+TEST(Factored, IntegerLinesMatchDefinition_Double)
+{
+    ExpectIntegerLinesMatchDefinition<uint8_t, double>(1e-11);
+    ExpectIntegerLinesMatchDefinition<uint16_t, double>(1e-11);
+}
+
+TEST(Factored, IntegerLinesMatchDefinition_Float)
+{
+    ExpectIntegerLinesMatchDefinition<uint8_t, float>(2e-5);
+    ExpectIntegerLinesMatchDefinition<uint16_t, float>(2e-5);
+}
+
+TEST(Factored, IntegerLinesAreBitIdenticalToConvertedInput)
+{
+    ExpectIntegerLinesBitIdenticalToConverted<uint8_t, float>();
+    ExpectIntegerLinesBitIdenticalToConverted<uint16_t, float>();
+    ExpectIntegerLinesBitIdenticalToConverted<uint8_t, double>();
+    ExpectIntegerLinesBitIdenticalToConverted<uint16_t, double>();
+}
 
 TEST(Factored, SplitsIntoBalancedPowersOfTwo)
 {

@@ -81,6 +81,22 @@ template <typename T>
 void FactoredDhtLanes(T* tile, T* work, size_t lanes, const FactoredTables<T>& tables);
 
 /**
+ * @brief R-5: the same, from integer lines -- the first pass of a transform of
+ * a uint8 / uint16 volume, which reads the integers and writes T elsewhere.
+ *
+ * Step 1 reads `in` (same layout as the tile) and subtracts `offset` from every
+ * value as it reads it; the result goes to `tile`, and `in` is not written. For
+ * integers below 2^24 and an integer offset the subtraction is exact in float,
+ * so the result is bit for bit that of FactoredDhtLanes on a tile holding
+ * T(in) - offset -- the property the device kernel of R-5 is held to.
+ *
+ * TIn is std::uint8_t or std::uint16_t; T is float or double.
+ */
+template <typename TIn, typename T>
+void FactoredDhtLanesFrom(
+    const TIn* in, T offset, T* tile, T* work, size_t lanes, const FactoredTables<T>& tables);
+
+/**
  * @brief The last pass of a true 2D or 3D transform: the DHT along x of a
  * group of mirror lines, with the Bracewell combination folded in (R-4 step 3.2).
  *
