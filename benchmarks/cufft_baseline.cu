@@ -41,6 +41,37 @@ __global__ void IntToFloat(const TIn4* __restrict__ in, float4* __restrict__ out
         static_cast<float>(v.z) - offset, static_cast<float>(v.w) - offset);
 }
 
+__global__ void AddToFirstKernel(float* data, double value)
+{
+    data[0] = static_cast<float>(static_cast<double>(data[0]) + value);
+}
+
+} // namespace
+
+void ConvertIntToFloat(const void* deviceIn, IntInput input, float* deviceOut, size_t count, double offset)
+{
+    const size_t quads = count / 4;
+    const unsigned block = 256;
+    const unsigned grid = static_cast<unsigned>((quads + block - 1) / block);
+    const float off = static_cast<float>(offset);
+    if (input == IntInput::U8) {
+        IntToFloat<std::uint8_t>
+            <<<grid, block>>>(static_cast<const uchar4*>(deviceIn), reinterpret_cast<float4*>(deviceOut), quads, off);
+    } else {
+        IntToFloat<std::uint16_t>
+            <<<grid, block>>>(static_cast<const ushort4*>(deviceIn), reinterpret_cast<float4*>(deviceOut), quads, off);
+    }
+    Check(cudaGetLastError(), "IntToFloat launch");
+}
+
+void AddToFirst(float* deviceData, double value)
+{
+    AddToFirstKernel<<<1, 1>>>(deviceData, value);
+    Check(cudaGetLastError(), "AddToFirst launch");
+}
+
+namespace {
+
 /// (a) Conversion kernel into the caller's float output, R2C from there.
 class CufftIntConvert final : public CufftIntBase {
 public:
@@ -52,18 +83,7 @@ public:
 
     void Forward(const void* deviceIn, float* deviceOut) override
     {
-        const size_t quads = Count() / 4;
-        const unsigned block = 256;
-        const unsigned grid = static_cast<unsigned>((quads + block - 1) / block);
-        const float offset = static_cast<float>(_offset);
-        if (_input == IntInput::U8) {
-            IntToFloat<std::uint8_t><<<grid, block>>>(
-                static_cast<const uchar4*>(deviceIn), reinterpret_cast<float4*>(deviceOut), quads, offset);
-        } else {
-            IntToFloat<std::uint16_t><<<grid, block>>>(
-                static_cast<const ushort4*>(deviceIn), reinterpret_cast<float4*>(deviceOut), quads, offset);
-        }
-        Check(cudaGetLastError(), "IntToFloat launch");
+        ConvertIntToFloat(deviceIn, _input, deviceOut, Count(), _offset);
         // The output buffer holds the float input until R2C has read it, then
         // the Hartley pass overwrites it with the result.
         TransformAndConvert(deviceOut, deviceOut);

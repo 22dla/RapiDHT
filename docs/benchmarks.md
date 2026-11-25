@@ -644,7 +644,7 @@ scripts/r5_measure.sh s02`):
 | u16, 256³ | 1.579 ms | 2.825 ms | **1.275 ms** | |
 | u8, 512³ | 12.30 ms | 15.19 ms | **9.72 ms** | 10.66 ms |
 | u16, 512³ | 12.62 ms | 15.42 ms | **10.03 ms** | |
-| u8, 1024 × 1024 × 512 | 50.9 ms | fails | **41.1 ms** | |
+| u8, 1024 × 1024 × 512 | 50.9 ms | fails / 93.3 ms | **41.1 ms** | |
 | u16, 1024 × 1024 × 512 | 52.1 ms | fails | **41.8 ms** | |
 | 1024³, either type | does not fit | does not fit | does not fit | |
 
@@ -654,7 +654,8 @@ scripts/r5_measure.sh s02`):
   instead of 4. It is the opponent of the integer track from here on.
 - The legacy callback is the slowest: 1.2–1.9 times the conversion kernel, as
   reported for CUDA 12.x on NVIDIA's forum. At 1024 × 1024 × 512 its
-  `cufftExecR2C` returns `CUFFT_EXEC_FAILED`; the cause was not looked into.
+  `cufftExecR2C` returns `CUFFT_EXEC_FAILED` -- always for u16, for u8 in one
+  run of two (`s02`; in `s03` it ran, at 93 ms); the cause was not looked into.
 - Memory is the same for all three: input, output, the half spectrum
   (514 MiB at 512³), and no workspace worth counting. Peak: 1.15 GiB (u8) and
   1.25 GiB (u16) at 512³, 4.5 and 5.0 GiB at 1024 × 1024 × 512. 1024³ fails on
@@ -662,6 +663,45 @@ scripts/r5_measure.sh s02`):
 - Pitfall: cuFFT finds an LTO callback by its C++ name. An `extern "C"`
   callback is an undefined symbol to it, and the plan fails with
   `CUFFT_NVJITLINK_FAILURE`.
+
+### This library with a conversion kernel (R-5 step 0.3)
+
+Today the library has no kernel that reads integers. `IntConvertFactored/`
+runs the conversion kernel of `cuFFTInt/` (the same code) into a float
+`DeviceVolume`, the factored path in place, and a one-thread kernel that puts
+offset · N back into the zero coefficient. Same input, offset and check
+(`benchmarks/results/2026-11-25_evgeny_r5_s03.json`, `R5_LARGE=1`; all R-4 rows
+and baselines of `s02` within noise in this run):
+
+| u16 | cuFFT, convert | cuFFT, LTO callback (strongest) | ours, convert | ours, float input | ours/strongest | conversion cost |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| 128³ | 208 µs | 170 µs | 186 µs | 148 µs | 1.09 | 38 µs |
+| 256³ | 1.581 ms | 1.277 ms | 1.396 ms | 1.152 ms | 1.09 | 0.24 ms |
+| 512³ | 12.62 ms | 10.03 ms | 11.32 ms | 9.36 ms | 1.13 | 1.96 ms |
+| 1024 × 1024 × 512 | 52.1 ms | 41.8 ms | 58.2 ms | | 1.39 | |
+| 1024³ | does not fit | does not fit | 156.1 ms | | | |
+
+uint8 is the same picture: 1.07, 1.05, 1.13 and 1.39 of the LTO callback.
+
+| peak device memory, u16 | cuFFT (any variant) | ours, convert | ratio |
+| --- | ---: | ---: | ---: |
+| 512³ | 1 284 MiB | 800 MiB | 0.62 |
+| 1024 × 1024 × 512 | 5 126 MiB | 3 104 MiB | 0.61 |
+| 1024³ | does not fit | 6 176 MiB | -- |
+
+- With a separate conversion pass the integer input costs this library more
+  than it costs cuFFT with a callback: at 512³ it is 13 % slower than the
+  strongest baseline, though still faster than cuFFT's own conversion route
+  (0.90). The conversion pass alone is 1.96 ms at 512³ u16 -- 21 % of the
+  float transform, which is what a kernel reading integers would save.
+- At 1024 × 1024 × 512 the gap widens to 1.39: from 512³ cuFFT's time grows
+  4.2 times, ours 5.1. The conversion pass scales with the volume (about
+  7.8 ms expected), so the hypothesis is that the factored path itself slows
+  down at this shape; not measured -- the float path has no row at this size.
+- Memory: 0.62 of cuFFT's, and 1024³ uint16 runs on the 8 GB card (6.0 GiB),
+  which no cuFFT variant does.
+- Error: the factored path is the more accurate one on the same input
+  (u16 512³: largest 0.028 against 0.042 LSB).
 
 ---
 

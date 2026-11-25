@@ -590,6 +590,81 @@ namespace {
 
 using DevicePeek = HartleyTransform<rapidht_bench::PeekTag>;
 
+/*
+ * R-5 step 0.3: an integer volume through this library as it is today, with
+ * no kernel that reads integers. The conversion kernel of cuFFTInt/ (the same
+ * code, rapidht_bench::ConvertIntToFloat) writes x - offset into a float
+ * DeviceVolume, the factored path transforms it in place, and a kernel of one
+ * thread adds offset * N to the zero coefficient -- the cuFFT variants do that
+ * inside their Hartley pass for free, this path has no pass of its own to put
+ * it in. Same input, offset, check and counters as BM_CufftInt; the opponents
+ * are the cuFFTInt, cuFFTIntCb and cuFFTIntLto rows of the same type and size.
+ */
+template <typename TIn>
+void BM_IntConvertFactored(benchmark::State& state, Extent e)
+{
+    static std::map<std::string, double> checked; // row -> largest error, LSB
+    const std::string row = state.name();
+
+    const size_t count = ElementCount(e.width, e.height, e.depth);
+    const rapidht_bench::IntInput input
+        = sizeof(TIn) == 1 ? rapidht_bench::IntInput::U8 : rapidht_bench::IntInput::U16;
+    const double offset = std::ldexp(1.0, 8 * static_cast<int>(sizeof(TIn)) - 1); // half the range
+    const double dc = offset * static_cast<double>(count);
+    const std::vector<TIn> host = MakeIntegerNoise<TIn>(count);
+
+    const double usedStart = DeviceUsedMiB();
+    TIn* in = nullptr;
+    if (cudaMalloc(&in, count * sizeof(TIn)) != cudaSuccess) {
+        cudaGetLastError();
+        state.SkipWithError("cudaMalloc failed: the input does not fit");
+        return;
+    }
+    try {
+        RapiDHT::DeviceVolume<float> volume(count);
+        HartleyTransform<float> transform(e.width, e.height, e.depth, Modes::GPUFactored);
+        float* out = DevicePeek::Data(volume);
+        auto forward = [&] {
+            rapidht_bench::ConvertIntToFloat(in, input, out, count, offset);
+            transform.ForwardTransform(volume);
+            rapidht_bench::AddToFirst(out, dc);
+            cudaDeviceSynchronize();
+        };
+        cudaMemcpy(in, host.data(), count * sizeof(TIn), cudaMemcpyHostToDevice);
+        forward(); // untimed: the check, and any lazy allocation
+        const double peak = DeviceUsedMiB() - usedStart;
+        state.counters["peakMiB"] = peak;
+        state.counters["extraMiB"]
+            = peak - static_cast<double>(count * (sizeof(TIn) + sizeof(float))) / (1024.0 * 1024.0);
+
+        if (checked.find(row) == checked.end()) {
+            std::vector<float> got(count);
+            volume.Download(got.data());
+            const double error = IntegerErrorLsb(got, IntegerReference(host, e));
+            if (error < 0.0 || error > 0.5) {
+                throw std::runtime_error(error < 0.0 ? "zero frequency disagrees with the CPU in double"
+                                                     : "disagrees with the CPU in double: largest error "
+                                                           + std::to_string(error) + " LSB");
+            }
+            checked[row] = error;
+        }
+        state.counters["errLSB"] = checked[row];
+
+        for (auto _ : state) {
+            forward();
+        }
+    } catch (const std::exception& error) {
+        cudaFree(in);
+        cudaGetLastError();
+        state.SkipWithError(error.what());
+        return;
+    }
+    cudaFree(in);
+    state.SetItemsProcessed(static_cast<int64_t>(state.iterations() * count));
+    state.SetBytesProcessed(static_cast<int64_t>(state.iterations() * count * (sizeof(TIn) + sizeof(float))));
+    state.counters["N"] = static_cast<double>(count);
+}
+
 /// Gaussian with sum 1 in the wrapped layout; separable, so the volume is a
 /// product of three short tables.
 std::vector<float> MakeConvKernel(const Extent& e, bool even)
@@ -954,10 +1029,11 @@ void RegisterFor(const Extent* extents, size_t n, const char* rank, const char* 
     }
 }
 
-/// R-5 step 0.2: the integer cuFFT baselines, 3D. Per extent the two types and
-/// the three variants run one after another, so that the CPU reference of one
-/// type and size is computed once (IntegerReference).
-void RegisterCufftInt(const Extent* extents, size_t n)
+/// R-5: integer input, 3D -- the cuFFT baselines (step 0.2) and this library
+/// with a conversion kernel in front (step 0.3). Per extent and type all four
+/// run one after another, so that the CPU reference of one type and size is
+/// computed once (IntegerReference).
+void RegisterIntegerInput(const Extent* extents, size_t n)
 {
 #ifdef RAPIDHT_WITH_CUDA
     if (!RapiDHT::IsGpuAvailable()) {
@@ -976,11 +1052,17 @@ void RegisterCufftInt(const Extent* extents, size_t n)
                 [e, load = load](benchmark::State& s) { BM_CufftInt<uint8_t>(s, e, load); })
                 ->Unit(benchmark::kMicrosecond);
         }
+        benchmark::RegisterBenchmark(("IntConvertFactored/u8/3D/" + Describe(e)).c_str(),
+            [e](benchmark::State& s) { BM_IntConvertFactored<uint8_t>(s, e); })
+            ->Unit(benchmark::kMicrosecond);
         for (const auto& [family, load] : variants) {
             benchmark::RegisterBenchmark((std::string(family) + "/u16/3D/" + Describe(e)).c_str(),
                 [e, load = load](benchmark::State& s) { BM_CufftInt<uint16_t>(s, e, load); })
                 ->Unit(benchmark::kMicrosecond);
         }
+        benchmark::RegisterBenchmark(("IntConvertFactored/u16/3D/" + Describe(e)).c_str(),
+            [e](benchmark::State& s) { BM_IntConvertFactored<uint16_t>(s, e); })
+            ->Unit(benchmark::kMicrosecond);
     }
 #else
     (void)extents;
@@ -1118,8 +1200,8 @@ int main(int argc, char** argv)
     RegisterFactored<float>(kExtents3D, CountOf(kExtents3D), "3D", "f32");
     RegisterCufft(kExtentsR4Only3D, CountOf(kExtentsR4Only3D), "3D");
     RegisterFactored<float>(kExtentsR4Only3D, CountOf(kExtentsR4Only3D), "3D", "f32");
-    RegisterCufftInt(kExtents3D, CountOf(kExtents3D));
-    RegisterCufftInt(kExtentsR5Large3D, CountOf(kExtentsR5Large3D));
+    RegisterIntegerInput(kExtents3D, CountOf(kExtents3D));
+    RegisterIntegerInput(kExtentsR5Large3D, CountOf(kExtentsR5Large3D));
     RegisterConvolution(kExtentsR4Only3D, 1, "3D"); // 64^3
     RegisterConvolution(kExtents3D, CountOf(kExtents3D), "3D");
     // 1024^3 does not fit either way (the volume and the kernel's spectrum

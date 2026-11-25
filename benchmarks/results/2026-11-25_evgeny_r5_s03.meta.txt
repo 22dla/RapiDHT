@@ -1,0 +1,35 @@
+tag: s03
+date: 2026-11-25T17:34:04+04:00
+settings: (none)
+table: 128-512 + large
+cuda: 13.2 (13.2.51)
+commit: c0476155b5638f4163424e780ea7fca0311792c2
+uncommitted:
+   M benchmarks/bench_transform.cpp
+   M benchmarks/cufft_baseline.cu
+   M benchmarks/cufft_baseline.h
+  ?? benchmarks/results/2026-11-25_evgeny_r5_s03.meta.txt
+sources:
+  9e4d2132842076e95b1b429df73944ebd4e8b326a161604bbae21c2fc166728d  src/internal/factored_kernels.cuh
+  96f289fa3cc9ccf530829403d3189b7f2f85d11acc3950c9719fa9478d04ba08  src/kernels.cu
+  00219f6acfe6d833b60361ba32e0e33aadb91e124e238d5bc2ae6a6de9771ecb  src/backend_cuda.cpp
+  36501266c19eb17add2cdbf0afc3085348713f02e60222c38822340b3d91775f  src/internal/kernels.h
+  fc17c1fa6f2861d585574db9e6ae3ab642b4ab5e45dbd50c1a6797a06603be15  benchmarks/bench_transform.cpp
+  09f5bd0ce8e0fa37443405cdcc4a25f6766fcc7c8fb928055b1ab2a3c2f6939a  benchmarks/cufft_baseline.h
+  daa16377c907c271f1ff4d6f671c40166f48a92ae620855bde78ad0a7e1df5f8  benchmarks/cufft_baseline.cu
+  88d710469a5dd2e987053e906bdc54556e1b4bf1168d10de92a7c0418beb5f04  benchmarks/cufft_common.cuh
+  ccb27ab79a4f706dd91354e2c4767600f947060f0f958c6f5ccd8aa1fa1eed59  benchmarks/cufft_int_callback.cu
+  2e4e180f298a7293b2c01c230cb5fbe738f556ce92e161ae113892297f08eb92  benchmarks/cufft_int_lto_callback.cu
+  c9af12f53e5d58754cb5c13475cd97cd68f17cb29b9051b61e3ff914f0df0cbf  benchmarks/accuracy_integer.cpp
+data:
+  (none: generated inputs only)
+binaries:
+  -rwxrwxr-x 1 evgeny evgeny 1778088 2026-11-25 17:33 build-bench/benchmarks/accuracy_integer
+  -rwxrwxr-x 1 evgeny evgeny 2557344 2026-11-25 17:33 build-bench/benchmarks/bench_transform
+  -rwxrwxr-x 1 evgeny evgeny 1723464 2026-11-25 17:00 build-bench/benchmarks/profile_gpu3d
+gpu:
+  NVIDIA GeForce RTX 3060 Ti, 595.99.02, 38, 39.75 W, 1086 MiB
+other processes on the gpu (they add noise; close what you can):
+  6260, /usr/libexec/gnome-remote-desktop-daemon, 134 MiB
+  6623, /usr/libexec/gnome-remote-desktop-daemon, 292 MiB
+  6659, /usr/libexec/xdg-desktop-portal-gnome, 4 MiB

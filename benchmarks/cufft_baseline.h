@@ -104,6 +104,14 @@ public:
 std::unique_ptr<CufftIntHartley> MakeCufftIntHartley(
     int width, int height, int depth, IntInput input, IntLoad load, double offset);
 
+/// R-5 step 0.3, the integer input of this library's path as it is today:
+/// the conversion kernel of variant Convert, on its own -- `count` integers at
+/// deviceIn to floats minus `offset` at deviceOut (count divisible by 4) --
+/// and the return of the offset, `value` added to deviceData[0] by a kernel of
+/// one thread (in double, stored as float). Both asynchronous.
+void ConvertIntToFloat(const void* deviceIn, IntInput input, float* deviceOut, size_t count, double offset);
+void AddToFirst(float* deviceData, double value);
+
 /// LegacyCallback. Defined in cufft_int_callback.cu, which only targets that
 /// link rapidht_cufft_callback have.
 std::unique_ptr<CufftIntHartley> MakeCufftIntCallback(
