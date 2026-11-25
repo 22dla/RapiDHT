@@ -691,6 +691,17 @@ conversion kernel, largest error in LSB (cuFFT in brackets):
 - RMS error under the default policy: 0.001--0.003 LSB on the real volumes,
   100--300 times below the noise of rounding the input.
 
+### Reading integers along z (R-5 step 1.1, 2026-11-25)
+
+`stride_probe int` (`benchmarks/results/2026-11-25_evgeny_r5_stride_int.txt`):
+a batch of L consecutive lines read whole, converted, written as float to
+another buffer, 512³, one block to an SM as the real z kernel. The R-4 rule
+holds in bytes, not lines: memory moves at the speed of a copy from 128
+contiguous bytes on. For uint16 that is 64 lines, not the 32 of the float
+kernel -- 32 lines of uint16 (64 bytes) take 2.29 ms against a floor of 1.94
+(1.18), 64 lines 1.97 (1.015). uint8: 1.57 and 1.06 of its floor. Even at 32
+lines uint16 is read faster than float (2.29 against 2.61 ms).
+
 ### The bus (R-5 step 0.6, 2026-11-25)
 
 One way, host to device, `H2D/` rows of

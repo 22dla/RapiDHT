@@ -1,0 +1,49 @@
+# stride_probe int, 2026-11-25T19:39:33+04:00, commit a551b47 + uncommitted benchmarks/stride_probe.cu; CUDA 13.2; sm clock not locked (no sudo)
+# gpu before: NVIDIA GeForce RTX 3060 Ti, 595.99.02, 28, 210 MHz
+NVIDIA GeForce RTX 3060 Ti, 38 SMs; 512^3, read integers, write float to another buffer; ms, min (median) of 20
+uint16 -> float, 0.750 GiB of traffic
+  floor: copy with the same traffic    1.942 ( 1.943)
+  lines axis  blocks to an SM
+   16   z   1/SM  3.514 ( 3.594)   2/SM  3.032 ( 3.134)
+   16   y   1/SM  2.975 ( 3.048)   2/SM  2.408 ( 2.537)
+   16   x   1/SM  2.150 ( 2.154)   2/SM  1.975 ( 1.979)
+   32   z   1/SM  2.294 ( 2.315)   2/SM  2.082 ( 2.097)
+   32   y   1/SM  2.212 ( 2.230)   2/SM  2.018 ( 2.034)
+   32   x   1/SM  2.028 ( 2.033)   2/SM  1.964 ( 1.965)
+   64   z   1/SM  1.972 ( 1.974)   2/SM        -        
+   64   y   1/SM  1.966 ( 1.969)   2/SM        -        
+   64   x   1/SM  1.965 ( 1.967)   2/SM        -        
+  128   z   1/SM  1.964 ( 1.966)   2/SM  1.965 ( 1.967)
+  128   y   1/SM  1.963 ( 1.964)   2/SM  1.963 ( 1.964)
+  128   x   1/SM  1.962 ( 1.963)   2/SM  1.964 ( 1.966)
+uint8 -> float, 0.625 GiB of traffic
+  floor: copy with the same traffic    1.618 ( 1.619)
+  lines axis  blocks to an SM
+   16   z   1/SM  2.644 ( 2.659)   2/SM  2.252 ( 2.267)
+   16   y   1/SM  2.225 ( 2.243)   2/SM  1.867 ( 1.877)
+   16   x   1/SM  1.914 ( 1.916)   2/SM  1.678 ( 1.683)
+   32   z   1/SM  2.533 ( 2.544)   2/SM  2.060 ( 2.083)
+   32   y   1/SM  2.183 ( 2.202)   2/SM  1.835 ( 1.853)
+   32   x   1/SM  1.910 ( 1.916)   2/SM  1.677 ( 1.683)
+   64   z   1/SM  1.718 ( 1.726)   2/SM  1.712 ( 1.722)
+   64   y   1/SM  1.652 ( 1.655)   2/SM  1.655 ( 1.658)
+   64   x   1/SM  1.652 ( 1.654)   2/SM  1.651 ( 1.653)
+  128   z   1/SM  1.660 ( 1.661)   2/SM  1.657 ( 1.659)
+  128   y   1/SM  1.651 ( 1.653)   2/SM  1.653 ( 1.654)
+  128   x   1/SM  1.652 ( 1.654)   2/SM  1.652 ( 1.652)
+float (reference) -> float, 1.000 GiB of traffic
+  floor: copy with the same traffic    2.590 ( 2.591)
+  lines axis  blocks to an SM
+   16   z   1/SM  3.322 ( 3.391)   2/SM  3.351 ( 3.398)
+   16   y   1/SM  2.916 ( 2.982)   2/SM  2.789 ( 2.841)
+   16   x   1/SM  2.600 ( 2.605)   2/SM  2.595 ( 2.598)
+   32   z   1/SM  2.614 ( 2.616)   2/SM  2.616 ( 2.619)
+   32   y   1/SM  2.598 ( 2.600)   2/SM  2.601 ( 2.603)
+   32   x   1/SM  2.609 ( 2.617)   2/SM  2.602 ( 2.608)
+   64   z   1/SM  2.601 ( 2.603)   2/SM  2.596 ( 2.597)
+   64   y   1/SM  2.614 ( 2.617)   2/SM  2.592 ( 2.593)
+   64   x   1/SM  2.664 ( 2.670)   2/SM  2.620 ( 2.631)
+  128   z   1/SM  2.591 ( 2.593)   2/SM  2.593 ( 2.594)
+  128   y   1/SM  2.600 ( 2.606)   2/SM  2.601 ( 2.607)
+  128   x   1/SM  2.604 ( 2.613)   2/SM  2.596 ( 2.602)
+# gpu after: 39, 1935 MHz

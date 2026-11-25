@@ -24,6 +24,19 @@
  * Each shape is timed along z (rows 1 MiB apart) and along y (2 KiB apart),
  * with 1, 2 and 4 blocks to an SM; the real kernel runs 1. The pass is the
  * identity, so the volume stays valid; nothing is checked but the time.
+ *
+ *   ./stride_probe int        (R-5 step 1.1, 512^3, about two minutes)
+ *
+ * R-5, step 1.1: the first pass of a transform of an integer volume reads
+ * uint8 / uint16 and writes float into another buffer. Along z a batch of L
+ * lines reads L * 2 bytes contiguous per row for uint16, L for uint8 -- half or
+ * a quarter of the float case, where 32 lines (128 bytes) were needed to move
+ * at the speed of a copy. Mode "int" times exactly that access: L = 16, 32, 64,
+ * 128 consecutive lines, read whole (as the real kernel reads a batch before it
+ * computes), converted, written as float; along z, y and x; 1 and 2 blocks to
+ * an SM. float input is timed the same way for reference. The floor is a copy
+ * with the same traffic (cudaMemcpy of half of it: 0.75 GiB for uint16, 0.625
+ * for uint8, 1 GiB for float).
  */
 
 #include <cuda_runtime.h>
@@ -32,6 +45,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <initializer_list>
+#include <string>
 #include <vector>
 
 namespace {
@@ -158,9 +172,167 @@ void Probe(float* data, int sms)
     }
 }
 
+/*
+ * R-5 step 1.1. A batch is L lines of kN values of the transformed axis.
+ * The contiguous direction of memory is the lane (x) along z and y, the
+ * transformed axis itself along x; a "quad" is four neighbours in it, read as
+ * one uchar4 / ushort4 / float4 and written as one float4. A batch is read
+ * whole into registers and then written -- in parts of at most kMaxItems quads
+ * a thread when it does not fit (128 lines of 512).
+ *
+ *   element (c, s) of a batch is at base + c * 1 + s * strideS, c contiguous,
+ *   along z / y: c = lane (L of them), s = k (kN, stride n*n or n);
+ *   along x:     c = k (kN, stride 1), s = lane (L rows, stride n).
+ */
+template <typename TIn>
+struct Quad;
+template <>
+struct Quad<unsigned char> {
+    using Type = uchar4;
+};
+template <>
+struct Quad<unsigned short> {
+    using Type = ushort4;
+};
+template <>
+struct Quad<float> {
+    using Type = float4;
+};
+
+constexpr int kMaxItems = 32;
+
+template <typename TIn, int kC, int kS>
+__global__ void __launch_bounds__(kThreads) ConvertLines(const TIn* __restrict__ in, float* __restrict__ out,
+    size_t strideS, size_t groupStrideA, int groupsA, size_t groupStrideB, int batches)
+{
+    using Q = typename Quad<TIn>::Type;
+    constexpr int kQuadsC = kC / 4;
+    constexpr int kTotal = kQuadsC * kS / kThreads; // quads a thread moves per batch
+    static_assert(kTotal * kThreads == kQuadsC * kS, "whole quads per thread");
+    constexpr int kItems = kTotal < kMaxItems ? kTotal : kMaxItems;
+    constexpr int kParts = kTotal / kItems;
+    static_assert(kParts * kItems == kTotal, "whole parts");
+    float4 v[kItems];
+    for (int batch = static_cast<int>(blockIdx.x); batch < batches; batch += static_cast<int>(gridDim.x)) {
+        // Neighbouring batches to neighbouring blocks: the A groups (along the
+        // contiguous lanes, or rows along x) first, as the real kernel does.
+        const size_t base = static_cast<size_t>(batch % groupsA) * groupStrideA
+                          + static_cast<size_t>(batch / groupsA) * groupStrideB;
+        for (int part = 0; part < kParts; ++part) {
+#pragma unroll
+            for (int i = 0; i < kItems; ++i) {
+                const int item = static_cast<int>(threadIdx.x) + (part * kItems + i) * kThreads;
+                const int q = item % kQuadsC;
+                const int sIndex = item / kQuadsC;
+                const Q x = *reinterpret_cast<const Q*>(in + base + static_cast<size_t>(sIndex) * strideS + q * 4);
+                v[i] = make_float4(static_cast<float>(x.x), static_cast<float>(x.y), static_cast<float>(x.z),
+                    static_cast<float>(x.w));
+            }
+            __syncthreads(); // the part is in before it goes out
+#pragma unroll
+            for (int i = 0; i < kItems; ++i) {
+                const int item = static_cast<int>(threadIdx.x) + (part * kItems + i) * kThreads;
+                const int q = item % kQuadsC;
+                const int sIndex = item / kQuadsC;
+                *reinterpret_cast<float4*>(out + base + static_cast<size_t>(sIndex) * strideS + q * 4) = v[i];
+            }
+        }
+    }
+}
+
+template <typename TIn, int kN, int kL>
+void ProbeConvert(const TIn* in, float* out, int sms)
+{
+    constexpr size_t n = kN;
+    const int groups = kN / kL;
+    struct Axis {
+        const char* name;
+        bool alongX;
+        size_t strideS, groupStrideA, groupStrideB;
+        int groupsA;
+    };
+    // z: lanes are x (groups of L), batches over (x group, y); y: over (x group, z);
+    // x: lanes are y rows (groups of L), batches over (y group, z).
+    const Axis axes[] = {
+        { "z", false, n * n, kL, n, groups },
+        { "y", false, n, kL, n * n, groups },
+        { "x", true, n, kL * n, n * n, groups },
+    };
+    const int batches = groups * kN;
+    for (const Axis& axis : axes) {
+        std::printf("  %3d   %s", kL, axis.name);
+        for (const int perSm : { 1, 2 }) {
+            int fit = 0;
+            if (axis.alongX) {
+                PROBE_CHECK(cudaOccupancyMaxActiveBlocksPerMultiprocessor(&fit, ConvertLines<TIn, kN, kL>, kThreads, 0));
+            } else {
+                PROBE_CHECK(cudaOccupancyMaxActiveBlocksPerMultiprocessor(&fit, ConvertLines<TIn, kL, kN>, kThreads, 0));
+            }
+            if (fit < perSm) {
+                std::printf("   %d/SM        -        ", perSm);
+                continue;
+            }
+            const unsigned grid = static_cast<unsigned>(std::min(batches, sms * perSm));
+            const Timing t = Time(
+                [&] {
+                    if (axis.alongX) {
+                        ConvertLines<TIn, kN, kL><<<grid, kThreads>>>(
+                            in, out, axis.strideS, axis.groupStrideA, axis.groupsA, axis.groupStrideB, batches);
+                    } else {
+                        ConvertLines<TIn, kL, kN><<<grid, kThreads>>>(
+                            in, out, axis.strideS, axis.groupStrideA, axis.groupsA, axis.groupStrideB, batches);
+                    }
+                },
+                20);
+            std::printf("   %d/SM %6.3f (%6.3f)", perSm, t.min, t.median);
+        }
+        std::printf("\n");
+    }
+}
+
+template <typename TIn>
+void ProbeConvertType(const char* name, const void* in, float* out, float* scratch, size_t count, int sms)
+{
+    constexpr int kN = 512;
+    const size_t traffic = count * (sizeof(TIn) + sizeof(float));
+    const Timing copy = Time(
+        [&] { PROBE_CHECK(cudaMemcpyAsync(scratch, out, traffic / 2, cudaMemcpyDeviceToDevice)); }, 20);
+    std::printf("%s -> float, %.3f GiB of traffic\n", name, static_cast<double>(traffic) / (1u << 30));
+    std::printf("  floor: copy with the same traffic   %6.3f (%6.3f)\n", copy.min, copy.median);
+    std::printf("  lines axis  blocks to an SM\n");
+    const TIn* typed = static_cast<const TIn*>(in);
+    ProbeConvert<TIn, kN, 16>(typed, out, sms);
+    ProbeConvert<TIn, kN, 32>(typed, out, sms);
+    ProbeConvert<TIn, kN, 64>(typed, out, sms);
+    ProbeConvert<TIn, kN, 128>(typed, out, sms);
+}
+
+int ConvertMode(const cudaDeviceProp& prop)
+{
+    constexpr size_t kN = 512;
+    const size_t count = kN * kN * kN;
+    void* in = nullptr;
+    float* out = nullptr;
+    float* scratch = nullptr; // the far side of the floor's copy
+    PROBE_CHECK(cudaMalloc(&in, count * sizeof(float)));
+    PROBE_CHECK(cudaMalloc(&out, count * sizeof(float)));
+    PROBE_CHECK(cudaMalloc(&scratch, count * sizeof(float)));
+    PROBE_CHECK(cudaMemset(in, 0, count * sizeof(float)));
+    PROBE_CHECK(cudaMemset(out, 0, count * sizeof(float)));
+    std::printf("%s, %d SMs; %zu^3, read integers, write float to another buffer; ms, min (median) of 20\n",
+        prop.name, prop.multiProcessorCount, kN);
+    ProbeConvertType<unsigned short>("uint16", in, out, scratch, count, prop.multiProcessorCount);
+    ProbeConvertType<unsigned char>("uint8", in, out, scratch, count, prop.multiProcessorCount);
+    ProbeConvertType<float>("float (reference)", in, out, scratch, count, prop.multiProcessorCount);
+    PROBE_CHECK(cudaFree(in));
+    PROBE_CHECK(cudaFree(out));
+    PROBE_CHECK(cudaFree(scratch));
+    return 0;
+}
+
 } // namespace
 
-int main()
+int main(int argc, char** argv)
 {
     constexpr int kN = 512;
     const size_t count = static_cast<size_t>(kN) * kN * kN;
@@ -168,6 +340,9 @@ int main()
     cudaDeviceProp prop {};
     PROBE_CHECK(cudaGetDevice(&device));
     PROBE_CHECK(cudaGetDeviceProperties(&prop, device));
+    if (argc > 1 && std::string(argv[1]) == "int") {
+        return ConvertMode(prop);
+    }
     float* a = nullptr;
     float* b = nullptr;
     PROBE_CHECK(cudaMalloc(&a, count * sizeof(float)));
