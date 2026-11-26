@@ -8,6 +8,7 @@
  * kernel to the transform rather than to harness machinery.
  *
  *   nsys profile --stats=true ./profile_gpu3d 512 20 f32
+ *   RAPIDHT_TRACE_KERNELS=1 ./profile_gpu3d 512 15 u16 factored   # R-5
  *
  * The point of the exercise is the CUDA Kernel Summary that nsys prints. The
  * matrix formulation is only worth defending if the GEMMs dominate it; time
@@ -25,11 +26,14 @@
 #include <rapidht/transform.h>
 
 #ifdef RAPIDHT_WITH_CUDA
+#include "internal/device_access.h"
+
 #include <cuda_runtime.h>
 #endif
 
 #include <chrono>
 #include <cmath>
+#include <cstdint>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -150,6 +154,56 @@ int Run(size_t width, int iterations, const char* label, RapiDHT::Modes mode)
     return 0;
 }
 
+#ifdef RAPIDHT_WITH_CUDA
+/*
+ * R-5 step 2.4: the factored transform of a device-resident integer volume
+ * (internal::DeviceAccess::ForwardFromIntegers -- the first pass reads the
+ * integers, offset half the range), so that RAPIDHT_TRACE_KERNELS times the
+ * integer path per kernel the way it does the float one.
+ */
+template <typename TIn>
+int RunIntegers(size_t width, int iterations, const char* label)
+{
+    const size_t count = width * width * width;
+    std::vector<TIn> host(count);
+    std::uint64_t state = 0x9E3779B97F4A7C15ull;
+    for (size_t i = 0; i < count; ++i) {
+        state = state * 6364136223846793005ull + 1442695040888963407ull;
+        host[i] = static_cast<TIn>(state >> 40);
+    }
+    const double offset = static_cast<double>(1u << (8 * sizeof(TIn) - 1));
+
+    std::printf("%s factored  %zu^3  (%zu elements, %.1f MiB of input)  x%d iterations\n", label, width, count,
+        static_cast<double>(count * sizeof(TIn)) / (1024.0 * 1024.0), iterations);
+
+    TIn* in = nullptr;
+    if (cudaMalloc(&in, count * sizeof(TIn)) != cudaSuccess) {
+        std::fprintf(stderr, "  failed: the integer input does not fit\n");
+        return 1;
+    }
+    int status = 0;
+    try {
+        cudaMemcpy(in, host.data(), count * sizeof(TIn), cudaMemcpyHostToDevice);
+        RapiDHT::DeviceVolume<float> out(count);
+        RapiDHT::HartleyTransform<float> transform(width, width, width, RapiDHT::Modes::GPUFactored);
+        RapiDHT::internal::DeviceAccess::ForwardFromIntegers(transform, in, out, offset); // warm-up
+
+        const auto start = std::chrono::high_resolution_clock::now();
+        for (int i = 0; i < iterations; ++i) {
+            RapiDHT::internal::DeviceAccess::ForwardFromIntegers(transform, in, out, offset);
+        }
+        const auto finish = std::chrono::high_resolution_clock::now();
+        const double ms = std::chrono::duration<double, std::milli>(finish - start).count();
+        std::printf("  %.2f ms per transform\n", ms / iterations);
+    } catch (const std::exception& error) {
+        std::fprintf(stderr, "  failed: %s\n", error.what());
+        status = 1;
+    }
+    cudaFree(in);
+    return status;
+}
+#endif
+
 } // namespace
 
 int main(int argc, char** argv)
@@ -176,6 +230,20 @@ int main(int argc, char** argv)
     if (width == 0 || (width & (width - 1)) != 0) {
         std::fprintf(stderr, "width must be a power of two, got %zu\n", width);
         return 1;
+    }
+
+    // R-5: "u16" or "u8" in place of the precision runs the integer path.
+    const bool u16 = (argc > 3) && std::strcmp(argv[3], "u16") == 0;
+    const bool u8 = (argc > 3) && std::strcmp(argv[3], "u8") == 0;
+    if (u16 || u8) {
+        if (!factored) {
+            std::fprintf(stderr, "integer input runs only on the factored path: add \"factored\"\n");
+            return 1;
+        }
+#ifdef RAPIDHT_WITH_CUDA
+        return u16 ? RunIntegers<std::uint16_t>(width, iterations, "u16")
+                   : RunIntegers<std::uint8_t>(width, iterations, "u8");
+#endif
     }
 
     const char* label = useDouble ? (factored ? "f64 factored" : "f64") : (factored ? "f32 factored" : "f32");

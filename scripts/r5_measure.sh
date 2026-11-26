@@ -17,8 +17,8 @@
 #
 # Writes into benchmarks/results/:
 #   <date>_<host>_r5_<tag>.json            medians of 7 repetitions (bench_transform)
-#   <date>_<host>_r5_<tag>_trace.txt       time per kernel at 128^3-512^3, f32 (as in R-4
-#                                          until stage 2 adds an integer trace)
+#   <date>_<host>_r5_<tag>_trace.txt       time per kernel at 128^3-512^3: f32 (n=<size>,
+#                                          as in R-4), then u16 and u8 (n=<size>/<type>)
 #   <date>_<host>_r5_<tag>_accuracy.txt    with R5_ACC=1: accuracy_integer's report
 #   <date>_<host>_r5_<tag>_accuracy_table.txt  ... and its verdict (tools/r5_accuracy_table.py)
 #   <date>_<host>_r5_<tag>.meta.txt        what exactly was measured, with the hashes
@@ -144,10 +144,16 @@ if [[ $locked == 1 ]]; then
 else
     echo "# sm clock NOT locked (no sudo): per-kernel figures at 512^3 may move by 10-15 %" | tee -a "${stem}_trace.txt"
 fi
-for n in 128 256 512; do
-    gpu_line "$n" before | tee -a "${stem}_trace.txt"
-    env "$@" RAPIDHT_TRACE_KERNELS=1 "$profile" "$n" 15 f32 factored 2>&1 | sed "s/^/n=$n /" | tee -a "${stem}_trace.txt"
-    gpu_line "$n" after | tee -a "${stem}_trace.txt"
+# Float first, labelled n=<size> as in R-4; then the integer path (step 2.4),
+# labelled n=<size>/u16 and n=<size>/u8, so r4_compare.py keeps them apart.
+for type in f32 u16 u8; do
+    for n in 128 256 512; do
+        label="n=$n"
+        [[ $type == f32 ]] || label="n=$n/$type"
+        gpu_line "$label" before | tee -a "${stem}_trace.txt"
+        env "$@" RAPIDHT_TRACE_KERNELS=1 "$profile" "$n" 15 "$type" factored 2>&1 | sed "s|^|$label |" | tee -a "${stem}_trace.txt"
+        gpu_line "$label" after | tee -a "${stem}_trace.txt"
+    done
 done
 
 if [[ $locked == 1 ]]; then

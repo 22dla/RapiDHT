@@ -736,6 +736,10 @@ void FactoredAxisImpl(const TIn* in, T* data, T offset, const FactoredAxisTables
         const int axis = axisStride == 1 ? 0 : (axisStride == laneLength ? 1 : 2);
         size_t lanes = 0;
         if (sizeof(T) == 4 && n1 >= 4 && n2 >= 4) {
+            // The widths of the float pass (R-5 step 2.4): z from u16 / u8
+            // with 8, 16 and 32 lines at 128^3-512^3 found nothing faster
+            // than them anywhere -- 8 loses 6-18 %, 32 below 512 up to 9 %,
+            // 16 at 512 3 % on u8 (benchmarks/results/2026-11-26_*_r5_s24_*).
             lanes = FactoredPreferredLanes(n, axisStride, laneLength);
             while (lanes > 4 && !(lanes <= laneLength && PipelinedAxisFits<T>(n, n1, n2, lanes, optIn, axis))) {
                 lanes /= 2;

@@ -1,0 +1,187 @@
+# sm clock NOT locked (no sudo): per-kernel figures at 512^3 may move by 10-15 %
+n=n=128 # gpu before sm_mhz=210 temp_c=43 power_w=6.53 throttle=0x0000000000000001
+n=128 [RapiDHT trace] axis-z(depth) 1.607 ms, axis-y(height) 0.049 ms, axis-x(width) 0.058 ms, total 1.714 ms
+n=128 [RapiDHT trace] axis-z(depth) 0.051 ms, axis-y(height) 0.048 ms, axis-x(width) 0.050 ms, total 0.150 ms
+n=128 [RapiDHT trace] axis-z(depth) 0.050 ms, axis-y(height) 0.053 ms, axis-x(width) 0.050 ms, total 0.154 ms
+n=128 [RapiDHT trace] axis-z(depth) 0.050 ms, axis-y(height) 0.048 ms, axis-x(width) 0.050 ms, total 0.148 ms
+n=128 [RapiDHT trace] axis-z(depth) 0.053 ms, axis-y(height) 0.048 ms, axis-x(width) 0.050 ms, total 0.152 ms
+n=128 [RapiDHT trace] axis-z(depth) 0.050 ms, axis-y(height) 0.049 ms, axis-x(width) 0.050 ms, total 0.150 ms
+n=128 [RapiDHT trace] axis-z(depth) 0.053 ms, axis-y(height) 0.049 ms, axis-x(width) 0.050 ms, total 0.153 ms
+n=128 [RapiDHT trace] axis-z(depth) 0.050 ms, axis-y(height) 0.048 ms, axis-x(width) 0.049 ms, total 0.147 ms
+n=128 [RapiDHT trace] axis-z(depth) 0.049 ms, axis-y(height) 0.049 ms, axis-x(width) 0.050 ms, total 0.148 ms
+n=128 [RapiDHT trace] axis-z(depth) 0.049 ms, axis-y(height) 0.050 ms, axis-x(width) 0.050 ms, total 0.150 ms
+n=128 [RapiDHT trace] axis-z(depth) 0.051 ms, axis-y(height) 0.048 ms, axis-x(width) 0.050 ms, total 0.149 ms
+n=128 [RapiDHT trace] axis-z(depth) 0.050 ms, axis-y(height) 0.049 ms, axis-x(width) 0.049 ms, total 0.148 ms
+n=128 [RapiDHT trace] axis-z(depth) 0.049 ms, axis-y(height) 0.049 ms, axis-x(width) 0.050 ms, total 0.148 ms
+n=128 [RapiDHT trace] axis-z(depth) 0.050 ms, axis-y(height) 0.049 ms, axis-x(width) 0.050 ms, total 0.150 ms
+n=128 [RapiDHT trace] axis-z(depth) 0.052 ms, axis-y(height) 0.050 ms, axis-x(width) 0.049 ms, total 0.152 ms
+n=128 [RapiDHT trace] axis-z(depth) 0.050 ms, axis-y(height) 0.051 ms, axis-x(width) 0.050 ms, total 0.151 ms
+n=128 [RapiDHT trace] axis-z(depth) 0.054 ms, axis-y(height) 0.048 ms, axis-x(width) 0.049 ms, total 0.151 ms
+n=128 f32 factored  128^3  (2097152 elements, 8.0 MiB per buffer)  x15 iterations
+n=128   0.16 ms per transform, 0.3 GFLOP of multiply-add arithmetic, 1.92 TFLOP/s
+n=128   device memory held by the transform: 0 MiB built, 2 MiB after resident use, 2 MiB after a host-pointer call
+n=n=128 # gpu after sm_mhz=1665 temp_c=44 power_w=9.47 throttle=0x0000000000000000
+n=n=256 # gpu before sm_mhz=1665 temp_c=44 power_w=9.47 throttle=0x0000000000000000
+n=256 [RapiDHT trace] axis-z(depth) 1.951 ms, axis-y(height) 0.438 ms, axis-x(width) 0.364 ms, total 2.753 ms
+n=256 [RapiDHT trace] axis-z(depth) 0.428 ms, axis-y(height) 0.427 ms, axis-x(width) 0.345 ms, total 1.200 ms
+n=256 [RapiDHT trace] axis-z(depth) 0.426 ms, axis-y(height) 0.425 ms, axis-x(width) 0.347 ms, total 1.198 ms
+n=256 [RapiDHT trace] axis-z(depth) 0.432 ms, axis-y(height) 0.424 ms, axis-x(width) 0.343 ms, total 1.199 ms
+n=256 [RapiDHT trace] axis-z(depth) 0.414 ms, axis-y(height) 0.427 ms, axis-x(width) 0.342 ms, total 1.183 ms
+n=256 [RapiDHT trace] axis-z(depth) 0.434 ms, axis-y(height) 0.425 ms, axis-x(width) 0.346 ms, total 1.205 ms
+n=256 [RapiDHT trace] axis-z(depth) 0.408 ms, axis-y(height) 0.427 ms, axis-x(width) 0.346 ms, total 1.181 ms
+n=256 [RapiDHT trace] axis-z(depth) 0.428 ms, axis-y(height) 0.426 ms, axis-x(width) 0.346 ms, total 1.200 ms
+n=256 [RapiDHT trace] axis-z(depth) 0.419 ms, axis-y(height) 0.425 ms, axis-x(width) 0.343 ms, total 1.187 ms
+n=256 [RapiDHT trace] axis-z(depth) 0.416 ms, axis-y(height) 0.426 ms, axis-x(width) 0.343 ms, total 1.185 ms
+n=256 [RapiDHT trace] axis-z(depth) 0.430 ms, axis-y(height) 0.426 ms, axis-x(width) 0.342 ms, total 1.198 ms
+n=256 [RapiDHT trace] axis-z(depth) 0.400 ms, axis-y(height) 0.425 ms, axis-x(width) 0.343 ms, total 1.168 ms
+n=256 [RapiDHT trace] axis-z(depth) 0.418 ms, axis-y(height) 0.428 ms, axis-x(width) 0.345 ms, total 1.191 ms
+n=256 [RapiDHT trace] axis-z(depth) 0.428 ms, axis-y(height) 0.436 ms, axis-x(width) 0.344 ms, total 1.208 ms
+n=256 [RapiDHT trace] axis-z(depth) 0.409 ms, axis-y(height) 0.424 ms, axis-x(width) 0.346 ms, total 1.179 ms
+n=256 [RapiDHT trace] axis-z(depth) 0.439 ms, axis-y(height) 0.427 ms, axis-x(width) 0.344 ms, total 1.210 ms
+n=256 [RapiDHT trace] axis-z(depth) 0.416 ms, axis-y(height) 0.425 ms, axis-x(width) 0.347 ms, total 1.188 ms
+n=256 f32 factored  256^3  (16777216 elements, 64.0 MiB per buffer)  x15 iterations
+n=256   1.20 ms per transform, 3.2 GFLOP of multiply-add arithmetic, 2.68 TFLOP/s
+n=256   device memory held by the transform: 32 MiB built, 34 MiB after resident use, 98 MiB after a host-pointer call
+n=n=256 # gpu after sm_mhz=1665 temp_c=45 power_w=16.67 throttle=0x0000000000000000
+n=n=512 # gpu before sm_mhz=1665 temp_c=45 power_w=16.67 throttle=0x0000000000000000
+n=512 [RapiDHT trace] axis-z(depth) 4.828 ms, axis-y(height) 2.939 ms, axis-x(width) 3.279 ms, total 11.046 ms
+n=512 [RapiDHT trace] axis-z(depth) 3.272 ms, axis-y(height) 3.122 ms, axis-x(width) 3.268 ms, total 9.661 ms
+n=512 [RapiDHT trace] axis-z(depth) 3.270 ms, axis-y(height) 2.897 ms, axis-x(width) 3.269 ms, total 9.435 ms
+n=512 [RapiDHT trace] axis-z(depth) 3.268 ms, axis-y(height) 2.839 ms, axis-x(width) 3.268 ms, total 9.374 ms
+n=512 [RapiDHT trace] axis-z(depth) 3.271 ms, axis-y(height) 2.874 ms, axis-x(width) 3.270 ms, total 9.416 ms
+n=512 [RapiDHT trace] axis-z(depth) 3.271 ms, axis-y(height) 3.040 ms, axis-x(width) 3.270 ms, total 9.581 ms
+n=512 [RapiDHT trace] axis-z(depth) 3.273 ms, axis-y(height) 2.939 ms, axis-x(width) 3.271 ms, total 9.482 ms
+n=512 [RapiDHT trace] axis-z(depth) 3.270 ms, axis-y(height) 2.824 ms, axis-x(width) 3.269 ms, total 9.362 ms
+n=512 [RapiDHT trace] axis-z(depth) 3.270 ms, axis-y(height) 3.045 ms, axis-x(width) 3.189 ms, total 9.504 ms
+n=512 [RapiDHT trace] axis-z(depth) 3.204 ms, axis-y(height) 2.993 ms, axis-x(width) 3.080 ms, total 9.277 ms
+n=512 [RapiDHT trace] axis-z(depth) 3.203 ms, axis-y(height) 3.058 ms, axis-x(width) 3.059 ms, total 9.319 ms
+n=512 [RapiDHT trace] axis-z(depth) 3.196 ms, axis-y(height) 3.126 ms, axis-x(width) 3.047 ms, total 9.369 ms
+n=512 [RapiDHT trace] axis-z(depth) 3.199 ms, axis-y(height) 3.227 ms, axis-x(width) 3.048 ms, total 9.474 ms
+n=512 [RapiDHT trace] axis-z(depth) 3.201 ms, axis-y(height) 3.170 ms, axis-x(width) 3.048 ms, total 9.419 ms
+n=512 [RapiDHT trace] axis-z(depth) 3.187 ms, axis-y(height) 3.102 ms, axis-x(width) 3.040 ms, total 9.329 ms
+n=512 [RapiDHT trace] axis-z(depth) 3.189 ms, axis-y(height) 3.149 ms, axis-x(width) 3.039 ms, total 9.377 ms
+n=512 [RapiDHT trace] axis-z(depth) 3.138 ms, axis-y(height) 3.173 ms, axis-x(width) 2.865 ms, total 9.176 ms
+n=512 f32 factored  512^3  (134217728 elements, 512.0 MiB per buffer)  x15 iterations
+n=512   9.43 ms per transform, 38.7 GFLOP of multiply-add arithmetic, 4.10 TFLOP/s
+n=512   device memory held by the transform: 32 MiB built, 34 MiB after resident use, 546 MiB after a host-pointer call
+n=n=512 # gpu after sm_mhz=1935 temp_c=49 power_w=51.45 throttle=0x0000000000000000
+n=n=128/u16 # gpu before sm_mhz=1935 temp_c=48 power_w=51.45 throttle=0x0000000000000000
+n=128/u16 [RapiDHT trace] axis-z(depth) 1.647 ms, axis-y(height) 0.055 ms, axis-x(width) 0.055 ms, offset 0.005 ms, total 1.762 ms
+n=128/u16 [RapiDHT trace] axis-z(depth) 0.058 ms, axis-y(height) 0.049 ms, axis-x(width) 0.050 ms, offset 0.003 ms, total 0.159 ms
+n=128/u16 [RapiDHT trace] axis-z(depth) 0.057 ms, axis-y(height) 0.049 ms, axis-x(width) 0.050 ms, offset 0.003 ms, total 0.160 ms
+n=128/u16 [RapiDHT trace] axis-z(depth) 0.058 ms, axis-y(height) 0.048 ms, axis-x(width) 0.049 ms, offset 0.003 ms, total 0.159 ms
+n=128/u16 [RapiDHT trace] axis-z(depth) 0.057 ms, axis-y(height) 0.053 ms, axis-x(width) 0.049 ms, offset 0.003 ms, total 0.163 ms
+n=128/u16 [RapiDHT trace] axis-z(depth) 0.056 ms, axis-y(height) 0.049 ms, axis-x(width) 0.049 ms, offset 0.002 ms, total 0.157 ms
+n=128/u16 [RapiDHT trace] axis-z(depth) 0.057 ms, axis-y(height) 0.051 ms, axis-x(width) 0.050 ms, offset 0.003 ms, total 0.162 ms
+n=128/u16 [RapiDHT trace] axis-z(depth) 0.057 ms, axis-y(height) 0.051 ms, axis-x(width) 0.050 ms, offset 0.003 ms, total 0.162 ms
+n=128/u16 [RapiDHT trace] axis-z(depth) 0.058 ms, axis-y(height) 0.048 ms, axis-x(width) 0.049 ms, offset 0.003 ms, total 0.158 ms
+n=128/u16 [RapiDHT trace] axis-z(depth) 0.057 ms, axis-y(height) 0.050 ms, axis-x(width) 0.050 ms, offset 0.002 ms, total 0.160 ms
+n=128/u16 [RapiDHT trace] axis-z(depth) 0.057 ms, axis-y(height) 0.051 ms, axis-x(width) 0.048 ms, offset 0.003 ms, total 0.160 ms
+n=128/u16 [RapiDHT trace] axis-z(depth) 0.058 ms, axis-y(height) 0.051 ms, axis-x(width) 0.049 ms, offset 0.003 ms, total 0.162 ms
+n=128/u16 [RapiDHT trace] axis-z(depth) 0.057 ms, axis-y(height) 0.049 ms, axis-x(width) 0.049 ms, offset 0.003 ms, total 0.159 ms
+n=128/u16 [RapiDHT trace] axis-z(depth) 0.057 ms, axis-y(height) 0.050 ms, axis-x(width) 0.050 ms, offset 0.003 ms, total 0.161 ms
+n=128/u16 [RapiDHT trace] axis-z(depth) 0.057 ms, axis-y(height) 0.050 ms, axis-x(width) 0.049 ms, offset 0.003 ms, total 0.159 ms
+n=128/u16 [RapiDHT trace] axis-z(depth) 0.057 ms, axis-y(height) 0.049 ms, axis-x(width) 0.050 ms, offset 0.003 ms, total 0.160 ms
+n=128/u16 u16 factored  128^3  (2097152 elements, 4.0 MiB of input)  x15 iterations
+n=128/u16   0.17 ms per transform
+n=n=128/u16 # gpu after sm_mhz=1935 temp_c=48 power_w=54.14 throttle=0x0000000000000000
+n=n=256/u16 # gpu before sm_mhz=1935 temp_c=48 power_w=54.14 throttle=0x0000000000000000
+n=256/u16 [RapiDHT trace] axis-z(depth) 2.133 ms, axis-y(height) 0.379 ms, axis-x(width) 0.346 ms, offset 0.004 ms, total 2.863 ms
+n=256/u16 [RapiDHT trace] axis-z(depth) 0.526 ms, axis-y(height) 0.396 ms, axis-x(width) 0.340 ms, offset 0.003 ms, total 1.266 ms
+n=256/u16 [RapiDHT trace] axis-z(depth) 0.526 ms, axis-y(height) 0.373 ms, axis-x(width) 0.340 ms, offset 0.003 ms, total 1.242 ms
+n=256/u16 [RapiDHT trace] axis-z(depth) 0.526 ms, axis-y(height) 0.376 ms, axis-x(width) 0.341 ms, offset 0.003 ms, total 1.246 ms
+n=256/u16 [RapiDHT trace] axis-z(depth) 0.525 ms, axis-y(height) 0.374 ms, axis-x(width) 0.339 ms, offset 0.003 ms, total 1.241 ms
+n=256/u16 [RapiDHT trace] axis-z(depth) 0.526 ms, axis-y(height) 0.375 ms, axis-x(width) 0.342 ms, offset 0.003 ms, total 1.246 ms
+n=256/u16 [RapiDHT trace] axis-z(depth) 0.525 ms, axis-y(height) 0.461 ms, axis-x(width) 0.339 ms, offset 0.003 ms, total 1.328 ms
+n=256/u16 [RapiDHT trace] axis-z(depth) 0.526 ms, axis-y(height) 0.372 ms, axis-x(width) 0.339 ms, offset 0.003 ms, total 1.240 ms
+n=256/u16 [RapiDHT trace] axis-z(depth) 0.526 ms, axis-y(height) 0.379 ms, axis-x(width) 0.344 ms, offset 0.003 ms, total 1.252 ms
+n=256/u16 [RapiDHT trace] axis-z(depth) 0.526 ms, axis-y(height) 0.510 ms, axis-x(width) 0.344 ms, offset 0.003 ms, total 1.383 ms
+n=256/u16 [RapiDHT trace] axis-z(depth) 0.526 ms, axis-y(height) 0.445 ms, axis-x(width) 0.338 ms, offset 0.003 ms, total 1.313 ms
+n=256/u16 [RapiDHT trace] axis-z(depth) 0.526 ms, axis-y(height) 0.466 ms, axis-x(width) 0.339 ms, offset 0.003 ms, total 1.334 ms
+n=256/u16 [RapiDHT trace] axis-z(depth) 0.526 ms, axis-y(height) 0.374 ms, axis-x(width) 0.342 ms, offset 0.003 ms, total 1.245 ms
+n=256/u16 [RapiDHT trace] axis-z(depth) 0.525 ms, axis-y(height) 0.373 ms, axis-x(width) 0.348 ms, offset 0.003 ms, total 1.249 ms
+n=256/u16 [RapiDHT trace] axis-z(depth) 0.527 ms, axis-y(height) 0.387 ms, axis-x(width) 0.351 ms, offset 0.003 ms, total 1.269 ms
+n=256/u16 [RapiDHT trace] axis-z(depth) 0.525 ms, axis-y(height) 0.373 ms, axis-x(width) 0.345 ms, offset 0.003 ms, total 1.246 ms
+n=256/u16 u16 factored  256^3  (16777216 elements, 32.0 MiB of input)  x15 iterations
+n=256/u16   1.28 ms per transform
+n=n=256/u16 # gpu after sm_mhz=1935 temp_c=48 power_w=60.38 throttle=0x0000000000000000
+n=n=512/u16 # gpu before sm_mhz=1935 temp_c=48 power_w=60.38 throttle=0x0000000000000000
+n=512/u16 [RapiDHT trace] axis-z(depth) 5.723 ms, axis-y(height) 3.161 ms, axis-x(width) 2.936 ms, offset 0.005 ms, total 11.825 ms
+n=512/u16 [RapiDHT trace] axis-z(depth) 4.134 ms, axis-y(height) 3.185 ms, axis-x(width) 2.896 ms, offset 0.003 ms, total 10.217 ms
+n=512/u16 [RapiDHT trace] axis-z(depth) 4.135 ms, axis-y(height) 3.190 ms, axis-x(width) 2.929 ms, offset 0.003 ms, total 10.256 ms
+n=512/u16 [RapiDHT trace] axis-z(depth) 4.131 ms, axis-y(height) 3.248 ms, axis-x(width) 2.953 ms, offset 0.003 ms, total 10.335 ms
+n=512/u16 [RapiDHT trace] axis-z(depth) 4.186 ms, axis-y(height) 3.193 ms, axis-x(width) 2.970 ms, offset 0.003 ms, total 10.351 ms
+n=512/u16 [RapiDHT trace] axis-z(depth) 4.173 ms, axis-y(height) 3.195 ms, axis-x(width) 2.925 ms, offset 0.003 ms, total 10.296 ms
+n=512/u16 [RapiDHT trace] axis-z(depth) 4.173 ms, axis-y(height) 3.138 ms, axis-x(width) 2.911 ms, offset 0.003 ms, total 10.225 ms
+n=512/u16 [RapiDHT trace] axis-z(depth) 4.175 ms, axis-y(height) 3.240 ms, axis-x(width) 2.960 ms, offset 0.003 ms, total 10.378 ms
+n=512/u16 [RapiDHT trace] axis-z(depth) 4.173 ms, axis-y(height) 3.208 ms, axis-x(width) 2.895 ms, offset 0.003 ms, total 10.279 ms
+n=512/u16 [RapiDHT trace] axis-z(depth) 4.173 ms, axis-y(height) 3.215 ms, axis-x(width) 2.970 ms, offset 0.003 ms, total 10.361 ms
+n=512/u16 [RapiDHT trace] axis-z(depth) 4.183 ms, axis-y(height) 3.262 ms, axis-x(width) 2.940 ms, offset 0.003 ms, total 10.388 ms
+n=512/u16 [RapiDHT trace] axis-z(depth) 4.186 ms, axis-y(height) 3.199 ms, axis-x(width) 2.881 ms, offset 0.003 ms, total 10.269 ms
+n=512/u16 [RapiDHT trace] axis-z(depth) 4.183 ms, axis-y(height) 3.116 ms, axis-x(width) 2.966 ms, offset 0.003 ms, total 10.267 ms
+n=512/u16 [RapiDHT trace] axis-z(depth) 4.185 ms, axis-y(height) 3.268 ms, axis-x(width) 2.954 ms, offset 0.003 ms, total 10.410 ms
+n=512/u16 [RapiDHT trace] axis-z(depth) 4.190 ms, axis-y(height) 3.254 ms, axis-x(width) 2.944 ms, offset 0.003 ms, total 10.392 ms
+n=512/u16 [RapiDHT trace] axis-z(depth) 4.184 ms, axis-y(height) 3.201 ms, axis-x(width) 2.888 ms, offset 0.003 ms, total 10.276 ms
+n=512/u16 u16 factored  512^3  (134217728 elements, 256.0 MiB of input)  x15 iterations
+n=512/u16   10.32 ms per transform
+n=n=512/u16 # gpu after sm_mhz=1935 temp_c=52 power_w=69.26 throttle=0x0000000000000000
+n=n=128/u8 # gpu before sm_mhz=1935 temp_c=52 power_w=69.26 throttle=0x0000000000000000
+n=128/u8 [RapiDHT trace] axis-z(depth) 1.563 ms, axis-y(height) 0.054 ms, axis-x(width) 0.056 ms, offset 0.004 ms, total 1.677 ms
+n=128/u8 [RapiDHT trace] axis-z(depth) 0.055 ms, axis-y(height) 0.052 ms, axis-x(width) 0.050 ms, offset 0.003 ms, total 0.161 ms
+n=128/u8 [RapiDHT trace] axis-z(depth) 0.053 ms, axis-y(height) 0.051 ms, axis-x(width) 0.049 ms, offset 0.003 ms, total 0.157 ms
+n=128/u8 [RapiDHT trace] axis-z(depth) 0.054 ms, axis-y(height) 0.047 ms, axis-x(width) 0.048 ms, offset 0.002 ms, total 0.152 ms
+n=128/u8 [RapiDHT trace] axis-z(depth) 0.054 ms, axis-y(height) 0.048 ms, axis-x(width) 0.049 ms, offset 0.003 ms, total 0.155 ms
+n=128/u8 [RapiDHT trace] axis-z(depth) 0.054 ms, axis-y(height) 0.050 ms, axis-x(width) 0.048 ms, offset 0.003 ms, total 0.155 ms
+n=128/u8 [RapiDHT trace] axis-z(depth) 0.054 ms, axis-y(height) 0.050 ms, axis-x(width) 0.050 ms, offset 0.002 ms, total 0.156 ms
+n=128/u8 [RapiDHT trace] axis-z(depth) 0.054 ms, axis-y(height) 0.050 ms, axis-x(width) 0.050 ms, offset 0.003 ms, total 0.158 ms
+n=128/u8 [RapiDHT trace] axis-z(depth) 0.054 ms, axis-y(height) 0.049 ms, axis-x(width) 0.051 ms, offset 0.003 ms, total 0.157 ms
+n=128/u8 [RapiDHT trace] axis-z(depth) 0.054 ms, axis-y(height) 0.049 ms, axis-x(width) 0.048 ms, offset 0.003 ms, total 0.155 ms
+n=128/u8 [RapiDHT trace] axis-z(depth) 0.054 ms, axis-y(height) 0.049 ms, axis-x(width) 0.049 ms, offset 0.003 ms, total 0.155 ms
+n=128/u8 [RapiDHT trace] axis-z(depth) 0.054 ms, axis-y(height) 0.049 ms, axis-x(width) 0.049 ms, offset 0.003 ms, total 0.156 ms
+n=128/u8 [RapiDHT trace] axis-z(depth) 0.054 ms, axis-y(height) 0.049 ms, axis-x(width) 0.050 ms, offset 0.002 ms, total 0.156 ms
+n=128/u8 [RapiDHT trace] axis-z(depth) 0.055 ms, axis-y(height) 0.048 ms, axis-x(width) 0.049 ms, offset 0.003 ms, total 0.155 ms
+n=128/u8 [RapiDHT trace] axis-z(depth) 0.054 ms, axis-y(height) 0.049 ms, axis-x(width) 0.047 ms, offset 0.003 ms, total 0.154 ms
+n=128/u8 [RapiDHT trace] axis-z(depth) 0.053 ms, axis-y(height) 0.050 ms, axis-x(width) 0.049 ms, offset 0.003 ms, total 0.156 ms
+n=128/u8 u8 factored  128^3  (2097152 elements, 2.0 MiB of input)  x15 iterations
+n=128/u8   0.16 ms per transform
+n=n=128/u8 # gpu after sm_mhz=1935 temp_c=50 power_w=69.43 throttle=0x0000000000000000
+n=n=256/u8 # gpu before sm_mhz=1935 temp_c=50 power_w=69.43 throttle=0x0000000000000000
+n=256/u8 [RapiDHT trace] axis-z(depth) 2.004 ms, axis-y(height) 0.418 ms, axis-x(width) 0.354 ms, offset 0.005 ms, total 2.781 ms
+n=256/u8 [RapiDHT trace] axis-z(depth) 0.511 ms, axis-y(height) 0.526 ms, axis-x(width) 0.343 ms, offset 0.003 ms, total 1.383 ms
+n=256/u8 [RapiDHT trace] axis-z(depth) 0.509 ms, axis-y(height) 0.436 ms, axis-x(width) 0.341 ms, offset 0.003 ms, total 1.289 ms
+n=256/u8 [RapiDHT trace] axis-z(depth) 0.509 ms, axis-y(height) 0.528 ms, axis-x(width) 0.337 ms, offset 0.003 ms, total 1.377 ms
+n=256/u8 [RapiDHT trace] axis-z(depth) 0.510 ms, axis-y(height) 0.387 ms, axis-x(width) 0.341 ms, offset 0.002 ms, total 1.240 ms
+n=256/u8 [RapiDHT trace] axis-z(depth) 0.509 ms, axis-y(height) 0.373 ms, axis-x(width) 0.341 ms, offset 0.003 ms, total 1.226 ms
+n=256/u8 [RapiDHT trace] axis-z(depth) 0.510 ms, axis-y(height) 0.373 ms, axis-x(width) 0.342 ms, offset 0.003 ms, total 1.227 ms
+n=256/u8 [RapiDHT trace] axis-z(depth) 0.509 ms, axis-y(height) 0.374 ms, axis-x(width) 0.341 ms, offset 0.002 ms, total 1.226 ms
+n=256/u8 [RapiDHT trace] axis-z(depth) 0.509 ms, axis-y(height) 0.425 ms, axis-x(width) 0.342 ms, offset 0.003 ms, total 1.279 ms
+n=256/u8 [RapiDHT trace] axis-z(depth) 0.508 ms, axis-y(height) 0.424 ms, axis-x(width) 0.343 ms, offset 0.003 ms, total 1.278 ms
+n=256/u8 [RapiDHT trace] axis-z(depth) 0.509 ms, axis-y(height) 0.438 ms, axis-x(width) 0.340 ms, offset 0.003 ms, total 1.290 ms
+n=256/u8 [RapiDHT trace] axis-z(depth) 0.509 ms, axis-y(height) 0.414 ms, axis-x(width) 0.340 ms, offset 0.003 ms, total 1.265 ms
+n=256/u8 [RapiDHT trace] axis-z(depth) 0.508 ms, axis-y(height) 0.373 ms, axis-x(width) 0.339 ms, offset 0.003 ms, total 1.224 ms
+n=256/u8 [RapiDHT trace] axis-z(depth) 0.509 ms, axis-y(height) 0.372 ms, axis-x(width) 0.347 ms, offset 0.003 ms, total 1.230 ms
+n=256/u8 [RapiDHT trace] axis-z(depth) 0.509 ms, axis-y(height) 0.374 ms, axis-x(width) 0.338 ms, offset 0.003 ms, total 1.224 ms
+n=256/u8 [RapiDHT trace] axis-z(depth) 0.509 ms, axis-y(height) 0.377 ms, axis-x(width) 0.340 ms, offset 0.003 ms, total 1.229 ms
+n=256/u8 u8 factored  256^3  (16777216 elements, 16.0 MiB of input)  x15 iterations
+n=256/u8   1.27 ms per transform
+n=n=256/u8 # gpu after sm_mhz=1935 temp_c=49 power_w=69.50 throttle=0x0000000000000000
+n=n=512/u8 # gpu before sm_mhz=1935 temp_c=49 power_w=69.50 throttle=0x0000000000000000
+n=512/u8 [RapiDHT trace] axis-z(depth) 5.475 ms, axis-y(height) 3.207 ms, axis-x(width) 2.871 ms, offset 0.005 ms, total 11.558 ms
+n=512/u8 [RapiDHT trace] axis-z(depth) 3.897 ms, axis-y(height) 3.166 ms, axis-x(width) 2.898 ms, offset 0.003 ms, total 9.964 ms
+n=512/u8 [RapiDHT trace] axis-z(depth) 3.894 ms, axis-y(height) 3.228 ms, axis-x(width) 2.932 ms, offset 0.003 ms, total 10.057 ms
+n=512/u8 [RapiDHT trace] axis-z(depth) 3.969 ms, axis-y(height) 3.153 ms, axis-x(width) 2.933 ms, offset 0.003 ms, total 10.058 ms
+n=512/u8 [RapiDHT trace] axis-z(depth) 3.966 ms, axis-y(height) 3.263 ms, axis-x(width) 2.954 ms, offset 0.003 ms, total 10.187 ms
+n=512/u8 [RapiDHT trace] axis-z(depth) 3.966 ms, axis-y(height) 3.113 ms, axis-x(width) 2.959 ms, offset 0.003 ms, total 10.041 ms
+n=512/u8 [RapiDHT trace] axis-z(depth) 3.967 ms, axis-y(height) 3.256 ms, axis-x(width) 2.932 ms, offset 0.003 ms, total 10.158 ms
+n=512/u8 [RapiDHT trace] axis-z(depth) 3.963 ms, axis-y(height) 3.226 ms, axis-x(width) 2.922 ms, offset 0.003 ms, total 10.113 ms
+n=512/u8 [RapiDHT trace] axis-z(depth) 3.949 ms, axis-y(height) 3.228 ms, axis-x(width) 2.902 ms, offset 0.003 ms, total 10.082 ms
+n=512/u8 [RapiDHT trace] axis-z(depth) 3.946 ms, axis-y(height) 3.197 ms, axis-x(width) 2.941 ms, offset 0.003 ms, total 10.087 ms
+n=512/u8 [RapiDHT trace] axis-z(depth) 3.948 ms, axis-y(height) 3.247 ms, axis-x(width) 2.908 ms, offset 0.003 ms, total 10.107 ms
+n=512/u8 [RapiDHT trace] axis-z(depth) 3.944 ms, axis-y(height) 3.244 ms, axis-x(width) 2.921 ms, offset 0.003 ms, total 10.113 ms
+n=512/u8 [RapiDHT trace] axis-z(depth) 3.951 ms, axis-y(height) 3.317 ms, axis-x(width) 2.925 ms, offset 0.003 ms, total 10.195 ms
+n=512/u8 [RapiDHT trace] axis-z(depth) 3.943 ms, axis-y(height) 3.249 ms, axis-x(width) 2.966 ms, offset 0.003 ms, total 10.161 ms
+n=512/u8 [RapiDHT trace] axis-z(depth) 3.945 ms, axis-y(height) 3.192 ms, axis-x(width) 2.936 ms, offset 0.003 ms, total 10.076 ms
+n=512/u8 [RapiDHT trace] axis-z(depth) 3.945 ms, axis-y(height) 3.201 ms, axis-x(width) 2.940 ms, offset 0.003 ms, total 10.089 ms
+n=512/u8 u8 factored  512^3  (134217728 elements, 128.0 MiB of input)  x15 iterations
+n=512/u8   10.11 ms per transform
+n=n=512/u8 # gpu after sm_mhz=1935 temp_c=56 power_w=68.76 throttle=0x0000000000000000

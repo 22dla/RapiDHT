@@ -102,6 +102,8 @@ target_link_libraries(profile_gpu3d PRIVATE coreht rapidht_warnings)
 # cudaMemGetInfo, to report what the transform holds on the device.
 if(RAPIDHT_WITH_CUDA)
     target_link_libraries(profile_gpu3d PRIVATE CUDA::cudart)
+    # R-5 step 2.4: the integer path through src/internal/device_access.h.
+    target_include_directories(profile_gpu3d PRIVATE "${PROJECT_SOURCE_DIR}/src")
 endif()
 
 # R-4 step 0.4: float error of the GPU paths and of cuFFT against the CPU in

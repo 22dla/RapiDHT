@@ -822,6 +822,30 @@ uint8 is the same picture: 1.07, 1.05, 1.13 and 1.39 of the LTO callback.
 - Error: the factored path is the more accurate one on the same input
   (u16 512³: largest 0.028 against 0.042 LSB).
 
+### The first pass reading integers (R-5 steps 2.3–2.4, 2026-11-26)
+
+`IntFactored/`: the z pass reads uint8 / uint16 itself, subtracts the offset in
+registers and writes float into the output volume; the other passes run in
+place (`benchmarks/results/2026-11-26_evgeny_r5_s24_base.json`; batch widths
+of the float path, which the sweep `s24_L{8,16,32}` of step 2.4 confirmed):
+
+| | LTO callback (strongest) | ours, convert | **ours, integer first pass** | /LTO | /convert | ours, float input |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| u8 128³ | 170 µs | 180 µs | **149 µs** | 0.88 | 0.82 | 148 µs |
+| u16 128³ | 170 µs | 186 µs | **159 µs** | 0.94 | 0.86 | 148 µs |
+| u8 256³ | 1.291 ms | 1.367 ms | **1.181 ms** | 0.91 | 0.86 | 1.157 ms |
+| u16 256³ | 1.276 ms | 1.397 ms | **1.203 ms** | 0.94 | 0.86 | 1.157 ms |
+| u8 512³ | 9.72 ms | 11.02 ms | **10.26 ms** | 1.06 | 0.93 | 9.38 ms |
+| u16 512³ | 10.03 ms | 11.32 ms | **10.50 ms** | 1.05 | 0.93 | 9.38 ms |
+
+Per kernel (`…_s24_base_trace.txt`, clock locked at 1665 MHz, minimum of 15
+calls), the z pass, ms: float 0.049 / 0.410 / 3.12, u16 0.056 / 0.441 / 4.09,
+u8 0.046 / 0.417 / 3.90 at 128³ / 256³ / 512³. At 512³ the pass reading
+integers is 0.8–1.0 ms slower than the float one although it reads half or a
+quarter of the bytes; no batch width of 8, 16 or 32 lines removes that. The y
+pass after it (the same in-place float kernel) also moves: 3.10 against
+2.78 ms at 512³, 0.37 against 0.43 at 256³ -- cause not measured.
+
 ---
 
 ## FFTW, for reference
