@@ -283,13 +283,13 @@ std::vector<double> RunTransformFromIntegers(
         const int l = static_cast<int>(zLanes), po = static_cast<int>(blocksPerOther), bt = static_cast<int>(batches);
         if (kernel == Kernel::InPlace) {
             FactoredAxisKernelInPlaceFrom<T, TIn, kHostMaxQuads, kHostItems, 1, false>(
-                in.data(), v.data(), offset, tf.view, firstStride, 1, l, po, otherStride, bt, ws, vec);
+                in.data(), v.data(), &offset, tf.view, firstStride, 1, l, po, otherStride, bt, ws, vec);
         } else if (kernel == Kernel::InPlaceFold) {
             FactoredAxisKernelInPlaceFrom<T, TIn, kHostMaxQuads, kHostItems, 1, true>(
-                in.data(), v.data(), offset, tf.view, firstStride, 1, l, po, otherStride, bt, ws, vec);
+                in.data(), v.data(), &offset, tf.view, firstStride, 1, l, po, otherStride, bt, ws, vec);
         } else {
             FactoredAxisKernelPipelinedFrom<T, TIn, kHostMaxQuads, false>(
-                in.data(), v.data(), offset, tf.view, firstStride, 1, l, po, otherStride, bt, ws, vec);
+                in.data(), v.data(), &offset, tf.view, firstStride, 1, l, po, otherStride, bt, ws, vec);
         }
     }
     if (is3D) {

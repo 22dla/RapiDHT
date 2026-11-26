@@ -535,7 +535,7 @@ constexpr auto PipelinedAxisKernel()
 
 template <typename T, typename TIn, int kItems, int kMinBlocks, int kN, int kLanes>
 void LaunchPipelinedAxisAs(FactoredDeviceInfo& info, size_t batches, size_t sharedBytes, const TIn* in, T* data,
-    T offset, const FactoredAxisTables<T>& tables, size_t axisStride, size_t laneStride, size_t lanes,
+    const T* offset, const FactoredAxisTables<T>& tables, size_t axisStride, size_t laneStride, size_t lanes,
     size_t blocksPerOther, size_t otherStride, int workStride, bool vec)
 {
     constexpr bool kFold = FactoredFoldsTwiddle(false, kItems);
@@ -661,7 +661,7 @@ void FactoredDispatchSize(const FactoredAxisTables<T>& tables, size_t lanes, Lau
 
 template <typename T, typename TIn, int kItems, int kMinBlocks>
 void LaunchPipelinedAxis(FactoredDeviceInfo& info, size_t batches, size_t sharedBytes, const TIn* in, T* data,
-    T offset, const FactoredAxisTables<T>& tables, size_t axisStride, size_t laneStride, size_t lanes,
+    const T* offset, const FactoredAxisTables<T>& tables, size_t axisStride, size_t laneStride, size_t lanes,
     size_t blocksPerOther, size_t otherStride, int workStride, bool vec)
 {
     FactoredDispatchSize<T, false, kItems, kMinBlocks>(tables, lanes, [&](auto kN, auto kL) {
@@ -676,18 +676,81 @@ void LaunchPipelinedAxis(FactoredDeviceInfo& info, size_t batches, size_t shared
 /// pipelined kernel does not apply (short axes, double): convert, then the
 /// usual pass in place.
 template <typename T, typename TIn>
-__global__ void ConvertFromIntegersKernel(const TIn* in, T* out, T offset, size_t count)
+__global__ void ConvertFromIntegersKernel(const TIn* in, T* out, const T* offsetOnDevice, size_t count)
 {
+    const T offset = *offsetOnDevice;
     const size_t stride = static_cast<size_t>(gridDim.x) * blockDim.x;
     for (size_t i = static_cast<size_t>(blockIdx.x) * blockDim.x + threadIdx.x; i < count; i += stride) {
         out[i] = static_cast<T>(in[i]) - offset;
     }
 }
 
+/// data[0] += *offset * n in double: the offset returned to the zero
+/// coefficient (R-5; the same arithmetic as adding offset * N computed on the
+/// host before step 3.1).
 template <typename T>
-__global__ void AddToFirstKernel(T* data, double value)
+__global__ void AddOffsetToFirstKernel(T* data, const T* offset, double n)
 {
-    data[0] = static_cast<T>(static_cast<double>(data[0]) + value);
+    data[0] = static_cast<T>(static_cast<double>(data[0]) + static_cast<double>(*offset) * n);
+}
+
+template <typename T>
+__global__ void SetOffsetKernel(T* offset, double value)
+{
+    *offset = static_cast<T>(value);
+}
+
+/*
+ * R-5 step 3.1 (the reduction of step 1.2, benchmarks/cufft_baseline.cu): the
+ * exact sum of every step-th line along x -- lines 0, step, 2 step, ... --
+ * into *sum. A fixed grid strides over the sampled values, each thread adds
+ * into a 64-bit register, the warp and then the block reduce, one atomicAdd a
+ * block. Quads where the width allows (kQuad), single values otherwise.
+ */
+template <typename TIn, bool kQuad>
+__global__ void SumLinesKernel(const TIn* in, size_t width, size_t sampled, size_t step, unsigned long long* sum)
+{
+    unsigned long long local = 0;
+    const size_t threads = static_cast<size_t>(gridDim.x) * blockDim.x;
+    const size_t perLine = kQuad ? width / 4 : width;
+    const size_t total = sampled * perLine;
+    for (size_t i = static_cast<size_t>(blockIdx.x) * blockDim.x + threadIdx.x; i < total; i += threads) {
+        const size_t line = (i / perLine) * step;
+        const size_t at = i % perLine;
+        if constexpr (kQuad) {
+            using Quad = std::conditional_t<sizeof(TIn) == 1, uchar4, ushort4>;
+            const Quad v = reinterpret_cast<const Quad*>(in + line * width)[at];
+            local += static_cast<unsigned long long>(v.x) + v.y + v.z + v.w;
+        } else {
+            local += in[line * width + at];
+        }
+    }
+    for (int shift = 16; shift > 0; shift /= 2) {
+        local += __shfl_down_sync(0xffffffffu, local, shift);
+    }
+    __shared__ unsigned long long warps[32];
+    const int lane = static_cast<int>(threadIdx.x) % 32;
+    const int warp = static_cast<int>(threadIdx.x) / 32;
+    if (lane == 0) {
+        warps[warp] = local;
+    }
+    __syncthreads();
+    if (warp == 0) {
+        local = lane < static_cast<int>(blockDim.x) / 32 ? warps[lane] : 0;
+        for (int shift = 16; shift > 0; shift /= 2) {
+            local += __shfl_down_sync(0xffffffffu, local, shift);
+        }
+        if (lane == 0) {
+            atomicAdd(sum, local);
+        }
+    }
+}
+
+/// *offset = the sum over `count` values, rounded to the nearest integer.
+template <typename T>
+__global__ void RoundedMeanKernel(const unsigned long long* sum, double count, T* offset)
+{
+    *offset = static_cast<T>(rint(static_cast<double>(*sum) / count));
 }
 
 template <typename T, int kItems, int kMinBlocks>
@@ -713,7 +776,7 @@ namespace {
  * place as usual.
  */
 template <typename T, typename TIn>
-void FactoredAxisImpl(const TIn* in, T* data, T offset, const FactoredAxisTables<T>& tables, size_t axisStride,
+void FactoredAxisImpl(const TIn* in, T* data, const T* offset, const FactoredAxisTables<T>& tables, size_t axisStride,
     size_t laneStride, size_t laneLength, size_t otherStride, size_t otherLength)
 {
     if constexpr (!std::is_same<TIn, T>::value) {
@@ -814,23 +877,55 @@ void FactoredAxisImpl(const TIn* in, T* data, T offset, const FactoredAxisTables
 } // namespace
 
 template <typename T, typename TIn>
-void FactoredAxisFrom(const TIn* in, T* out, T offset, const FactoredAxisTables<T>& tables, size_t axisStride,
+void FactoredAxisFrom(const TIn* in, T* out, const T* offset, const FactoredAxisTables<T>& tables, size_t axisStride,
     size_t laneStride, size_t laneLength, size_t otherStride, size_t otherLength)
 {
     FactoredAxisImpl(in, out, offset, tables, axisStride, laneStride, laneLength, otherStride, otherLength);
 }
 
 template <typename T, typename TIn>
-void ConvertFromIntegers(const TIn* in, T* out, T offset, size_t count)
+void ConvertFromIntegers(const TIn* in, T* out, const T* offset, size_t count)
 {
     ConvertFromIntegersKernel<T, TIn><<<1024, 256>>>(in, out, offset, count);
     RAPIDHT_CUDA_CHECK(cudaGetLastError());
 }
 
 template <typename T>
-void AddToFirst(T* data, double value)
+void AddOffsetToFirst(T* data, const T* offset, double n)
 {
-    AddToFirstKernel<T><<<1, 1>>>(data, value);
+    AddOffsetToFirstKernel<T><<<1, 1>>>(data, offset, n);
+    RAPIDHT_CUDA_CHECK(cudaGetLastError());
+}
+
+template <typename T>
+void SetIntegerOffset(T* offset, double value)
+{
+    SetOffsetKernel<T><<<1, 1>>>(offset, value);
+    RAPIDHT_CUDA_CHECK(cudaGetLastError());
+}
+
+template <typename T, typename TIn>
+void IntegerMeanOffset(const TIn* in, size_t width, size_t lines, size_t step, unsigned long long* sum, T* offset)
+{
+    const size_t sampled = (lines + step - 1) / step;
+    const bool quad = width % 4 == 0 && reinterpret_cast<uintptr_t>(in) % (4 * sizeof(TIn)) == 0;
+    const size_t perLine = quad ? width / 4 : width;
+    int device = 0;
+    int sms = 0;
+    RAPIDHT_CUDA_CHECK(cudaGetDevice(&device));
+    RAPIDHT_CUDA_CHECK(cudaDeviceGetAttribute(&sms, cudaDevAttrMultiProcessorCount, device));
+    const unsigned block = 256;
+    // Enough blocks to fill the card (8 a SM), never more than there are reads.
+    const size_t wanted = (sampled * perLine + block - 1) / block;
+    const unsigned grid = static_cast<unsigned>(std::min<size_t>(wanted, static_cast<size_t>(sms) * 8));
+    RAPIDHT_CUDA_CHECK(cudaMemsetAsync(sum, 0, sizeof(unsigned long long)));
+    if (quad) {
+        SumLinesKernel<TIn, true><<<grid, block>>>(in, width, sampled, step, sum);
+    } else {
+        SumLinesKernel<TIn, false><<<grid, block>>>(in, width, sampled, step, sum);
+    }
+    RAPIDHT_CUDA_CHECK(cudaGetLastError());
+    RoundedMeanKernel<T><<<1, 1>>>(sum, static_cast<double>(sampled * width), offset);
     RAPIDHT_CUDA_CHECK(cudaGetLastError());
 }
 
@@ -893,19 +988,19 @@ void FactoredAxis(T* data, const FactoredAxisTables<T>& tables, size_t axisStrid
                               && reinterpret_cast<uintptr_t>(data) % 16 == 0;
                 const int ws = static_cast<int>(FactoredWorkStride<T>(n2, lanes));
                 if (path.items == 0) {
-                    LaunchPipelinedAxis<T, T, 0, 0>(info, batches, sharedBytes, data, data, T(0), tables, axisStride,
+                    LaunchPipelinedAxis<T, T, 0, 0>(info, batches, sharedBytes, data, data, nullptr, tables, axisStride,
                         laneStride, lanes, blocksPerOther, otherStride, ws, vec);
                 } else if (path.items == 4) {
-                    LaunchPipelinedAxis<T, T, 4, 1>(info, batches, sharedBytes, data, data, T(0), tables, axisStride,
+                    LaunchPipelinedAxis<T, T, 4, 1>(info, batches, sharedBytes, data, data, nullptr, tables, axisStride,
                         laneStride, lanes, blocksPerOther, otherStride, ws, vec);
                 } else if (path.items == 2) {
-                    LaunchPipelinedAxis<T, T, 2, 1>(info, batches, sharedBytes, data, data, T(0), tables, axisStride,
+                    LaunchPipelinedAxis<T, T, 2, 1>(info, batches, sharedBytes, data, data, nullptr, tables, axisStride,
                         laneStride, lanes, blocksPerOther, otherStride, ws, vec);
                 } else if (path.minBlocks == 1) {
-                    LaunchPipelinedAxis<T, T, 1, 1>(info, batches, sharedBytes, data, data, T(0), tables, axisStride,
+                    LaunchPipelinedAxis<T, T, 1, 1>(info, batches, sharedBytes, data, data, nullptr, tables, axisStride,
                         laneStride, lanes, blocksPerOther, otherStride, ws, vec);
                 } else {
-                    LaunchPipelinedAxis<T, T, 1, 2>(info, batches, sharedBytes, data, data, T(0), tables, axisStride,
+                    LaunchPipelinedAxis<T, T, 1, 2>(info, batches, sharedBytes, data, data, nullptr, tables, axisStride,
                         laneStride, lanes, blocksPerOther, otherStride, ws, vec);
                 }
                 return;
@@ -1009,20 +1104,26 @@ void BracewellInPlace3D(T* data, int W, int H, int D)
 template void FactoredAxis<float>(float*, const FactoredAxisTables<float>&, size_t, size_t, size_t, size_t, size_t);
 template void FactoredAxis<double>(
     double*, const FactoredAxisTables<double>&, size_t, size_t, size_t, size_t, size_t);
-template void FactoredAxisFrom<float, std::uint8_t>(const std::uint8_t*, float*, float,
+template void FactoredAxisFrom<float, std::uint8_t>(const std::uint8_t*, float*, const float*,
     const FactoredAxisTables<float>&, size_t, size_t, size_t, size_t, size_t);
-template void FactoredAxisFrom<float, std::uint16_t>(const std::uint16_t*, float*, float,
+template void FactoredAxisFrom<float, std::uint16_t>(const std::uint16_t*, float*, const float*,
     const FactoredAxisTables<float>&, size_t, size_t, size_t, size_t, size_t);
-template void FactoredAxisFrom<double, std::uint8_t>(const std::uint8_t*, double*, double,
+template void FactoredAxisFrom<double, std::uint8_t>(const std::uint8_t*, double*, const double*,
     const FactoredAxisTables<double>&, size_t, size_t, size_t, size_t, size_t);
-template void FactoredAxisFrom<double, std::uint16_t>(const std::uint16_t*, double*, double,
+template void FactoredAxisFrom<double, std::uint16_t>(const std::uint16_t*, double*, const double*,
     const FactoredAxisTables<double>&, size_t, size_t, size_t, size_t, size_t);
-template void ConvertFromIntegers<float, std::uint8_t>(const std::uint8_t*, float*, float, size_t);
-template void ConvertFromIntegers<float, std::uint16_t>(const std::uint16_t*, float*, float, size_t);
-template void ConvertFromIntegers<double, std::uint8_t>(const std::uint8_t*, double*, double, size_t);
-template void ConvertFromIntegers<double, std::uint16_t>(const std::uint16_t*, double*, double, size_t);
-template void AddToFirst<float>(float*, double);
-template void AddToFirst<double>(double*, double);
+template void ConvertFromIntegers<float, std::uint8_t>(const std::uint8_t*, float*, const float*, size_t);
+template void IntegerMeanOffset<float, std::uint8_t>(const std::uint8_t*, size_t, size_t, size_t, unsigned long long*, float*);
+template void ConvertFromIntegers<float, std::uint16_t>(const std::uint16_t*, float*, const float*, size_t);
+template void IntegerMeanOffset<float, std::uint16_t>(const std::uint16_t*, size_t, size_t, size_t, unsigned long long*, float*);
+template void ConvertFromIntegers<double, std::uint8_t>(const std::uint8_t*, double*, const double*, size_t);
+template void IntegerMeanOffset<double, std::uint8_t>(const std::uint8_t*, size_t, size_t, size_t, unsigned long long*, double*);
+template void ConvertFromIntegers<double, std::uint16_t>(const std::uint16_t*, double*, const double*, size_t);
+template void IntegerMeanOffset<double, std::uint16_t>(const std::uint16_t*, size_t, size_t, size_t, unsigned long long*, double*);
+template void AddOffsetToFirst<float>(float*, const float*, double);
+template void AddOffsetToFirst<double>(double*, const double*, double);
+template void SetIntegerOffset<float>(float*, double);
+template void SetIntegerOffset<double>(double*, double);
 template bool FactoredLastAxisBracewell<float>(float*, const FactoredAxisTables<float>&, size_t, size_t);
 template bool FactoredLastAxisBracewell<double>(double*, const FactoredAxisTables<double>&, size_t, size_t);
 template void BracewellInPlace2D<float>(float*, int, int);

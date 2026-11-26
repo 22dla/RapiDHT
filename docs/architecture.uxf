@@ -397,7 +397,7 @@ bg=#FFFFFF</panel_attributes>
     <id>UMLClass</id>
     <coordinates>
       <x>920</x>
-      <y>1510</y>
+      <y>1630</y>
       <w>400</w>
       <h>110</h>
     </coordinates>
@@ -661,6 +661,23 @@ bg=#FFFFFF</panel_attributes>
 ForwardFromIntegers(transform, in: uint8/16*, out, offset)
     — the integer path until the API decision (R-5 step 6.1);
       used by bench_transform and test_factored, not installed
+bg=#FFFFFF</panel_attributes>
+    <additional_attributes/>
+  </element>
+  <element>
+    <id>UMLClass</id>
+    <coordinates>
+      <x>900</x>
+      <y>1500</y>
+      <w>390</w>
+      <h>120</h>
+    </coordinates>
+    <panel_attributes>«header» internal/integer_offset.h
+*internal::IntegerOffset*  «R-5 step 3.1»
+--
+None | Value(v) | Mean | SampledMean(step); Default = every 64th line
+    — resolved on the device in FactoredPasses (SetIntegerOffset,
+      IntegerMeanOffset in kernels.cu); kernels read it from there
 bg=#FFFFFF</panel_attributes>
     <additional_attributes/>
   </element>

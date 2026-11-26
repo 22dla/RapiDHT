@@ -9,6 +9,7 @@
 
 #include "internal/device_array.h"
 #include "internal/impl.h"
+#include "internal/integer_offset.h"
 #include "internal/kernels.h"
 #include "internal/support.h"
 
@@ -279,20 +280,22 @@ private:
 template <typename T>
 void HartleyTransform<T>::FactoredOnDevice(T* deviceData, bool separable)
 {
-    FactoredPasses(static_cast<const T*>(deviceData), deviceData, T(0), separable);
+    FactoredPasses(static_cast<const T*>(deviceData), deviceData, nullptr, separable);
 }
 
 /*
  * R-5: TIn = T is FactoredOnDevice, in place. For integer TIn the first
  * present pass reads `in` (FactoredAxisFrom, not in place) and every later one
  * runs in place on `deviceData`; at the end offset * N goes back into the zero
- * coefficient. Where the first present pass is the fused last one (a 2D
+ * coefficient. The offset is resolved first, on the device (step 3.1): a
+ * value is written where the kernels read it, a mean is reduced there. Where the first present pass is the fused last one (a 2D
  * transform of height 1) or no pass runs at all, the integers are converted
  * into deviceData first and the passes run as for float.
  */
 template <typename T>
 template <typename TIn>
-void HartleyTransform<T>::FactoredPasses(const TIn* in, T* deviceData, T offset, bool separable)
+void HartleyTransform<T>::FactoredPasses(
+    const TIn* in, T* deviceData, const internal::IntegerOffset* policy, bool separable)
 {
     PROFILE_FUNCTION();
     KernelTrace trace;
@@ -302,6 +305,35 @@ void HartleyTransform<T>::FactoredPasses(const TIn* in, T* deviceData, T offset,
     const size_t W = Width();
     const size_t H = (Height() == 0 ? 1 : Height());
     const size_t D = (Depth() == 0 ? 1 : Depth());
+
+    // The integer offset, on the device where the kernels read it.
+    const T* offset = nullptr;
+    bool returnOffset = false;
+    if constexpr (kFromIntegers) {
+        using Kind = internal::IntegerOffset::Kind;
+        internal::DeviceArray<unsigned long long>& slots = _impl->integerOffset;
+        if (slots.Size() < 2) {
+            slots.Resize(2);
+            const unsigned long long zero[2] = { 0, 0 };
+            slots.Upload(zero, 2); // also waits for the allocation on its stream
+        }
+        T* slot = reinterpret_cast<T*>(slots.Data() + 1);
+        offset = slot;
+        const internal::IntegerOffset none;
+        const internal::IntegerOffset& p = policy != nullptr ? *policy : none;
+        if (p.kind == Kind::Mean || p.kind == Kind::SampledMean) {
+            trace.Mark("mean");
+            const size_t step = p.kind == Kind::Mean ? 1 : (p.step == 0 ? 1 : p.step);
+            IntegerMeanOffset(in, W, H * D, step, slots.Data(), slot);
+            returnOffset = true;
+        } else {
+            const double value = p.kind == Kind::Value ? p.value : 0.0;
+            SetIntegerOffset(slot, value);
+            returnOffset = value != 0.0;
+        }
+    } else {
+        (void)policy;
+    }
 
     // The geometry of Series1D: per axis, the stride along a line, the lane
     // axis that neighbouring lines run along, and the remaining axis.
@@ -385,10 +417,12 @@ void HartleyTransform<T>::FactoredPasses(const TIn* in, T* deviceData, T offset,
         }
     }
     if constexpr (kFromIntegers) {
-        if (offset != T(0)) {
+        if (returnOffset) {
             trace.Mark("offset");
-            AddToFirst(deviceData, static_cast<double>(offset) * static_cast<double>(W * H * D));
+            AddOffsetToFirst(deviceData, offset, static_cast<double>(W * H * D));
         }
+    } else {
+        (void)returnOffset;
     }
     trace.Mark("end");
     // Every other device path returns with the device idle; so does this one,
@@ -426,9 +460,9 @@ template void HartleyTransform<float>::DHT3DCuda(float*, bool);
 template void HartleyTransform<float>::DHT3DOnDevice(float*, float*, bool);
 template void HartleyTransform<float>::FactoredOnDevice(float*, bool);
 template void HartleyTransform<float>::FactoredOnHost(float*, bool);
-template void HartleyTransform<float>::FactoredPasses<std::uint8_t>(const std::uint8_t*, float*, float, bool);
-template void HartleyTransform<float>::FactoredPasses<std::uint16_t>(const std::uint16_t*, float*, float, bool);
-template void HartleyTransform<double>::FactoredPasses<std::uint8_t>(const std::uint8_t*, double*, double, bool);
-template void HartleyTransform<double>::FactoredPasses<std::uint16_t>(const std::uint16_t*, double*, double, bool);
+template void HartleyTransform<float>::FactoredPasses<std::uint8_t>(const std::uint8_t*, float*, const internal::IntegerOffset*, bool);
+template void HartleyTransform<float>::FactoredPasses<std::uint16_t>(const std::uint16_t*, float*, const internal::IntegerOffset*, bool);
+template void HartleyTransform<double>::FactoredPasses<std::uint8_t>(const std::uint8_t*, double*, const internal::IntegerOffset*, bool);
+template void HartleyTransform<double>::FactoredPasses<std::uint16_t>(const std::uint16_t*, double*, const internal::IntegerOffset*, bool);
 
 } // namespace RapiDHT

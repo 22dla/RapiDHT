@@ -100,17 +100,29 @@ void FactoredAxis(T* data, const FactoredAxisTables<T>& tables, size_t axisStrid
  * runs there.
  */
 template <typename T, typename TIn>
-void FactoredAxisFrom(const TIn* in, T* out, T offset, const FactoredAxisTables<T>& tables, size_t axisStride,
+void FactoredAxisFrom(const TIn* in, T* out, const T* offset, const FactoredAxisTables<T>& tables, size_t axisStride,
     size_t laneStride, size_t laneLength, size_t otherStride, size_t otherLength);
 
-/// R-5: out[i] = T(in[i]) - offset for i < count, elementwise.
+/// R-5: out[i] = T(in[i]) - *offset for i < count, elementwise.
 template <typename T, typename TIn>
-void ConvertFromIntegers(const TIn* in, T* out, T offset, size_t count);
+void ConvertFromIntegers(const TIn* in, T* out, const T* offset, size_t count);
 
-/// R-5: data[0] += value, computed in double -- the offset subtracted on
-/// reading, returned to the zero-frequency coefficient as offset * N.
+/// R-5: data[0] += *offset * n, computed in double -- the offset subtracted
+/// on reading, returned to the zero-frequency coefficient (n = N).
 template <typename T>
-void AddToFirst(T* data, double value);
+void AddOffsetToFirst(T* data, const T* offset, double n);
+
+/// R-5 step 3.1: *offset = value (an integer), by a kernel of one thread, so
+/// that every offset policy leaves the value where the first pass reads it.
+template <typename T>
+void SetIntegerOffset(T* offset, double value);
+
+/// R-5 step 3.1: the rounded mean of every step-th line along x (lines 0,
+/// step, 2 step, ... of `lines` lines of `width` values; step 1 is the whole
+/// volume) into *offset, exactly: the sum in uint64 into *sum first. All on
+/// the device, asynchronous.
+template <typename T, typename TIn>
+void IntegerMeanOffset(const TIn* in, size_t width, size_t lines, size_t step, unsigned long long* sum, T* offset);
 
 /**
  * The last pass along x (the fastest axis) of a true 2D or 3D transform with

@@ -63,6 +63,7 @@ enum class Modes { CPU, ///< OpenMP, fast Hartley transform.
  */
 namespace internal {
 struct DeviceAccess; // R-5: the internal entry points benchmarks and tests reach (src/internal)
+struct IntegerOffset; // R-5: what an integer volume has subtracted on reading (src/internal)
 } // namespace internal
 
 template <typename T>
@@ -287,23 +288,25 @@ private:
     void FactoredOnHost(T* hostData, bool separable);
 
     /// The passes of FactoredOnDevice with the first present one reading
-    /// `in` (TIn = T: the same pointer as `data`, in place, as before R-5;
-    /// TIn = std::uint8_t / std::uint16_t: integers minus `offset`, not
-    /// written) and the rest in place on `data`. Defined in backend_cuda.cpp.
+    /// `in` (TIn = T: the same pointer as `data`, in place, as before R-5,
+    /// `offset` null; TIn = std::uint8_t / std::uint16_t: integers minus the
+    /// offset the policy gives, not written) and the rest in place on `data`.
+    /// Defined in backend_cuda.cpp.
     template <typename TIn>
-    void FactoredPasses(const TIn* in, T* data, T offset, bool separable);
+    void FactoredPasses(const TIn* in, T* data, const internal::IntegerOffset* offset, bool separable);
 
     /**
      * R-5 (internal until the API decision of docs/R5_PLAN.md, step 6.1): the
      * factored transform of an integer volume already on the device, TIn =
-     * std::uint8_t or std::uint16_t, into `out`. `offset` is subtracted from
-     * every voxel as the first pass reads it, and offset * N is returned to
-     * the zero-frequency coefficient at the end, so `out` holds the transform
-     * of the input itself. Modes::GPUFactored only; reached through
-     * internal::DeviceAccess.
+     * std::uint8_t or std::uint16_t, into `out`. The integer `offset` gives
+     * (a value or a mean, computed on the device) is subtracted from every
+     * voxel as the first pass reads it and returned to the zero-frequency
+     * coefficient at the end, so `out` holds the transform of the input
+     * itself. Modes::GPUFactored only; reached through internal::DeviceAccess.
      */
     template <typename TIn>
-    void FactoredFromIntegers(const TIn* deviceIn, DeviceVolume<T>& out, T offset, bool separable);
+    void FactoredFromIntegers(
+        const TIn* deviceIn, DeviceVolume<T>& out, const internal::IntegerOffset& offset, bool separable);
 
     friend struct internal::DeviceAccess;
 

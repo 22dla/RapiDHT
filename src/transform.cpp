@@ -8,6 +8,7 @@
 #include <rapidht/utilities.h>
 
 #include "internal/impl.h"
+#include "internal/integer_offset.h"
 #include "internal/support.h"
 
 #ifdef RAPIDHT_WITH_CUDA
@@ -365,7 +366,8 @@ void HartleyTransform<T>::InverseTransform(DeviceVolume<T>& volume)
 
 template <typename T>
 template <typename TIn>
-void HartleyTransform<T>::FactoredFromIntegers(const TIn* deviceIn, DeviceVolume<T>& out, T offset, bool separable)
+void HartleyTransform<T>::FactoredFromIntegers(
+    const TIn* deviceIn, DeviceVolume<T>& out, const internal::IntegerOffset& offset, bool separable)
 {
     PROFILE_FUNCTION();
 
@@ -377,7 +379,7 @@ void HartleyTransform<T>::FactoredFromIntegers(const TIn* deviceIn, DeviceVolume
         throw std::invalid_argument("The integer input holds no allocation.");
     }
 #ifdef RAPIDHT_WITH_CUDA
-    FactoredPasses(deviceIn, static_cast<T*>(out.DeviceData()), offset, separable);
+    FactoredPasses(deviceIn, static_cast<T*>(out.DeviceData()), &offset, separable);
 #else
     (void)offset;
     (void)separable;
@@ -392,12 +394,12 @@ template class HartleyTransform<float>;
 template class HartleyTransform<double>;
 
 template void HartleyTransform<float>::FactoredFromIntegers<std::uint8_t>(
-    const std::uint8_t*, DeviceVolume<float>&, float, bool);
+    const std::uint8_t*, DeviceVolume<float>&, const internal::IntegerOffset&, bool);
 template void HartleyTransform<float>::FactoredFromIntegers<std::uint16_t>(
-    const std::uint16_t*, DeviceVolume<float>&, float, bool);
+    const std::uint16_t*, DeviceVolume<float>&, const internal::IntegerOffset&, bool);
 template void HartleyTransform<double>::FactoredFromIntegers<std::uint8_t>(
-    const std::uint8_t*, DeviceVolume<double>&, double, bool);
+    const std::uint8_t*, DeviceVolume<double>&, const internal::IntegerOffset&, bool);
 template void HartleyTransform<double>::FactoredFromIntegers<std::uint16_t>(
-    const std::uint16_t*, DeviceVolume<double>&, double, bool);
+    const std::uint16_t*, DeviceVolume<double>&, const internal::IntegerOffset&, bool);
 
 } // namespace RapiDHT

@@ -21,9 +21,11 @@
 
 #include <gtest/gtest.h>
 
+#include <cmath>
 #include <cstdint>
 #include <cstring>
 #include <string>
+#include <utility>
 #include <vector>
 
 #include "test_support.h"
@@ -442,6 +444,95 @@ TEST(Factored, IntegerInput2DAnd1D_GPU)
             ExpectIntegerInputMatchesConvertedFloat<uint16_t>(s, 32768.0, separable);
             ExpectIntegerInputMatchesConvertedFloat<uint16_t>(s, 0.0, separable);
         }
+    }
+}
+
+namespace {
+
+/*
+ * R-5 step 3.1: every offset policy against the same transform with the
+ * offset the policy should give, computed on the host and passed as a value
+ * -- bit for bit, so a mean reduced on the device is checked exactly -- and,
+ * for the mean policies, H(0) against the exact sum of the input: within one
+ * ulp of float of it (the centred sum is small, and offset * N is added in
+ * double). Not for a value far from the mean: then the centred sum is large
+ * and carries the float error of no offset at all (77 at 512^3 uint16 put
+ * H(0) 2 ulp off).
+ */
+template <typename TIn>
+void ExpectOffsetPolicies(const IntegerShape& s)
+{
+    using internal::IntegerOffset;
+    const size_t H = s.height == 0 ? 1 : s.height;
+    const size_t D = s.depth == 0 ? 1 : s.depth;
+    const size_t count = s.width * H * D;
+    std::vector<TIn> host(count);
+    for (size_t i = 0; i < count; ++i) {
+        // Values well above zero, as in a tomogram: the mean is far from it.
+        const uint32_t r = static_cast<uint32_t>((i + 1) * 2654435761u) >> (32 - 8 * sizeof(TIn) + 2);
+        host[i] = static_cast<TIn>(r + (1u << (8 * sizeof(TIn) - 1)));
+    }
+    double exact = 0.0;
+    for (const TIn v : host) {
+        exact += v;
+    }
+    auto sampledMean = [&](size_t step) {
+        double sum = 0.0;
+        size_t n = 0;
+        for (size_t line = 0; line < H * D; line += step) {
+            for (size_t x = 0; x < s.width; ++x) {
+                sum += host[line * s.width + x];
+            }
+            n += s.width;
+        }
+        return std::rint(sum / static_cast<double>(n));
+    };
+
+    HartleyTransform<float> transform(s.width, s.height, s.depth, Modes::GPUFactored);
+    TIn* in = nullptr;
+    ASSERT_EQ(cudaMalloc(&in, count * sizeof(TIn)), cudaSuccess);
+    ASSERT_EQ(cudaMemcpy(in, host.data(), count * sizeof(TIn), cudaMemcpyHostToDevice), cudaSuccess);
+    auto run = [&](const IntegerOffset& policy) {
+        DeviceVolume<float> out(count);
+        internal::DeviceAccess::ForwardFromIntegers(transform, in, out, policy);
+        std::vector<float> got(count);
+        out.Download(got.data());
+        return got;
+    };
+    const std::pair<IntegerOffset, double> cases[] = {
+        { IntegerOffset::NoOffset(), 0.0 },
+        { IntegerOffset::Of(77.0), 77.0 },
+        { IntegerOffset::MeanOfAll(), sampledMean(1) },
+        { IntegerOffset::Default(), sampledMean(64) },
+        { IntegerOffset::MeanOfEvery(7), sampledMean(7) },
+    };
+    for (const auto& [policy, offset] : cases) {
+        SCOPED_TRACE("policy " + std::to_string(static_cast<int>(policy.kind)) + ", offset " + std::to_string(offset));
+        const std::vector<float> got = run(policy);
+        ASSERT_EQ(got, run(IntegerOffset::Of(offset)));
+        if (policy.kind == IntegerOffset::Kind::Mean || policy.kind == IntegerOffset::Kind::SampledMean) {
+            const float exactF = static_cast<float>(exact);
+            EXPECT_GE(got[0], std::nextafter(exactF, -INFINITY));
+            EXPECT_LE(got[0], std::nextafter(exactF, INFINITY));
+        }
+    }
+    cudaFree(in);
+}
+
+} // namespace
+
+TEST(Factored, IntegerOffsetPolicies_GPU)
+{
+    SKIP_IF_NO_GPU();
+    // Each kernel variant of the first pass (128^3, 512^3 -- the wide uint16
+    // read), unequal axes, 2D, 1D, and a width of 2, which the mean reads value
+    // by value rather than by quads.
+    const IntegerShape shapes[] = { { 128, 128, 128 }, { 512, 512, 512 }, { 64, 32, 16 }, { 512, 256, 0 },
+        { 1024, 0, 0 }, { 2, 64, 64 } };
+    for (const IntegerShape& s : shapes) {
+        SCOPED_TRACE(std::to_string(s.width) + "x" + std::to_string(s.height) + "x" + std::to_string(s.depth));
+        ExpectOffsetPolicies<uint8_t>(s);
+        ExpectOffsetPolicies<uint16_t>(s);
     }
 }
 #endif

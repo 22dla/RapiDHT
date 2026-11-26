@@ -1058,14 +1058,16 @@ __global__ void FactoredAxisKernelPipelined(T* data, FactoredAxisTables<T> t, si
 }
 
 /// R-5: the same pass reading integers from `in` and writing T to `out` (not
-/// in place): the first pass of a transform of a uint8 / uint16 volume.
+/// in place): the first pass of a transform of a uint8 / uint16 volume. The
+/// offset is read from the device (step 3.1: a mean computed there needs no
+/// round trip through the host).
 template <typename T, typename TIn, int kMaxQuads, bool kFold, int kN = 0, int kLanes = 0>
-__global__ void FactoredAxisKernelPipelinedFrom(const TIn* in, T* out, T offset, FactoredAxisTables<T> t,
+__global__ void FactoredAxisKernelPipelinedFrom(const TIn* in, T* out, const T* offset, FactoredAxisTables<T> t,
     size_t axisStride, size_t laneStride, int lanes, int blocksPerOther, size_t otherStride, int batches,
     int workStride, bool vec)
 {
     PipelinedAxisBody<T, kMaxQuads, 0, kFold, kN, kLanes, TIn>(
-        in, out, offset, t, axisStride, laneStride, lanes, blocksPerOther, otherStride, batches, workStride, vec);
+        in, out, *offset, t, axisStride, laneStride, lanes, blocksPerOther, otherStride, batches, workStride, vec);
 }
 
 /// The same with the steps in place (R-4 step 4B), kItems tiles a thread,
@@ -1082,12 +1084,12 @@ __global__ void __launch_bounds__(256, kMinBlocks) FactoredAxisKernelInPlace(T* 
 /// R-5: FactoredAxisKernelInPlace reading integers from `in` and writing T to
 /// `out`; "in place" names the steps in shared memory, not the buffers.
 template <typename T, typename TIn, int kMaxQuads, int kItems, int kMinBlocks, bool kFold, int kN = 0, int kLanes = 0>
-__global__ void __launch_bounds__(256, kMinBlocks) FactoredAxisKernelInPlaceFrom(const TIn* in, T* out, T offset,
-    FactoredAxisTables<T> t, size_t axisStride, size_t laneStride, int lanes, int blocksPerOther, size_t otherStride,
-    int batches, int workStride, bool vec)
+__global__ void __launch_bounds__(256, kMinBlocks) FactoredAxisKernelInPlaceFrom(const TIn* in, T* out,
+    const T* offset, FactoredAxisTables<T> t, size_t axisStride, size_t laneStride, int lanes, int blocksPerOther,
+    size_t otherStride, int batches, int workStride, bool vec)
 {
     PipelinedAxisBody<T, kMaxQuads, kItems, kFold, kN, kLanes, TIn>(
-        in, out, offset, t, axisStride, laneStride, lanes, blocksPerOther, otherStride, batches, workStride, vec);
+        in, out, *offset, t, axisStride, laneStride, lanes, blocksPerOther, otherStride, batches, workStride, vec);
 }
 
 /// R-5 step 2.5: a quad of integers as loaded, before conversion.
@@ -1135,9 +1137,11 @@ struct FactoredWideShape {
  * Needs laneStride 1, vector access and blockDim.x = 256.
  */
 template <typename T, typename TIn, int kN, int kHalf, bool kFold>
-__global__ void __launch_bounds__(256, 1) FactoredAxisKernelWideFrom(const TIn* in, T* out, T offset,
-    FactoredAxisTables<T> t, size_t axisStride, int blocksPerOther, size_t otherStride, int batches)
+__global__ void __launch_bounds__(256, 1) FactoredAxisKernelWideFrom(const TIn* in, T* out,
+    const T* offsetOnDevice, FactoredAxisTables<T> t, size_t axisStride, int blocksPerOther, size_t otherStride,
+    int batches)
 {
+    const T offset = *offsetOnDevice;
     static_assert(kN != 0 && kHalf != 0, "the wide kernel is specialized only");
     using Shape = FactoredWideShape<kN, kHalf>;
     using Raw = typename FactoredRawQuad<TIn>::type;

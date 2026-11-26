@@ -128,6 +128,11 @@ struct HartleyTransform<T>::Impl {
     // as c1 | c2 | cHalf | twC | twD, and their split.
     std::array<internal::DeviceArray<T>, static_cast<size_t>(Direction::Count)> factoredTables;
     std::array<internal::FactoredSplit, static_cast<size_t>(Direction::Count)> factoredSplit;
+
+    // R-5 step 3.1: the offset of an integer input where the first pass
+    // reads it -- slot 0 the uint64 sum of a mean, slot 1 the offset as T.
+    // Allocated on the first integer transform.
+    internal::DeviceArray<unsigned long long> integerOffset;
 #endif
 };
 

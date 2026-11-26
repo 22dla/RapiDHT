@@ -16,19 +16,29 @@
 #include <rapidht/device_volume.h>
 #include <rapidht/transform.h>
 
+#include "internal/integer_offset.h"
+
 namespace RapiDHT {
 namespace internal {
 
 struct DeviceAccess {
     /// The factored transform of a device-resident integer volume into `out`
     /// (HartleyTransform::FactoredFromIntegers). TIn: std::uint8_t or
-    /// std::uint16_t; `offset` an integer, subtracted on reading and returned
-    /// to the zero coefficient.
+    /// std::uint16_t; `offset` the policy that gives the integer subtracted on
+    /// reading and returned to the zero coefficient (integer_offset.h).
+    template <typename T, typename TIn>
+    static void ForwardFromIntegers(HartleyTransform<T>& transform, const TIn* deviceIn, DeviceVolume<T>& out,
+        const IntegerOffset& offset, bool separable = false)
+    {
+        transform.FactoredFromIntegers(deviceIn, out, offset, separable);
+    }
+
+    /// The same with a known integer `offset` (IntegerOffset::Of).
     template <typename T, typename TIn>
     static void ForwardFromIntegers(
         HartleyTransform<T>& transform, const TIn* deviceIn, DeviceVolume<T>& out, double offset, bool separable = false)
     {
-        transform.FactoredFromIntegers(deviceIn, out, static_cast<T>(offset), separable);
+        transform.FactoredFromIntegers(deviceIn, out, IntegerOffset::Of(offset), separable);
     }
 };
 
