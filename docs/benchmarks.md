@@ -859,6 +859,23 @@ lines of uint8 (128 bytes a row) as four tiles was tried and rejected (A-B
 13.51 ms (+32 %) -- the next batch can be fetched only during the last of the
 four tiles.
 
+### Integer images (R-5 step 2.6, 2026-11-26)
+
+In 2D the first present pass is y, and it reads the integers itself (1D goes
+through the conversion: one line is nothing for the pipelined kernel). Same
+check and offset as in 3D (`…_r5_s26.json`):
+
+| | ours, float / cuFFT + Hartley | integer: / cuFFT, convert | / LTO callback | / ours, convert |
+| --- | ---: | ---: | ---: | ---: |
+| 512² | 1.58 | 1.49 | 1.72 | 0.86 |
+| 1024² | 1.69 | 1.50–1.53 | 1.85–1.89 | 0.93–0.94 |
+| 2048² | 2.33 | 2.12–2.16 | 2.71–2.72 | 1.00 |
+
+Integer input does not change the 2D picture R-4 left: the factored path is
+slower than cuFFT on images. At 2048² the y pass does not fit the pipelined
+kernel and the integers are converted first, hence 1.00 against the path with
+a conversion.
+
 ---
 
 ## FFTW, for reference

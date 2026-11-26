@@ -1149,7 +1149,7 @@ void RegisterFor(const Extent* extents, size_t n, const char* rank, const char* 
 /// with a conversion kernel in front (step 0.3). Per extent and type all four
 /// run one after another, so that the CPU reference of one type and size is
 /// computed once (IntegerReference).
-void RegisterIntegerInput(const Extent* extents, size_t n)
+void RegisterIntegerInput(const Extent* extents, size_t n, const char* rank = "3D")
 {
 #ifdef RAPIDHT_WITH_CUDA
     if (!RapiDHT::IsGpuAvailable()) {
@@ -1164,31 +1164,32 @@ void RegisterIntegerInput(const Extent* extents, size_t n)
     for (size_t i = 0; i < n; ++i) {
         const Extent e = extents[i];
         for (const auto& [family, load] : variants) {
-            benchmark::RegisterBenchmark((std::string(family) + "/u8/3D/" + Describe(e)).c_str(),
+            benchmark::RegisterBenchmark((std::string(family) + "/u8/" + rank + "/" + Describe(e)).c_str(),
                 [e, load = load](benchmark::State& s) { BM_CufftInt<uint8_t>(s, e, load); })
                 ->Unit(benchmark::kMicrosecond);
         }
-        benchmark::RegisterBenchmark(("IntConvertFactored/u8/3D/" + Describe(e)).c_str(),
+        benchmark::RegisterBenchmark((std::string("IntConvertFactored/u8/") + rank + "/" + Describe(e)).c_str(),
             [e](benchmark::State& s) { BM_IntConvertFactored<uint8_t>(s, e); })
             ->Unit(benchmark::kMicrosecond);
-        benchmark::RegisterBenchmark(("IntFactored/u8/3D/" + Describe(e)).c_str(),
+        benchmark::RegisterBenchmark((std::string("IntFactored/u8/") + rank + "/" + Describe(e)).c_str(),
             [e](benchmark::State& s) { BM_IntConvertFactored<uint8_t>(s, e, true); })
             ->Unit(benchmark::kMicrosecond);
         for (const auto& [family, load] : variants) {
-            benchmark::RegisterBenchmark((std::string(family) + "/u16/3D/" + Describe(e)).c_str(),
+            benchmark::RegisterBenchmark((std::string(family) + "/u16/" + rank + "/" + Describe(e)).c_str(),
                 [e, load = load](benchmark::State& s) { BM_CufftInt<uint16_t>(s, e, load); })
                 ->Unit(benchmark::kMicrosecond);
         }
-        benchmark::RegisterBenchmark(("IntConvertFactored/u16/3D/" + Describe(e)).c_str(),
+        benchmark::RegisterBenchmark((std::string("IntConvertFactored/u16/") + rank + "/" + Describe(e)).c_str(),
             [e](benchmark::State& s) { BM_IntConvertFactored<uint16_t>(s, e); })
             ->Unit(benchmark::kMicrosecond);
-        benchmark::RegisterBenchmark(("IntFactored/u16/3D/" + Describe(e)).c_str(),
+        benchmark::RegisterBenchmark((std::string("IntFactored/u16/") + rank + "/" + Describe(e)).c_str(),
             [e](benchmark::State& s) { BM_IntConvertFactored<uint16_t>(s, e, true); })
             ->Unit(benchmark::kMicrosecond);
     }
 #else
     (void)extents;
     (void)n;
+    (void)rank;
 #endif
 }
 
@@ -1406,6 +1407,9 @@ int main(int argc, char** argv)
     RegisterConvolution(kExtents2D + 1, CountOf(kExtents2D) - 1, "2D"); // from 512^2
     RegisterConvolution(kExtentsR4Only2D, CountOf(kExtentsR4Only2D), "2D");
     RegisterDoubleOnly(kExtents2D, CountOf(kExtents2D), "2D");
+    // R-5 step 2.6: integer input in 2D, 512^2-2048^2.
+    RegisterIntegerInput(kExtents2D + 1, CountOf(kExtents2D) - 1, "2D");
+    RegisterIntegerInput(kExtentsR4Only2D, CountOf(kExtentsR4Only2D), "2D");
 
     RegisterFor<double>(kExtents1D, CountOf(kExtents1D), "1D", "f64");
     RegisterDoubleOnly(kExtents1D, CountOf(kExtents1D), "1D");

@@ -245,10 +245,11 @@ std::vector<double> RunTransform(
 }
 
 /*
- * R-5 step 2.2: the first pass reading integers. z (the first pass of a 3D
- * transform on the device) through FactoredAxisKernelInPlaceFrom or
- * ...PipelinedFrom from `in` into `out`, then y and x in place and the
- * Bracewell pass, as RunTransform. Returns the result as double.
+ * R-5 step 2.2: the first pass reading integers. The first present pass on
+ * the device -- z of a 3D transform, y of a 2D one (D = 1, step 2.6) --
+ * through FactoredAxisKernelInPlaceFrom or ...PipelinedFrom from `in` into
+ * `out`, then the other passes in place and the Bracewell pass, as
+ * RunTransform. Returns the result as double.
  */
 template <typename T, typename TIn>
 std::vector<double> RunTransformFromIntegers(
@@ -259,43 +260,60 @@ std::vector<double> RunTransformFromIntegers(
     const auto ty = MakeAxisTables<T>(H);
     const auto tz = MakeAxisTables<T>(D);
 
-    // z from the integers, every block in turn, as RunAxis does.
+    // The first pass from the integers, every block in turn, as RunAxis does.
+    const bool is3D = D > 1;
+    const auto& tf = is3D ? tz : ty;
+    const size_t firstStride = is3D ? W * H : W;
+    const size_t otherStride = is3D ? W : W * H;
+    const size_t otherLength = is3D ? H : 1;
     size_t zLanes = lanes;
     while (zLanes > W) {
         zLanes /= 2;
     }
     const size_t blocksPerOther = W / zLanes;
-    const size_t batches = blocksPerOther * H;
+    const size_t batches = blocksPerOther * otherLength;
     const size_t grid = batches < kHostGrid ? batches : kHostGrid;
     blockDim = { 1, 1, 1 };
     threadIdx = { 0, 0, 0 };
     gridDim = { static_cast<unsigned>(grid), 1, 1 };
     const bool vec = W % 4 == 0;
-    const int ws = static_cast<int>(FactoredWorkStride<T>(static_cast<size_t>(tz.view.n2), zLanes));
+    const int ws = static_cast<int>(FactoredWorkStride<T>(static_cast<size_t>(tf.view.n2), zLanes));
     for (size_t b = 0; b < grid; ++b) {
         blockIdx = { static_cast<unsigned>(b), 0, 0 };
         const int l = static_cast<int>(zLanes), po = static_cast<int>(blocksPerOther), bt = static_cast<int>(batches);
         if (kernel == Kernel::InPlace) {
             FactoredAxisKernelInPlaceFrom<T, TIn, kHostMaxQuads, kHostItems, 1, false>(
-                in.data(), v.data(), offset, tz.view, W * H, 1, l, po, W, bt, ws, vec);
+                in.data(), v.data(), offset, tf.view, firstStride, 1, l, po, otherStride, bt, ws, vec);
         } else if (kernel == Kernel::InPlaceFold) {
             FactoredAxisKernelInPlaceFrom<T, TIn, kHostMaxQuads, kHostItems, 1, true>(
-                in.data(), v.data(), offset, tz.view, W * H, 1, l, po, W, bt, ws, vec);
+                in.data(), v.data(), offset, tf.view, firstStride, 1, l, po, otherStride, bt, ws, vec);
         } else {
             FactoredAxisKernelPipelinedFrom<T, TIn, kHostMaxQuads, false>(
-                in.data(), v.data(), offset, tz.view, W * H, 1, l, po, W, bt, ws, vec);
+                in.data(), v.data(), offset, tf.view, firstStride, 1, l, po, otherStride, bt, ws, vec);
         }
     }
-    RunAxis(v.data(), ty.view, W, 1, W, W * H, D, kernel, lanes);
+    if (is3D) {
+        RunAxis(v.data(), ty.view, W, 1, W, W * H, D, kernel, lanes);
+    }
     RunAxis(v.data(), tx.view, 1, W, H, W * H, D, kernel, lanes);
 
     blockDim = { 1, 1, 1 };
     threadIdx = { 0, 0, 0 };
-    for (size_t z = 0; z <= D / 2; ++z) {
+    if (is3D) {
+        for (size_t z = 0; z <= D / 2; ++z) {
+            for (size_t x = 0; x <= H / 2; ++x) {
+                for (size_t y = 0; y <= W / 2; ++y) {
+                    blockIdx = { static_cast<unsigned>(y), static_cast<unsigned>(x), static_cast<unsigned>(z) };
+                    BracewellInPlace3DKernel<T>(
+                        v.data(), static_cast<int>(W), static_cast<int>(H), static_cast<int>(D));
+                }
+            }
+        }
+    } else {
         for (size_t x = 0; x <= H / 2; ++x) {
             for (size_t y = 0; y <= W / 2; ++y) {
-                blockIdx = { static_cast<unsigned>(y), static_cast<unsigned>(x), static_cast<unsigned>(z) };
-                BracewellInPlace3DKernel<T>(v.data(), static_cast<int>(W), static_cast<int>(H), static_cast<int>(D));
+                blockIdx = { static_cast<unsigned>(y), static_cast<unsigned>(x), 0 };
+                BracewellInPlace2DKernel<T>(v.data(), static_cast<int>(W), static_cast<int>(H));
             }
         }
     }
@@ -362,15 +380,17 @@ std::vector<TIn> MakeIntegers(size_t count)
     return v;
 }
 
-// Unequal axes, several blocks along the lane axis, 4 to 16 lines.
-const Shape kIntegerShapes[] = { { 16, 16, 16 }, { 32, 16, 16 }, { 16, 32, 32 } };
+// Unequal axes, several blocks along the lane axis, 4 to 16 lines; depth 1
+// is 2D, where the first pass is y (step 2.6).
+const Shape kIntegerShapes[] = { { 16, 16, 16 }, { 32, 16, 16 }, { 16, 32, 32 }, { 32, 16, 1 }, { 16, 64, 1 },
+    { 64, 64, 1 } };
 
 template <typename T, typename TIn>
 void ExpectIntegerFirstPassMatchesDefinition(double tolerance)
 {
     const double offsets[] = { 0.0, sizeof(TIn) == 1 ? 128.0 : 32768.0, sizeof(TIn) == 1 ? 77.0 : 12345.0 };
     for (const Shape& s : kIntegerShapes) {
-        const Dims dims = Dims::Of(s.width, s.height, s.depth);
+        const Dims dims = Dims::Of(s.width, s.height, s.depth == 1 ? 0 : s.depth);
         const auto in = MakeIntegers<TIn>(dims.Total());
         // O(N^2) once a shape: an offset c changes only H(0), by -c * N.
         const auto uncentred = ReferenceDht(std::vector<double>(in.begin(), in.end()), dims);

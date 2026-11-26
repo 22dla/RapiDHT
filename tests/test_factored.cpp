@@ -422,4 +422,26 @@ TEST(Factored, IntegerInputAtBenchmarkSizes_GPU)
     ExpectIntegerInputMatchesConvertedFloat<uint16_t>({ 512, 512, 512 }, 25914.0, false);
     ExpectIntegerInputMatchesConvertedFloat<uint8_t>({ 512, 512, 512 }, 128.0, true);
 }
+
+TEST(Factored, IntegerInput2DAnd1D_GPU)
+{
+    SKIP_IF_NO_GPU();
+    // R-5 step 2.6: in 2D the first present pass is y, in 1D the only one (x,
+    // which the pipelined kernel cannot take -- one line -- so the integers are
+    // converted first). 512^2-2048^2, unequal sides, 1D up to 2048 (the
+    // longest axis GPUFactored takes).
+    const IntegerShape shapes[] = { { 512, 512, 0 }, { 1024, 1024, 0 }, { 2048, 2048, 0 }, { 2048, 512, 0 },
+        { 512, 2048, 0 }, { 512, 0, 0 }, { 1024, 0, 0 }, { 2048, 0, 0 } };
+    for (const IntegerShape& s : shapes) {
+        for (const bool separable : { false, true }) {
+            if (separable && s.height == 0) {
+                continue;
+            }
+            SCOPED_TRACE(std::to_string(s.width) + "x" + std::to_string(s.height) + (separable ? ", separable" : ""));
+            ExpectIntegerInputMatchesConvertedFloat<uint8_t>(s, 128.0, separable);
+            ExpectIntegerInputMatchesConvertedFloat<uint16_t>(s, 32768.0, separable);
+            ExpectIntegerInputMatchesConvertedFloat<uint16_t>(s, 0.0, separable);
+        }
+    }
+}
 #endif

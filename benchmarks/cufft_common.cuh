@@ -103,7 +103,7 @@ inline size_t IntInputBytes(IntInput input)
 
 /*
  * The part every integer variant has in common: an R2C plan of a W x H x D
- * volume, the half spectrum, and the Hartley pass that writes the caller's
+ * volume (or a W x H image, depth 0 -- R-5 step 2.6), the half spectrum, and the Hartley pass that writes the caller's
  * float output and puts offset * N back into the zero coefficient. A variant
  * says how the plan is made (callbacks are attached before or after) and what,
  * if anything, runs before R2C.
@@ -111,14 +111,15 @@ inline size_t IntInputBytes(IntInput input)
 class CufftIntBase : public CufftIntHartley {
 public:
     CufftIntBase(int width, int height, int depth, IntInput input, double offset):
-        _width(width), _height(height), _depth(depth), _input(input), _offset(offset)
+        _width(width), _height(height), _depth(depth > 0 ? depth : 1), _image(depth <= 0), _input(input),
+        _offset(offset)
     {
-        if (depth <= 0 || height <= 0) {
-            throw std::runtime_error("integer cuFFT baselines are 3D only");
+        if (height <= 0) {
+            throw std::runtime_error("integer cuFFT baselines are 2D and 3D only");
         }
         Check(cufftCreate(&_plan), "cufftCreate");
         const size_t half = static_cast<size_t>(width) / 2 + 1;
-        _spectrumBytes = half * height * depth * sizeof(cufftComplex);
+        _spectrumBytes = half * height * _depth * sizeof(cufftComplex);
         Check(cudaMalloc(&_spectrum, _spectrumBytes), "cudaMalloc(spectrum)");
     }
 
@@ -138,13 +139,18 @@ public:
     size_t ExtraDeviceBytes() const override { return _spectrumBytes + _workspaceBytes; }
 
 protected:
-    /// cufftMakePlan3d on the handle made in the constructor; callbacks that
-    /// must be known to the planner (LTO) are set before this.
+    /// cufftMakePlan3d (cufftMakePlan2d for an image) on the handle made in
+    /// the constructor; callbacks that must be known to the planner (LTO) are
+    /// set before this.
     void MakePlan()
     {
         // cuFFT takes the slowest dimension first and makes the last one
         // contiguous, which matches this library's idx = x + W*(y + H*z).
-        Check(cufftMakePlan3d(_plan, _depth, _height, _width, CUFFT_R2C, &_workspaceBytes), "cufftMakePlan3d");
+        if (_image) {
+            Check(cufftMakePlan2d(_plan, _height, _width, CUFFT_R2C, &_workspaceBytes), "cufftMakePlan2d");
+        } else {
+            Check(cufftMakePlan3d(_plan, _depth, _height, _width, CUFFT_R2C, &_workspaceBytes), "cufftMakePlan3d");
+        }
     }
 
     /// R2C from `realIn` (floats, or the integers themselves when a load
@@ -161,7 +167,8 @@ protected:
 
     size_t Count() const { return static_cast<size_t>(_width) * _height * _depth; }
 
-    int _width, _height, _depth;
+    int _width, _height, _depth; // depth 1 for an image
+    bool _image;
     IntInput _input;
     double _offset;
     cufftHandle _plan = 0;

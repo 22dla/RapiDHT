@@ -181,13 +181,17 @@ if [[ ${R5_LARGE:-0} == 1 ]]; then
     echo "   (large sizes: R5_LARGE=1)"
 fi
 r5_rows="(cuFFTInt|cuFFTIntCb|cuFFTIntLto|IntConvertFactored|IntFactored)/(u8|u16)/3D/$r5_sizes"
+# 2D (step 2.6): the first present pass is y. The float rows of the same images
+# alongside, for the gap to cuFFT that R-4 left in 2D.
+sizes_2d='(512x512|1024x1024|2048x2048)'
+r5_rows_2d="((cuFFTInt|cuFFTIntCb|cuFFTIntLto|IntConvertFactored|IntFactored)/(u8|u16)|(cuFFT|FactoredResident)/f32)/2D/$sizes_2d"
 # The price of the mean offset (step 1.2): a few seconds, so in every run.
 offset_rows="IntOffset/(u8|u16)/(mean|every64|every512)/3D/(512x512x512|1024x1024x1024)"
-filter="^($r4_rows|$r5_rows|$offset_rows)\$"
+filter="^($r4_rows|$r5_rows|$r5_rows_2d|$offset_rows)\$"
 # R5_BUS=1 (step 0.6): one way over the bus for uint8, uint16 and float, from
 # ordinary and pinned host memory -- about a minute, so not in every run.
 if [[ ${R5_BUS:-0} == 1 ]]; then
-    filter="^($r4_rows|$r5_rows|$offset_rows|H2D/(u8|u16|f32)/(pageable|pinned)/3D/(512x512x512|1024x1024x1024))\$"
+    filter="^($r4_rows|$r5_rows|$r5_rows_2d|$offset_rows|H2D/(u8|u16|f32)/(pageable|pinned)/3D/(512x512x512|1024x1024x1024))\$"
     echo "   (host to device: R5_BUS=1)"
 fi
 # R5_TASKS=1 is stage 5: the end-to-end tasks (Task<N>/<implementation>/...),

@@ -1,0 +1,36 @@
+tag: s26
+date: 2026-11-26T19:11:32+04:00
+settings: (none)
+table: 128-512
+cuda: 13.2 (13.2.51)
+commit: 4703562e716d2bebb27a1807cf75850724377352
+uncommitted:
+   M benchmarks/bench_transform.cpp
+   M benchmarks/cufft_common.cuh
+   M scripts/r5_measure.sh
+   M tests/test_factored.cpp
+   M tests/test_factored_kernels.cpp
+  ?? benchmarks/results/2026-11-26_evgeny_r5_s26.meta.txt
+sources:
+  a16b9db1551f039a7ea0deb32405ac2963b2d21b6b41ad06cf60729adef28ee0  src/internal/factored_kernels.cuh
+  82673b23b8681196b43d857b98d8107f7f8683a606dd8aa00abf7469a4801f3c  src/kernels.cu
+  91fa6e8ebab753c911df0850454a52b69a59560b4c8f3d31628f4c7ab5c53282  src/backend_cuda.cpp
+  2e122c684cf263a0336bbc2e53dcc19323e53e44779261242f00ad38328be94d  src/internal/kernels.h
+  f7cdd581f5392e27c630d51bb64da74868ae60741b0400d84af9159974d51cb4  benchmarks/bench_transform.cpp
+  394b794a1b4ee57a0cd4ddd7c4745b1b16f86a3ac9f0c4f3f745215479236d84  benchmarks/cufft_baseline.h
+  ef825228d4d762b2936ba71dec5c2c535dc99b4cfb63f4d9fdfc133e9bd40fc1  benchmarks/cufft_baseline.cu
+  8b76c86b7fd6ffedf3df94a3ec7205a3c49d91cb5be7c3eb160aa7c993540c43  benchmarks/cufft_common.cuh
+  ccb27ab79a4f706dd91354e2c4767600f947060f0f958c6f5ccd8aa1fa1eed59  benchmarks/cufft_int_callback.cu
+  2e4e180f298a7293b2c01c230cb5fbe738f556ce92e161ae113892297f08eb92  benchmarks/cufft_int_lto_callback.cu
+  d99ac0f92566820ac2000ba8d1cf856f4e23e44fa642603224d86f3e727a4ec7  benchmarks/accuracy_integer.cpp
+data:
+  (none: generated inputs only)
+binaries:
+  -rwxrwxr-x 1 evgeny evgeny 3705448 2026-11-26 19:10 build-bench/benchmarks/accuracy_integer
+  -rwxrwxr-x 1 evgeny evgeny 4494368 2026-11-26 19:10 build-bench/benchmarks/bench_transform
+  -rwxrwxr-x 1 evgeny evgeny 3600424 2026-11-26 19:10 build-bench/benchmarks/profile_gpu3d
+gpu:
+  NVIDIA GeForce RTX 3060 Ti, 595.99.02, 32, 6.02 W, 670 MiB
+other processes on the gpu (they add noise; close what you can):
+  21706, /usr/libexec/gnome-remote-desktop-daemon, 233 MiB
+  21373, /usr/libexec/gnome-remote-desktop-daemon, 134 MiB
