@@ -766,6 +766,28 @@ void FactoredAxisImpl(const TIn* in, T* data, T offset, const FactoredAxisTables
                       && reinterpret_cast<uintptr_t>(data) % 16 == 0
                       && reinterpret_cast<uintptr_t>(in) % (4 * sizeof(TIn)) == 0;
         const int ws = static_cast<int>(FactoredWorkStride<T>(n2, lanes));
+        // R-5 step 2.5: z at 512 from uint16 reads batches of 64 lines (128
+        // contiguous bytes a row) and computes them as two tiles of 32: the
+        // pass 4.08 -> 3.26 ms, the transform 10.47 -> 9.69 ms (A-B
+        // benchmarks/results/2026-11-26_*_r5_s25_{a,b}). Not uint8: 64 lines
+        // of it are 64 bytes, and z went 3.91 -> 4.24 ms (unlocked clock).
+        if constexpr (std::is_same<T, float>::value) {
+            if (sizeof(TIn) == 2 && n == 512 && n1 == 32 && axis == 2 && lanes == 32 && path.items == 4 && vec
+                && laneLength % 64 == 0) {
+                constexpr bool kFold = FactoredFoldsTwiddle(false, 4);
+                auto kernel = FactoredAxisKernelWideFrom<T, TIn, 512, 32, kFold>;
+                const size_t wideBlocksPerOther = laneLength / 64;
+                const size_t wideBatches = wideBlocksPerOther * otherLength;
+                const int perSm = FactoredBlocksPerSm(info, kernel, sharedBytes);
+                const size_t resident = static_cast<size_t>(perSm) * static_cast<size_t>(info.sms);
+                const unsigned int grid
+                    = static_cast<unsigned int>(wideBatches < resident ? wideBatches : resident);
+                kernel<<<grid, kFactoredThreads, sharedBytes>>>(in, data, offset, tables, axisStride,
+                    static_cast<int>(wideBlocksPerOther), otherStride, static_cast<int>(wideBatches));
+                RAPIDHT_CUDA_CHECK(cudaGetLastError());
+                return;
+            }
+        }
         if (path.items == 0) {
             LaunchPipelinedAxis<T, TIn, 0, 0>(info, batches, sharedBytes, in, data, offset, tables, axisStride,
                 laneStride, lanes, blocksPerOther, otherStride, ws, vec);

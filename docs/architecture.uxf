@@ -375,7 +375,7 @@ bg=#FFFFFF</panel_attributes>
       <x>510</x>
       <y>1520</y>
       <w>370</w>
-      <h>210</h>
+      <h>230</h>
     </coordinates>
     <panel_attributes>«source» kernels.cu  [CUDA]
 --
@@ -385,7 +385,8 @@ scale, tiled matmul, transpose;
 R-4 (device code in factored_kernels.cuh):
   FactoredAxisKernel — generic, any n1, n2
   FactoredAxisKernelFast — v2, the path for double
-  FactoredAxisKernelPipelined / InPlace — float
+  FactoredAxisKernelPipelined / InPlace[From] — float;
+    R-5: ...From read uint8/16, WideFrom — z 512 u16
   FactoredLastAxisBracewellKernel[InPlace] —
     last x pass with Bracewell folded in
   BracewellInPlace2D/3D

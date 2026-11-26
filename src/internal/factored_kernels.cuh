@@ -1090,6 +1090,153 @@ __global__ void __launch_bounds__(256, kMinBlocks) FactoredAxisKernelInPlaceFrom
         in, out, offset, t, axisStride, laneStride, lanes, blocksPerOther, otherStride, batches, workStride, vec);
 }
 
+/// R-5 step 2.5: a quad of integers as loaded, before conversion.
+template <typename TIn>
+struct FactoredRawQuad;
+template <>
+struct FactoredRawQuad<unsigned char> {
+    using type = uchar4;
+};
+template <>
+struct FactoredRawQuad<unsigned short> {
+    using type = ushort4;
+};
+
+/// The shape of FactoredAxisKernelWideFrom: a batch of 2 * kHalf lines,
+/// kRowQuads quads to a row, kSlots raw quads a thread, fetched in four
+/// parts of kPart. A type for the reason of PipelineFetchParts.
+template <int kN, int kHalf>
+struct FactoredWideShape {
+    static constexpr int kRowQuads = 2 * kHalf / 4;
+    static constexpr int kSlots = kN * kRowQuads / 256;
+    static constexpr int kPart = kSlots / 4;
+};
+
+/*
+ * R-5 step 2.5: the first pass along z from integers, reading a batch of
+ * 2 * kHalf lines at once and computing it as two tiles of kHalf.
+ *
+ * Why: along z a row of a batch is the only contiguous piece, and it is read
+ * at the speed of a copy only from 128 bytes (benchmarks/stride_probe, step
+ * 1.1) -- 32 lines of uint16 are 64 bytes (1.18 of the copy), 64 lines are 128
+ * (1.015). 64 lines of float do not fit shared memory, so the tile stays at 32
+ * lines and the integers of the other 32 wait in registers: 32 raw quads of
+ * ushort4 take the 64 registers the float kernel spends on its 16 prefetched
+ * quads.
+ *
+ * Slot i of thread x holds row (x >> 4) + 16 i, quad (x & 15) ^ 8 (i & 1): each
+ * half-warp loads 128 contiguous bytes, and every thread holds half its slots
+ * in each half of the batch, so both fills are shared by all threads. The
+ * next batch can be fetched only after the second fill -- before it every slot
+ * of half the threads is still taken, and a part of a row is the short read
+ * this kernel exists to avoid -- so it goes in four parts during the second
+ * tile. Each tile is computed exactly as by FactoredAxisKernelInPlaceFrom with
+ * kHalf lines (the same specialization), so the result is the same bit for bit.
+ * Needs laneStride 1, vector access and blockDim.x = 256.
+ */
+template <typename T, typename TIn, int kN, int kHalf, bool kFold>
+__global__ void __launch_bounds__(256, 1) FactoredAxisKernelWideFrom(const TIn* in, T* out, T offset,
+    FactoredAxisTables<T> t, size_t axisStride, int blocksPerOther, size_t otherStride, int batches)
+{
+    static_assert(kN != 0 && kHalf != 0, "the wide kernel is specialized only");
+    using Shape = FactoredWideShape<kN, kHalf>;
+    using Raw = typename FactoredRawQuad<TIn>::type;
+    extern __shared__ __align__(16) unsigned char sharedPipe[];
+    int lanes = 0;
+    int workStride = 0;
+    FactoredSpecialize<T, kN, kHalf>(t, lanes, workStride);
+    const int n = t.n;
+    const int n1 = t.n1;
+    const int n2 = t.n2;
+    T* tile = reinterpret_cast<T*>(sharedPipe);
+    T* c1s = tile + n1 * workStride;
+    T* c2s = c1s + n1 * n1;
+    T* chT = c2s + n2 * n2;
+    for (int i = threadIdx.x; i < n1 * n1; i += blockDim.x) {
+        c1s[i] = kFold ? t.c1[(i / n1) * n1 + FactoredStep1Order(i % n1, n1)] : t.c1[i];
+    }
+    for (int i = threadIdx.x; i < n2 * n2; i += blockDim.x) {
+        c2s[i] = t.c2[i];
+        chT[(i % n2) * n2 + i / n2] = t.cHalf[i];
+    }
+
+    const Pow2 lanesP = MakePow2(lanes);
+    const Pow2 n1P = MakePow2(n1);
+    const Pow2 n2P = MakePow2(n2);
+    const Pow2 quadsPerRow = MakePow2(lanes / 4); // of a tile: kHalf lines
+    const Pow2 batchP = MakePow2(blocksPerOther);
+    const int quads = n << quadsPerRow.shift;
+    const int x = static_cast<int>(threadIdx.x);
+    auto batchOffset = [&](int batch) -> size_t {
+        const int other = batch >> batchP.shift;
+        const int firstLane = (batch & batchP.mask) * (2 * kHalf);
+        return static_cast<size_t>(other) * otherStride + static_cast<size_t>(firstLane);
+    };
+    auto rowOf = [&](int i) { return (x >> 4) + 16 * i; };
+    auto quadOf = [&](int i) { return (x & 15) ^ ((i & 1) << 3); }; // 0..15 across the batch
+
+    Raw reg[Shape::kSlots];
+    auto load = [&](const TIn* base, auto from, auto to) {
+        RAPIDHT_UNROLL
+        for (int i = decltype(from)::value; i < decltype(to)::value; ++i) {
+            reg[i] = *reinterpret_cast<const Raw*>(
+                base + static_cast<size_t>(rowOf(i)) * axisStride + static_cast<size_t>(quadOf(i)) * 4);
+        }
+    };
+    using Zero = std::integral_constant<int, 0>;
+    using All = std::integral_constant<int, Shape::kSlots>;
+
+    int batch = static_cast<int>(blockIdx.x);
+    if (batch < batches) {
+        load(in + batchOffset(batch), Zero {}, All {});
+    }
+    for (; batch < batches; batch += static_cast<int>(gridDim.x)) {
+        const int next = batch + static_cast<int>(gridDim.x);
+        const bool fetch = next < batches;
+        auto half = [&](auto h) {
+            constexpr int kH = decltype(h)::value;
+            __syncthreads(); // the previous tile's store has finished reading it
+            RAPIDHT_UNROLL
+            for (int i = 0; i < Shape::kSlots; ++i) {
+                const int q = quadOf(i);
+                if ((q >> 3) == kH) {
+                    const int row = rowOf(i);
+                    const T v[4] = { static_cast<T>(reg[i].x) - offset, static_cast<T>(reg[i].y) - offset,
+                        static_cast<T>(reg[i].z) - offset, static_cast<T>(reg[i].w) - offset };
+                    Store4(tile + (row >> n2P.shift) * workStride + (row & n2P.mask) * lanes + (q & 7) * 4, v);
+                }
+            }
+            __syncthreads();
+            const TIn* src = in + batchOffset(next);
+            if constexpr (kH == 1) {
+                if (fetch) {
+                    load(src, Zero {}, std::integral_constant<int, Shape::kPart> {});
+                }
+            }
+            FactoredComputeTile<T, 4, kFold>(
+                tile, c1s, c2s, chT, t, lanes, lanesP, n1P, n2P, quadsPerRow, workStride, [&](auto phase) {
+                    if constexpr (kH == 1) {
+                        constexpr int kQuarter = 1 + FactoredPhaseIndex(decltype(phase) {});
+                        if (fetch) {
+                            load(src, std::integral_constant<int, kQuarter * Shape::kPart> {},
+                                std::integral_constant<int, (kQuarter + 1) * Shape::kPart> {});
+                        }
+                    }
+                });
+            T* base = out + batchOffset(batch) + kH * kHalf;
+            for (int q = x; q < quads; q += blockDim.x) {
+                const int k = q >> quadsPerRow.shift;
+                const int line = (q & quadsPerRow.mask) * 4;
+                T res[4];
+                FactoredRecombineQuad(tile, k, line, lanes, n1, n2, n1P, n2P, res);
+                Store4(base + static_cast<size_t>(k) * axisStride + static_cast<size_t>(line), res);
+            }
+        };
+        half(std::integral_constant<int, 0> {});
+        half(std::integral_constant<int, 1> {});
+    }
+}
+
 /*
  * R-4 step 3.3: the last pass along x of a true 2D or 3D transform, with the
  * Bracewell combination folded in -- FactoredDhtBracewellGroup of factored.cpp

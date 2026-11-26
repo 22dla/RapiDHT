@@ -837,6 +837,7 @@ of the float path, which the sweep `s24_L{8,16,32}` of step 2.4 confirmed):
 | u16 256³ | 1.276 ms | 1.397 ms | **1.203 ms** | 0.94 | 0.86 | 1.157 ms |
 | u8 512³ | 9.72 ms | 11.02 ms | **10.26 ms** | 1.06 | 0.93 | 9.38 ms |
 | u16 512³ | 10.03 ms | 11.32 ms | **10.50 ms** | 1.05 | 0.93 | 9.38 ms |
+| u16 512³, wide read (step 2.5) | 10.03 ms | 11.33 ms | **9.69 ms** | 0.97 | 0.86 | 9.41 ms |
 
 Per kernel (`…_s24_base_trace.txt`, clock locked at 1665 MHz, minimum of 15
 calls), the z pass, ms: float 0.049 / 0.410 / 3.12, u16 0.056 / 0.441 / 4.09,
@@ -845,6 +846,14 @@ integers is 0.8–1.0 ms slower than the float one although it reads half or a
 quarter of the bytes; no batch width of 8, 16 or 32 lines removes that. The y
 pass after it (the same in-place float kernel) also moves: 3.10 against
 2.78 ms at 512³, 0.37 against 0.43 at 256³ -- cause not measured.
+
+Step 2.5 (A-B `…_r5_s25_{a,b}`): at 512³ the z pass from uint16 reads a batch
+of 64 lines at once -- each half-warp 128 contiguous bytes, 32 `ushort4` quads
+a thread, the 64 registers the float kernel spends on its prefetch -- and
+computes it as two tiles of 32 (`FactoredAxisKernelWideFrom`). The pass goes
+4.08 → 3.26 ms (float: 3.13), the transform 10.47 → 9.69 ms (−7.5 %), 0.97 of
+the LTO callback. Not for uint8: 64 lines of it are 64 bytes, and the pass got
+slower (3.91 → 4.24 ms); u8 512³ stays at 1.06 of the callback.
 
 ---
 
