@@ -48,6 +48,7 @@
 #include <cmath>
 #include <cstdint>
 #include <cstring>
+#include <functional>
 #include <map>
 #include <memory>
 #include <set>
@@ -1222,6 +1223,132 @@ void RegisterIntegerInput(const Extent* extents, size_t n, const char* rank = "3
 #endif
 }
 
+#ifdef RAPIDHT_WITH_CUDA
+/*
+ * R-5 step 4.3: the inverse into integers -- from a spectrum on the device to
+ * uint8 / uint16 voxels, the task of stage 4:
+ *   IntInverse         this library's integer inverse (the mean off H(0), the
+ *                      conversion folded into the last pass);
+ *   IntInverseConvert  this library's float inverse, then a conversion kernel;
+ *   cuFFTIntInv        cuFFT C2R from its half spectrum, then the same kernel;
+ *   cuFFTIntInvLto     cuFFT C2R with an LTO store callback writing integers.
+ * Every inverse overwrites its input, so the spectrum is restored from a copy
+ * before each iteration with the timer paused. Before timing, each variant
+ * must give back the integer input voxel for voxel (white noise; the forward
+ * transform with this library's default offset policy, or cuFFT's own R2C).
+ */
+enum class IntInverse { Ours,
+    OursConvert,
+    Cufft,
+    CufftLto };
+
+template <typename TOut>
+void BM_IntInverse(benchmark::State& state, Extent e, IntInverse variant)
+{
+    const size_t count = ElementCount(e.width, e.height, e.depth);
+    const rapidht_bench::IntInput type = sizeof(TOut) == 1 ? rapidht_bench::IntInput::U8 : rapidht_bench::IntInput::U16;
+    const std::vector<TOut> host = MakeIntegerNoise<TOut>(count);
+    const double usedStart = DeviceUsedMiB();
+    TOut* ints = nullptr;
+    if (cudaMalloc(&ints, count * sizeof(TOut)) != cudaSuccess) {
+        cudaGetLastError();
+        state.SkipWithError("cudaMalloc failed: the integers do not fit");
+        return;
+    }
+    try {
+        cudaMemcpy(ints, host.data(), count * sizeof(TOut), cudaMemcpyHostToDevice);
+        std::function<void()> restore;
+        std::function<void()> inverse;
+        std::unique_ptr<rapidht_bench::CufftIntInverse> cufft;
+        std::unique_ptr<HartleyTransform<float>> transform;
+        std::unique_ptr<RapiDHT::DeviceVolume<float>> work;
+        std::unique_ptr<RapiDHT::DeviceVolume<float>> pristine;
+        if (variant == IntInverse::Cufft || variant == IntInverse::CufftLto) {
+            cufft = rapidht_bench::MakeCufftIntInverse(static_cast<int>(e.width), static_cast<int>(e.height),
+                static_cast<int>(e.depth), type, variant == IntInverse::CufftLto);
+            cufft->SetSpectrumFrom(ints);
+            restore = [&] { cufft->Restore(); };
+            inverse = [&] { cufft->Inverse(ints); };
+        } else {
+            transform = std::make_unique<HartleyTransform<float>>(e.width, e.height, e.depth, Modes::GPUFactored);
+            work = std::make_unique<RapiDHT::DeviceVolume<float>>(count);
+            pristine = std::make_unique<RapiDHT::DeviceVolume<float>>(count);
+            RapiDHT::internal::DeviceAccess::ForwardFromIntegers(
+                *transform, ints, *pristine, RapiDHT::internal::IntegerOffset::Default());
+            float* to = DevicePeek::Data(*work);
+            const float* from = DevicePeek::Data(*pristine);
+            restore = [&, to, from] {
+                cudaMemcpy(to, from, count * sizeof(float), cudaMemcpyDeviceToDevice);
+                cudaDeviceSynchronize();
+            };
+            if (variant == IntInverse::Ours) {
+                inverse = [&] {
+                    RapiDHT::internal::DeviceAccess::InverseToIntegers(
+                        *transform, *work, ints, RapiDHT::internal::IntegerOffset::MeanOfAll());
+                };
+            } else {
+                inverse = [&, to] {
+                    transform->InverseTransform(*work); // forward, then 1/N
+                    rapidht_bench::ConvertFloatToInt(to, type, ints, count, 1.0f);
+                    cudaDeviceSynchronize();
+                };
+            }
+        }
+        // The check: the input back, every voxel.
+        cudaMemset(ints, 0, count * sizeof(TOut));
+        restore();
+        inverse();
+        const double peak = DeviceUsedMiB() - usedStart;
+        std::vector<TOut> back(count);
+        cudaMemcpy(back.data(), ints, count * sizeof(TOut), cudaMemcpyDeviceToHost);
+        size_t differ = 0;
+        for (size_t i = 0; i < count; ++i) {
+            differ += back[i] != host[i] ? 1 : 0;
+        }
+        if (differ != 0) {
+            throw std::runtime_error(std::to_string(differ) + " voxels not restored");
+        }
+        for (auto _ : state) {
+            state.PauseTiming();
+            restore();
+            state.ResumeTiming();
+            inverse();
+        }
+        state.counters["peakMiB"] = peak;
+    } catch (const std::exception& error) {
+        cudaFree(ints);
+        state.SkipWithError(error.what());
+        return;
+    }
+    cudaFree(ints);
+    state.counters["N"] = static_cast<double>(count);
+}
+
+void RegisterIntegerInverse(const Extent* extents, size_t n)
+{
+    if (!RapiDHT::IsGpuAvailable()) {
+        return;
+    }
+    const std::pair<const char*, IntInverse> variants[] = {
+        { "IntInverse", IntInverse::Ours },
+        { "IntInverseConvert", IntInverse::OursConvert },
+        { "cuFFTIntInv", IntInverse::Cufft },
+        { "cuFFTIntInvLto", IntInverse::CufftLto },
+    };
+    for (size_t i = 0; i < n; ++i) {
+        const Extent e = extents[i];
+        for (const auto& [family, variant] : variants) {
+            benchmark::RegisterBenchmark((std::string(family) + "/u8/3D/" + Describe(e)).c_str(),
+                [e, variant = variant](benchmark::State& s) { BM_IntInverse<uint8_t>(s, e, variant); })
+                ->Unit(benchmark::kMicrosecond);
+            benchmark::RegisterBenchmark((std::string(family) + "/u16/3D/" + Describe(e)).c_str(),
+                [e, variant = variant](benchmark::State& s) { BM_IntInverse<uint16_t>(s, e, variant); })
+                ->Unit(benchmark::kMicrosecond);
+        }
+    }
+}
+#endif
+
 /// R-5 step 1.2: the mean offset, exact and sampled.
 void RegisterIntOffset(const Extent* extents, size_t n)
 {
@@ -1410,6 +1537,10 @@ int main(int argc, char** argv)
     RegisterFactored<float>(kExtentsR4Only3D, CountOf(kExtentsR4Only3D), "3D", "f32");
     RegisterIntegerInput(kExtents3D, CountOf(kExtents3D));
     RegisterIntegerInput(kExtentsR5Large3D, CountOf(kExtentsR5Large3D));
+#ifdef RAPIDHT_WITH_CUDA
+    RegisterIntegerInverse(kExtents3D, CountOf(kExtents3D)); // R-5 step 4.3
+    RegisterIntegerInverse(kExtentsR5Large3D, CountOf(kExtentsR5Large3D));
+#endif
     RegisterIntOffset(kExtents3D + 2, 1); // 512^3
     RegisterIntOffset(kExtentsR5Large3D + 1, 1); // 1024^3
     RegisterHostToDevice(kExtents3D + 2, 1); // 512^3

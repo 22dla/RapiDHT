@@ -121,6 +121,33 @@ void AddToFirst(float* deviceData, double value);
 void IntegerMeanOffset(const void* deviceIn, IntInput input, size_t width, size_t lines, size_t step,
     unsigned long long* deviceSum, float* deviceOffset);
 
+/*
+ * R-5 step 4.3: the inverse into integers through cuFFT, from cuFFT's own
+ * spectrum of an integer volume (the half spectrum R2C gives) to uint8 /
+ * uint16 voxels: C2R, then each value scaled by 1/N, rounded and clamped --
+ *   Convert      C2R into a float buffer, a kernel converts it;
+ *   LtoCallback  C2R with an LTO store callback writing the integers.
+ * C2R overwrites its input, so the spectrum is kept in a second buffer and
+ * Restore() copies it back (untimed, by the caller) before each Inverse().
+ */
+class CufftIntInverse {
+public:
+    virtual ~CufftIntInverse() = default;
+    /// The half spectrum of the integer volume at deviceIn (once).
+    virtual void SetSpectrumFrom(const void* deviceIn) = 0;
+    virtual void Restore() = 0;
+    /// deviceOut: W*H*D integers of the type given. Synchronises.
+    virtual void Inverse(void* deviceOut) = 0;
+    /// Two half spectra, cuFFT's workspace and, for Convert, the float buffer.
+    virtual size_t ExtraDeviceBytes() const = 0;
+};
+
+std::unique_ptr<CufftIntInverse> MakeCufftIntInverse(int width, int height, int depth, IntInput output, bool lto);
+
+/// R-5 step 4.3: count floats to integers, rint(x * scale) clamped to the type
+/// -- the conversion after a float inverse. Asynchronous.
+void ConvertFloatToInt(const float* deviceIn, IntInput output, void* deviceOut, size_t count, float scale);
+
 /// LegacyCallback. Defined in cufft_int_callback.cu, which only targets that
 /// link rapidht_cufft_callback have.
 std::unique_ptr<CufftIntHartley> MakeCufftIntCallback(

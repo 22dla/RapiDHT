@@ -81,6 +81,9 @@ OPPONENTS: dict[str, tuple[tuple[str, ...], ...]] = {
     "IntFactoredEvery512": (CUFFT_INT, ("IntFactored",)),
     "IntFactoredEvery64": (CUFFT_INT, ("IntFactored",)),
     "IntFactoredMean": (CUFFT_INT, ("IntFactored",)),
+    # Step 4.3: the inverse into integers.
+    "IntInverse": (("cuFFTIntInv", "cuFFTIntInvLto"), ("IntInverseConvert",)),
+    "IntInverseConvert": (("cuFFTIntInv", "cuFFTIntInvLto"),),
 }
 OPPONENT_LABEL = {
     "cuFFT": "cuFFT + преобразование в Хартли",
@@ -92,6 +95,9 @@ OPPONENT_LABEL = {
     "cuFFTIntLto": "cuFFT с колбэком LTO + Хартли",
     "IntConvertFactored": "перевод в float + наш путь",
     "IntFactored": "наш путь из целых, смещение — половина диапазона",
+    "cuFFTIntInv": "cuFFT C2R + перевод в целые",
+    "cuFFTIntInvLto": "cuFFT C2R с колбэком сохранения LTO",
+    "IntInverseConvert": "наш float-обратный + перевод в целые",
 }
 
 

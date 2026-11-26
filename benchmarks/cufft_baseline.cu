@@ -137,6 +137,31 @@ void IntegerMeanOffset(const void* deviceIn, IntInput input, size_t width, size_
     Check(cudaGetLastError(), "RoundedMean launch");
 }
 
+namespace {
+
+template <typename TOut>
+__global__ void FloatToInt(const float* __restrict__ in, TOut* __restrict__ out, size_t count, float scale)
+{
+    const size_t stride = static_cast<size_t>(gridDim.x) * blockDim.x;
+    const float top = sizeof(TOut) == 1 ? 255.0f : 65535.0f;
+    for (size_t i = static_cast<size_t>(blockIdx.x) * blockDim.x + threadIdx.x; i < count; i += stride) {
+        const float r = rintf(fmaf(in[i], scale, 0.0f));
+        out[i] = static_cast<TOut>(r >= 0.0f ? (r <= top ? r : top) : 0.0f);
+    }
+}
+
+} // namespace
+
+void ConvertFloatToInt(const float* deviceIn, IntInput output, void* deviceOut, size_t count, float scale)
+{
+    if (output == IntInput::U8) {
+        FloatToInt<<<1024, 256>>>(deviceIn, static_cast<std::uint8_t*>(deviceOut), count, scale);
+    } else {
+        FloatToInt<<<1024, 256>>>(deviceIn, static_cast<std::uint16_t*>(deviceOut), count, scale);
+    }
+    Check(cudaGetLastError(), "FloatToInt launch");
+}
+
 void AddToFirst(float* deviceData, double value)
 {
     AddToFirstKernel<<<1, 1>>>(deviceData, value);
@@ -194,7 +219,112 @@ private:
     float* _callerInfo = nullptr;
 };
 
+/// R-5 step 4.3: C2R into integers (MakeCufftIntInverse).
+class CufftIntInverseImpl final : public CufftIntInverse {
+public:
+    CufftIntInverseImpl(int width, int height, int depth, IntInput output, bool lto):
+        _width(width), _height(height), _depth(depth > 0 ? depth : 1), _image(depth <= 0), _output(output),
+        _lto(lto)
+    {
+        const size_t half = static_cast<size_t>(width) / 2 + 1;
+        _spectrumBytes = half * static_cast<size_t>(height) * static_cast<size_t>(_depth) * sizeof(cufftComplex);
+        Check(cudaMalloc(&_spectrum, _spectrumBytes), "cudaMalloc(spectrum)");
+        Check(cudaMalloc(&_pristine, _spectrumBytes), "cudaMalloc(pristine)");
+        if (!lto) {
+            Check(cudaMalloc(&_floats, Count() * sizeof(float)), "cudaMalloc(floats)");
+        }
+        Check(cufftCreate(&_plan), "cufftCreate");
+        if (lto) {
+            const float scale = static_cast<float>(1.0 / static_cast<double>(Count()));
+            Check(cudaMalloc(&_callerInfo, sizeof(float)), "cudaMalloc(callerInfo)");
+            Check(cudaMemcpy(_callerInfo, &scale, sizeof(float), cudaMemcpyHostToDevice), "cudaMemcpy(callerInfo)");
+            void* info = _callerInfo;
+            const char* symbol = output == IntInput::U8 ? "rapidht_store_u8_lto" : "rapidht_store_u16_lto";
+            Check(cufftXtSetJITCallback(
+                      _plan, symbol, rapidht_lto_fatbin, sizeof(rapidht_lto_fatbin), CUFFT_CB_ST_REAL, &info),
+                "cufftXtSetJITCallback(store)");
+        }
+        size_t work = 0;
+        if (_image) {
+            Check(cufftMakePlan2d(_plan, height, width, CUFFT_C2R, &work), "cufftMakePlan2d(C2R)");
+        } else {
+            Check(cufftMakePlan3d(_plan, _depth, height, width, CUFFT_C2R, &work), "cufftMakePlan3d(C2R)");
+        }
+        _workspaceBytes = work;
+    }
+
+    ~CufftIntInverseImpl() override
+    {
+        cufftDestroy(_plan);
+        cudaFree(_spectrum);
+        cudaFree(_pristine);
+        cudaFree(_floats);
+        cudaFree(_callerInfo);
+    }
+
+    void SetSpectrumFrom(const void* deviceIn) override
+    {
+        // The forward half spectrum of the integers, through a float buffer
+        // and a plan of its own -- set-up, not timed.
+        float* floats = nullptr;
+        Check(cudaMalloc(&floats, Count() * sizeof(float)), "cudaMalloc(set-up floats)");
+        ConvertIntToFloat(deviceIn, _output, floats, Count(), 0.0);
+        cufftHandle forward = 0;
+        if (_image) {
+            Check(cufftPlan2d(&forward, _height, _width, CUFFT_R2C), "cufftPlan2d(R2C)");
+        } else {
+            Check(cufftPlan3d(&forward, _depth, _height, _width, CUFFT_R2C), "cufftPlan3d(R2C)");
+        }
+        Check(cufftExecR2C(forward, floats, _pristine), "cufftExecR2C(set-up)");
+        Check(cudaDeviceSynchronize(), "set-up");
+        cufftDestroy(forward);
+        cudaFree(floats);
+    }
+
+    void Restore() override
+    {
+        Check(cudaMemcpy(_spectrum, _pristine, _spectrumBytes, cudaMemcpyDeviceToDevice), "restore");
+        Check(cudaDeviceSynchronize(), "restore");
+    }
+
+    void Inverse(void* deviceOut) override
+    {
+        if (_lto) {
+            Check(cufftExecC2R(_plan, _spectrum, static_cast<cufftReal*>(deviceOut)), "cufftExecC2R");
+        } else {
+            Check(cufftExecC2R(_plan, _spectrum, _floats), "cufftExecC2R");
+            ConvertFloatToInt(_floats, _output, deviceOut, Count(), static_cast<float>(1.0 / double(Count())));
+        }
+        Check(cudaDeviceSynchronize(), "inverse");
+    }
+
+    size_t ExtraDeviceBytes() const override
+    {
+        return 2 * _spectrumBytes + _workspaceBytes + (_lto ? 0 : Count() * sizeof(float));
+    }
+
+private:
+    size_t Count() const { return static_cast<size_t>(_width) * _height * _depth; }
+
+    int _width, _height, _depth;
+    bool _image;
+    IntInput _output;
+    bool _lto;
+    cufftHandle _plan = 0;
+    cufftComplex* _spectrum = nullptr;
+    cufftComplex* _pristine = nullptr;
+    float* _floats = nullptr;
+    float* _callerInfo = nullptr;
+    size_t _spectrumBytes = 0;
+    size_t _workspaceBytes = 0;
+};
+
 } // namespace
+
+std::unique_ptr<CufftIntInverse> MakeCufftIntInverse(int width, int height, int depth, IntInput output, bool lto)
+{
+    return std::make_unique<CufftIntInverseImpl>(width, height, depth, output, lto);
+}
 
 struct CufftHartley::Impl {
     int width = 0;

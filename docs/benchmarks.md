@@ -859,6 +859,26 @@ lines of uint8 (128 bytes a row) as four tiles was tried and rejected (A-B
 13.51 ms (+32 %) -- the next batch can be fetched only during the last of the
 four tiles.
 
+### The inverse into integers (R-5 steps 4.2–4.3, 2026-11-26)
+
+From a spectrum on the device to uint8 / uint16 voxels (`…_r5_s43.json`; the
+input restored before each iteration, untimed; every variant first gives back
+the integer input voxel for voxel), ms:
+
+| | ours, into integers | ours, float + conversion | cuFFT C2R + conversion | cuFFT C2R, LTO store callback | ours / LTO | ours / float + conversion |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| u16 128³ | 0.146 | 0.230 | 0.166 | **0.128** | 1.14 | 0.64 |
+| u16 256³ | 1.21 | 1.75 | 1.25 | **1.00** | 1.21 | 0.69 |
+| u16 512³ | 9.74 | 13.85 | 10.05 | **7.41** | 1.31 | 0.70 |
+| u8 512³ | 9.72 | 13.53 | 9.73 | **7.09** | 1.37 | 0.72 |
+| u16 1024 × 1024 × 512 | 49.6 | 69.2 | does not fit the harness | -- | -- | 0.72 |
+
+The integer last pass saves 28–36 % of the float inverse with a separate
+conversion, but cuFFT's C2R with a store callback is faster still: it needs
+no conversion into Hartley, as in the convolution of R-4. Round trips through
+the integer inverse restore every voxel of every input of the accuracy report
+(`…_s43_accuracy.txt`: 126 runs, none clamped) -- criterion C4.
+
 ### The largest volumes (R-5 step 2.7, 2026-11-26)
 
 `…_r5_s27.json` (`R5_LARGE=1`), the integer first pass against the strongest
