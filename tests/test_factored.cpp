@@ -10,6 +10,7 @@
  */
 
 #include "internal/factored.h"
+#include "internal/integer_convert.h"
 
 #include <rapidht/device_volume.h>
 #include <rapidht/transform.h>
@@ -21,6 +22,7 @@
 
 #include <gtest/gtest.h>
 
+#include <algorithm>
 #include <cmath>
 #include <cstdint>
 #include <cstring>
@@ -329,6 +331,154 @@ TEST(Factored, FusedBracewellGroupMatchesDefinition_Double)
 TEST(Factored, FusedBracewellGroupMatchesDefinition_Float)
 {
     ExpectFusedMatchesDefinition<float>(2e-5);
+}
+
+TEST(Factored, ToIntegerSaturatedRoundsAndClamps)
+{
+    // R-5 step 4.1: to nearest with ties to even, clamped to the type, each
+    // clamped value (and NaN) counted.
+    size_t saturated = 0;
+    EXPECT_EQ((ToIntegerSaturated<uint8_t>(2.5f, 1.0f, 0.0f, saturated)), 2);
+    EXPECT_EQ((ToIntegerSaturated<uint8_t>(3.5f, 1.0f, 0.0f, saturated)), 4);
+    EXPECT_EQ((ToIntegerSaturated<uint8_t>(-0.4f, 1.0f, 0.0f, saturated)), 0);
+    EXPECT_EQ((ToIntegerSaturated<uint8_t>(255.4f, 1.0f, 0.0f, saturated)), 255);
+    EXPECT_EQ((ToIntegerSaturated<uint16_t>(1000.0, 0.5, 100.0, saturated)), 600);
+    EXPECT_EQ(saturated, 0u);
+    EXPECT_EQ((ToIntegerSaturated<uint8_t>(-0.6f, 1.0f, 0.0f, saturated)), 0);
+    EXPECT_EQ((ToIntegerSaturated<uint8_t>(255.6f, 1.0f, 0.0f, saturated)), 255);
+    EXPECT_EQ((ToIntegerSaturated<uint16_t>(65535.6, 1.0, 0.0, saturated)), 65535);
+    EXPECT_EQ((ToIntegerSaturated<uint16_t>(std::nan(""), 1.0, 0.0, saturated)), 0);
+    EXPECT_EQ(saturated, 4u);
+}
+
+namespace {
+
+/*
+ * R-5 step 4.1: the inverse of an integer volume on the host, the way the
+ * device will run it: offset * N out of H(0) (in double), z and y in place,
+ * then x by groups of mirror lines with the Bracewell combination and the
+ * conversion to TOut folded in (FactoredDhtBracewellGroupTo); a 1D line is
+ * converted after its one pass. Returns the integers; `saturated` counts the
+ * clamped voxels, each once.
+ */
+template <typename T, typename TOut>
+std::vector<TOut> InverseToIntegers(
+    const std::vector<double>& spectrum, const Dims& dims, double offset, size_t& saturated)
+{
+    const size_t N = dims.Total();
+    std::vector<T> v(spectrum.begin(), spectrum.end());
+    v[0] = static_cast<T>(spectrum[0] - offset * static_cast<double>(N));
+    const T scale = static_cast<T>(1.0 / static_cast<double>(N));
+    const T off = static_cast<T>(offset);
+    std::vector<TOut> out(N);
+    saturated = 0;
+    const size_t W = dims.width, H = dims.height, D = dims.depth;
+    if (H <= 1 && D <= 1) {
+        FactoredAlongAxis(v, dims, 0);
+        for (size_t i = 0; i < N; ++i) {
+            out[i] = ToIntegerSaturated<TOut>(v[i], scale, off, saturated);
+        }
+        return out;
+    }
+    FactoredAlongAxis(v, dims, 2);
+    FactoredAlongAxis(v, dims, 1);
+    const auto tables = MakeFactoredTables<T>(W);
+    std::vector<T> tile(4 * W), work(4 * W);
+    std::vector<TOut> group(4 * W);
+    for (size_t z = 0; z <= D / 2; ++z) {
+        for (size_t y = 0; y <= H / 2; ++y) {
+            const size_t my = (H - y) % H, mz = (D - z) % D;
+            const size_t rows[4] = { W * (y + H * z), W * (my + H * z), W * (y + H * mz), W * (my + H * mz) };
+            for (size_t i = 0; i < W; ++i) {
+                for (size_t l = 0; l < 4; ++l) {
+                    tile[i * 4 + l] = v[rows[l] + i];
+                }
+            }
+            // A lane is a copy when its mirror in y or z is the line itself.
+            unsigned counted = 0;
+            for (unsigned l = 0; l < 4; ++l) {
+                const bool copyY = (l & 1u) && my == y;
+                const bool copyZ = (l & 2u) && mz == z;
+                counted |= (copyY || copyZ) ? 0u : (1u << l);
+            }
+            saturated += FactoredDhtBracewellGroupTo(
+                tile.data(), work.data(), tables, scale, off, group.data(), counted);
+            for (size_t i = 0; i < W; ++i) {
+                for (size_t l = 0; l < 4; ++l) {
+                    out[rows[l] + i] = group[i * 4 + l];
+                }
+            }
+        }
+    }
+    return out;
+}
+
+/// Integers over the full range of TOut on `dims`, from a fixed formula.
+template <typename TOut>
+std::vector<double> IntegerVolume(const Dims& dims)
+{
+    std::vector<double> x(dims.Total());
+    for (size_t i = 0; i < x.size(); ++i) {
+        x[i] = static_cast<double>(static_cast<uint32_t>((i + 1) * 2654435761u) >> (32 - 8 * sizeof(TOut)));
+    }
+    return x;
+}
+
+/// The definition's spectrum of an integer volume, back through
+/// InverseToIntegers: every voxel exactly, none clamped -- with no offset,
+/// half the range, an arbitrary one and the rounded mean. Then a spectrum of
+/// twice the volume: the voxels above the range clamp to its top, counted.
+template <typename T, typename TOut>
+void ExpectInverseToIntegersRestores()
+{
+    const Dims shapes[] = { Dims::Of(16, 8, 32), Dims::Of(32, 4, 8), Dims::Of(8, 2, 16), Dims::Of(16, 16, 2),
+        Dims::Of(32, 16, 0), Dims::Of(64, 2, 0), Dims::Of(2, 8, 4), Dims::Of(256, 0, 0) };
+    for (const Dims& dims : shapes) {
+        SCOPED_TRACE(std::to_string(dims.width) + "x" + std::to_string(dims.height) + "x"
+                     + std::to_string(dims.depth));
+        const auto x = IntegerVolume<TOut>(dims);
+        const auto spectrum = ReferenceDht(x, dims);
+        double mean = 0.0;
+        for (const double v : x) {
+            mean += v;
+        }
+        mean = std::rint(mean / static_cast<double>(x.size()));
+        for (const double offset : { 0.0, IntegerMaxOf<TOut>() / 2 + 0.5, 77.0, mean }) {
+            SCOPED_TRACE("offset " + std::to_string(offset));
+            size_t saturated = 0;
+            const auto got = InverseToIntegers<T, TOut>(spectrum, dims, offset, saturated);
+            EXPECT_EQ(saturated, 0u);
+            ASSERT_EQ(std::vector<double>(got.begin(), got.end()), x);
+        }
+        std::vector<double> twice(spectrum);
+        size_t above = 0;
+        std::vector<double> expected(x.size());
+        for (size_t i = 0; i < x.size(); ++i) {
+            expected[i] = std::min(2.0 * x[i], IntegerMaxOf<TOut>());
+            above += 2.0 * x[i] > IntegerMaxOf<TOut>() ? 1 : 0;
+        }
+        for (double& v : twice) {
+            v *= 2.0;
+        }
+        size_t saturated = 0;
+        const auto got = InverseToIntegers<T, TOut>(twice, dims, mean, saturated);
+        EXPECT_EQ(saturated, above);
+        ASSERT_EQ(std::vector<double>(got.begin(), got.end()), expected);
+    }
+}
+
+} // namespace
+
+TEST(Factored, InverseToIntegersRestoresInput_Float)
+{
+    ExpectInverseToIntegersRestores<float, uint8_t>();
+    ExpectInverseToIntegersRestores<float, uint16_t>();
+}
+
+TEST(Factored, InverseToIntegersRestoresInput_Double)
+{
+    ExpectInverseToIntegersRestores<double, uint8_t>();
+    ExpectInverseToIntegersRestores<double, uint16_t>();
 }
 
 #ifdef RAPIDHT_WITH_CUDA

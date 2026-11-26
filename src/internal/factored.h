@@ -121,6 +121,24 @@ void FactoredDhtLanesFrom(
 template <typename T>
 void FactoredDhtBracewellGroup(T* tile, T* work, const FactoredTables<T>& tables);
 
+/**
+ * @brief R-5 step 4.1: FactoredDhtBracewellGroup ending in integers -- the last
+ * pass of the inverse of an integer volume.
+ *
+ * Each value of the group goes through ToIntegerSaturated (integer_convert.h):
+ * fma(value, scale, offset), rounded to nearest, clamped to TOut, into `out`
+ * in the layout of the tile. `tile` holds the T result afterwards, as for
+ * FactoredDhtBracewellGroup.
+ *
+ * TOut is std::uint8_t or std::uint16_t. @param counted bit l set: lane l is
+ * a line of its own, not a copy of a lower lane (a mirror axis puts one line
+ * into several lanes), so its clamped values are counted.
+ * @return the number of clamped voxels in the counted lanes.
+ */
+template <typename T, typename TOut>
+size_t FactoredDhtBracewellGroupTo(
+    T* tile, T* work, const FactoredTables<T>& tables, T scale, T offset, TOut* out, unsigned counted = 0xFu);
+
 } // namespace internal
 } // namespace RapiDHT
 

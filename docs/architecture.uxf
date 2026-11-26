@@ -629,7 +629,7 @@ implements</panel_attributes>
       <x>900</x>
       <y>1120</y>
       <w>390</w>
-      <h>230</h>
+      <h>235</h>
     </coordinates>
     <panel_attributes>«header» factored.h  +  «source» factored.cpp
 «R-4, compiled in every build»
@@ -644,6 +644,9 @@ FactoredDhtLanes(tile, work, lanes, tables)
       tested against the O(N²) definition
 FactoredDhtLanesFrom(in: TIn*, offset, ...)  — R-5:
     step 1 reads integers; bit for bit the float path
+FactoredDhtBracewellGroupTo(..., scale, offset, out: TOut*)
+    — R-5: last inverse pass into integers, through
+      ToIntegerSaturated (integer_convert.h, host + device)
 bg=#FFFFFF</panel_attributes>
     <additional_attributes/>
   </element>

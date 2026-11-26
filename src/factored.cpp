@@ -9,6 +9,7 @@
  */
 
 #include "internal/factored.h"
+#include "internal/integer_convert.h"
 
 #include <cmath>
 #include <cstdint>
@@ -223,6 +224,22 @@ void FactoredDhtBracewellGroup(T* tile, T* work, const FactoredTables<T>& tables
     }
 }
 
+template <typename T, typename TOut>
+size_t FactoredDhtBracewellGroupTo(
+    T* tile, T* work, const FactoredTables<T>& tables, T scale, T offset, TOut* out, unsigned counted)
+{
+    FactoredDhtBracewellGroup(tile, work, tables);
+    size_t saturated = 0;
+    for (size_t i = 0; i < 4 * tables.split.n; ++i) {
+        size_t clamped = 0;
+        out[i] = ToIntegerSaturated<TOut>(tile[i], scale, offset, clamped);
+        if ((counted >> (i % 4)) & 1u) {
+            saturated += clamped;
+        }
+    }
+    return saturated;
+}
+
 template struct FactoredTables<float>;
 template struct FactoredTables<double>;
 template FactoredTables<float> MakeFactoredTables<float>(size_t);
@@ -239,6 +256,14 @@ template void FactoredDhtLanesFrom<std::uint16_t, double>(
     const std::uint16_t*, double, double*, double*, size_t, const FactoredTables<double>&);
 template void FactoredDhtBracewellGroup<float>(float*, float*, const FactoredTables<float>&);
 template void FactoredDhtBracewellGroup<double>(double*, double*, const FactoredTables<double>&);
+template size_t FactoredDhtBracewellGroupTo<float, std::uint8_t>(
+    float*, float*, const FactoredTables<float>&, float, float, std::uint8_t*, unsigned);
+template size_t FactoredDhtBracewellGroupTo<float, std::uint16_t>(
+    float*, float*, const FactoredTables<float>&, float, float, std::uint16_t*, unsigned);
+template size_t FactoredDhtBracewellGroupTo<double, std::uint8_t>(
+    double*, double*, const FactoredTables<double>&, double, double, std::uint8_t*, unsigned);
+template size_t FactoredDhtBracewellGroupTo<double, std::uint16_t>(
+    double*, double*, const FactoredTables<double>&, double, double, std::uint16_t*, unsigned);
 
 } // namespace internal
 } // namespace RapiDHT
