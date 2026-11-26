@@ -853,7 +853,11 @@ a thread, the 64 registers the float kernel spends on its prefetch -- and
 computes it as two tiles of 32 (`FactoredAxisKernelWideFrom`). The pass goes
 4.08 → 3.26 ms (float: 3.13), the transform 10.47 → 9.69 ms (−7.5 %), 0.97 of
 the LTO callback. Not for uint8: 64 lines of it are 64 bytes, and the pass got
-slower (3.91 → 4.24 ms); u8 512³ stays at 1.06 of the callback.
+slower (3.91 → 4.24 ms); u8 512³ stays at 1.06 of the callback. Reading 128
+lines of uint8 (128 bytes a row) as four tiles was tried and rejected (A-B
+`…_r5_s25u8_{a,b}`): the z pass 3.90 → 7.26 ms, the transform 10.23 →
+13.51 ms (+32 %) -- the next batch can be fetched only during the last of the
+four tiles.
 
 ---
 
