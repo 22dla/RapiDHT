@@ -859,6 +859,23 @@ lines of uint8 (128 bytes a row) as four tiles was tried and rejected (A-B
 13.51 ms (+32 %) -- the next batch can be fetched only during the last of the
 four tiles.
 
+### The largest volumes (R-5 step 2.7, 2026-11-26)
+
+`…_r5_s27.json` (`R5_LARGE=1`), the integer first pass against the strongest
+baseline and the path with a conversion; peak device memory of the task:
+
+| | LTO callback | ours, convert | **ours, integer first pass** | /LTO | peak memory, ours / cuFFT |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| u16 1024 × 1024 × 512 | 41.7 ms | 58.2 ms | **51.6 ms** | 1.24 | 3 104 / 5 126 MiB |
+| u8 1024 × 1024 × 512 | 41.1 ms | 56.9 ms | **53.9 ms** | 1.31 | 2 592 / 4 614 MiB |
+| u16 1024³ | does not fit | 156.9 ms | **127.1 ms** | -- | 6 176 MiB / -- |
+| u8 1024³ | does not fit | 156.1 ms | **121.3 ms** | -- | 5 152 MiB / -- |
+
+1024³ uint16 is the largest cube on the 8 GB card, and only this library
+transforms it: input 2 GiB, output 4 GiB and 32 MiB of tables, nothing else.
+At n = 1024 the wide read of step 2.5 does not apply, and the axes of length
+1024 are slow already in float (R-4).
+
 ### Integer images (R-5 step 2.6, 2026-11-26)
 
 In 2D the first present pass is y, and it reads the integers itself (1D goes
