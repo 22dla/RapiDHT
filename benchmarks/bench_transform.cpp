@@ -711,7 +711,8 @@ using DevicePeek = HartleyTransform<rapidht_bench::PeekTag>;
  * are the cuFFTInt, cuFFTIntCb and cuFFTIntLto rows of the same type and size.
  */
 template <typename TIn>
-void BM_IntConvertFactored(benchmark::State& state, Extent e, bool fromIntegers = false)
+void BM_IntConvertFactored(benchmark::State& state, Extent e, bool fromIntegers = false,
+    const RapiDHT::internal::IntegerOffset* policy = nullptr)
 {
     static std::map<std::string, double> checked; // row -> largest error, LSB
     const std::string row = state.name();
@@ -738,7 +739,13 @@ void BM_IntConvertFactored(benchmark::State& state, Extent e, bool fromIntegers 
             if (fromIntegers) {
                 // R-5 step 2.3, IntFactored/: the first pass reads the
                 // integers itself and returns the offset to H(0); synchronous.
-                RapiDHT::internal::DeviceAccess::ForwardFromIntegers(transform, in, volume, offset);
+                // R-5 step 3.2: with a policy, the library resolves the offset
+                // (the means reduced on the device) instead of half the range.
+                if (policy != nullptr) {
+                    RapiDHT::internal::DeviceAccess::ForwardFromIntegers(transform, in, volume, *policy);
+                } else {
+                    RapiDHT::internal::DeviceAccess::ForwardFromIntegers(transform, in, volume, offset);
+                }
                 return;
             }
             rapidht_bench::ConvertIntToFloat(in, input, out, count, offset);
@@ -757,7 +764,11 @@ void BM_IntConvertFactored(benchmark::State& state, Extent e, bool fromIntegers 
             std::vector<float> got(count);
             volume.Download(got.data());
             const double error = IntegerErrorLsb(got, IntegerReference(host, e));
-            if (error < 0.0 || error > 0.5) {
+            // With no offset the large mean costs 8-24 LSB on uint16 by
+            // itself (docs/R5_PLAN.md, section 3, item 2): the check there
+            // only catches a wrong result, not that error.
+            const bool none = policy != nullptr && policy->kind == RapiDHT::internal::IntegerOffset::Kind::None;
+            if (error < 0.0 || error > (none ? 32.0 : 0.5)) {
                 throw std::runtime_error(error < 0.0 ? "zero frequency disagrees with the CPU in double"
                                                      : "disagrees with the CPU in double: largest error "
                                                            + std::to_string(error) + " LSB");
@@ -1185,6 +1196,24 @@ void RegisterIntegerInput(const Extent* extents, size_t n, const char* rank = "3
         benchmark::RegisterBenchmark((std::string("IntFactored/u16/") + rank + "/" + Describe(e)).c_str(),
             [e](benchmark::State& s) { BM_IntConvertFactored<uint16_t>(s, e, true); })
             ->Unit(benchmark::kMicrosecond);
+        // R-5 step 3.2: the same with each offset policy of the library
+        // (IntFactored itself subtracts half the range, a known value).
+        using RapiDHT::internal::IntegerOffset;
+        static const std::pair<const char*, IntegerOffset> policies[] = {
+            { "IntFactoredNone", IntegerOffset::NoOffset() },
+            { "IntFactoredEvery512", IntegerOffset::MeanOfEvery(512) },
+            { "IntFactoredEvery64", IntegerOffset::MeanOfEvery(64) },
+            { "IntFactoredMean", IntegerOffset::MeanOfAll() },
+        };
+        for (const auto& [family, policy] : policies) {
+            const IntegerOffset* p = &policy;
+            benchmark::RegisterBenchmark((std::string(family) + "/u8/" + rank + "/" + Describe(e)).c_str(),
+                [e, p](benchmark::State& s) { BM_IntConvertFactored<uint8_t>(s, e, true, p); })
+                ->Unit(benchmark::kMicrosecond);
+            benchmark::RegisterBenchmark((std::string(family) + "/u16/" + rank + "/" + Describe(e)).c_str(),
+                [e, p](benchmark::State& s) { BM_IntConvertFactored<uint16_t>(s, e, true, p); })
+                ->Unit(benchmark::kMicrosecond);
+        }
     }
 #else
     (void)extents;

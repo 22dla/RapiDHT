@@ -117,6 +117,9 @@ if(RAPIDHT_WITH_CUDA)
     add_executable(accuracy_integer accuracy_integer.cpp cufft_baseline.cu)
     target_link_libraries(accuracy_integer PRIVATE coreht rapidht_warnings)
     rapidht_use_cufft_baseline(accuracy_integer)
+    # R-5 step 3.2: the R-5 kernel and its offset policies, through
+    # src/internal/device_access.h (not public API until step 6.1).
+    target_include_directories(accuracy_integer PRIVATE "${PROJECT_SOURCE_DIR}/src")
     # R-4 step 0.5: does the cuFFT baseline fit a given volume at all.
     add_executable(capacity_gpu3d capacity_gpu3d.cpp cufft_baseline.cu)
     target_link_libraries(capacity_gpu3d PRIVATE rapidht_warnings)

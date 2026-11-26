@@ -76,6 +76,11 @@ OPPONENTS: dict[str, tuple[tuple[str, ...], ...]] = {
     "ConvHartleyEven": (("ConvCufftEven",),),
     "IntConvertFactored": (CUFFT_INT,),
     "IntFactored": (CUFFT_INT, ("IntConvertFactored",)),
+    # Step 3.2: the integer path with each offset policy of the library.
+    "IntFactoredNone": (CUFFT_INT, ("IntFactored",)),
+    "IntFactoredEvery512": (CUFFT_INT, ("IntFactored",)),
+    "IntFactoredEvery64": (CUFFT_INT, ("IntFactored",)),
+    "IntFactoredMean": (CUFFT_INT, ("IntFactored",)),
 }
 OPPONENT_LABEL = {
     "cuFFT": "cuFFT + преобразование в Хартли",
@@ -86,6 +91,7 @@ OPPONENT_LABEL = {
     "cuFFTIntCb": "cuFFT с колбэком загрузки + Хартли",
     "cuFFTIntLto": "cuFFT с колбэком LTO + Хартли",
     "IntConvertFactored": "перевод в float + наш путь",
+    "IntFactored": "наш путь из целых, смещение — половина диапазона",
 }
 
 

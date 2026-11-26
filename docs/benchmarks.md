@@ -876,6 +876,26 @@ transforms it: input 2 GiB, output 4 GiB and 32 MiB of tables, nothing else.
 At n = 1024 the wide read of step 2.5 does not apply, and the axes of length
 1024 are slow already in float (R-4).
 
+### Offset policies on the device (R-5 steps 3.1–3.2, 2026-11-26)
+
+The integer path with each offset policy of the library (`…_r5_s32.json`),
+against the LTO callback; in brackets the cost over no offset, in shares of
+the float transform:
+
+| | none | half range | every 64th line (default) | exact mean |
+| --- | ---: | ---: | ---: | ---: |
+| u16 128³ | 0.93 | 0.94 (+1.1 %) | **0.95 (+2.9 %)** | 1.02 (+11.0 %) |
+| u16 256³ | 0.94 | 0.95 (+0.1 %) | **0.95 (+0.4 %)** | 1.02 (+7.8 %) |
+| u16 512³ | 0.96 | 0.96 (+0.1 %) | **0.96 (+0.1 %)** | 1.03 (+7.6 %) |
+| u8 128³ | 0.87 | 0.88 (+1.0 %) | **0.89 (+2.9 %)** | 0.93 (+7.6 %) |
+| u8 256³ | 0.91 | 0.92 (+0.2 %) | **0.92 (+0.5 %)** | 0.96 (+5.1 %) |
+| u8 512³ | 1.06 | 1.06 (+0.2 %) | **1.06 (+0.2 %)** | 1.10 (+4.7 %) |
+
+Accuracy through the R-5 kernel (`…_s32_accuracy.txt`) equals that of the
+path with a conversion on every non-zero frequency; the default policy passes
+the accuracy rule, and C3 fails on one input of twelve, the whole C6203A
+slice (1.53 of cuFFT's largest error against a limit of 1.5), as in step 0.5.
+
 ### Integer images (R-5 step 2.6, 2026-11-26)
 
 In 2D the first present pass is y, and it reads the integers itself (1D goes

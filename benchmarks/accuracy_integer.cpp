@@ -49,6 +49,12 @@
  * frequency is reported on its own. Under each row: the largest error by band
  * of frequency with the worst coefficient, and the round trip -- the float
  * spectrum transformed back, rounded, compared voxel by voxel with the input.
+ *
+ * Three rows a policy: cuFFT and GPUFactored on the float input with the
+ * offset subtracted on the host, and (R-5 step 3.2) "R-5 kernel": the
+ * integers themselves on the device, the first pass reading them, the offset
+ * resolved by the library's own policy (internal::IntegerOffset -- the means
+ * reduced on the device) and returned to H(0) in float.
  * tools/r5_accuracy_table.py turns the report into a table and a verdict.
  *
  * The reference is the CPU backend in double: for these inputs every partial
@@ -71,6 +77,7 @@
 #include <string>
 #include <vector>
 
+#include "internal/device_access.h"
 #include "cufft_baseline.h"
 
 namespace {
@@ -287,6 +294,35 @@ std::vector<float> OnDevice(const std::vector<float>& input, const Volume& v, bo
     return output;
 }
 
+/// R-5 step 3.2: the integers on the device through the R-5 kernel with the
+/// library's offset policy; the result is the transform of the input itself.
+template <typename TIn>
+std::vector<float> IntegerOnDevice(const Volume& v, const RapiDHT::internal::IntegerOffset& policy)
+{
+    const size_t count = v.Count();
+    std::vector<TIn> host(count);
+    for (size_t i = 0; i < count; ++i) {
+        host[i] = static_cast<TIn>(v.data[i]);
+    }
+    TIn* in = nullptr;
+    if (cudaMalloc(&in, count * sizeof(TIn)) != cudaSuccess) {
+        throw std::runtime_error("cudaMalloc failed");
+    }
+    std::vector<float> output(count);
+    try {
+        cudaMemcpy(in, host.data(), count * sizeof(TIn), cudaMemcpyHostToDevice);
+        HartleyTransform<float> transform(v.width, v.height, v.depth, Modes::GPUFactored);
+        DeviceVolume<float> out(count);
+        RapiDHT::internal::DeviceAccess::ForwardFromIntegers(transform, in, out, policy);
+        out.Download(output.data());
+    } catch (...) {
+        cudaFree(in);
+        throw;
+    }
+    cudaFree(in);
+    return output;
+}
+
 struct Error {
     double rms = 0.0; ///< over k != 0, in LSB: RMS(error) / sqrt(N)
     double largest = 0.0; ///< over k != 0, in LSB
@@ -459,17 +495,20 @@ void Run(const Volume& v)
     // The offset policies of step 0.5, cheapest first (docs/R5_PLAN.md, rule
     // for the default policy). Every one is printed, equal values included,
     // so that tools/r5_accuracy_table.py finds each policy on every input.
+    using RapiDHT::internal::IntegerOffset;
     struct Policy {
         const char* name;
         double offset;
+        IntegerOffset library; ///< the same policy as the library resolves it
     };
+    const double level = HistogramMode(v);
     const Policy policies[] = {
-        { "raw", 0.0 },
-        { "minus half range", v.halfRange },
-        { "minus known level", HistogramMode(v) },
-        { "minus mean of every 512th line", SampledMean(v, 512) },
-        { "minus mean of every 64th line", SampledMean(v, 64) },
-        { "minus rounded mean", std::round(mean) },
+        { "raw", 0.0, IntegerOffset::NoOffset() },
+        { "minus half range", v.halfRange, IntegerOffset::Of(v.halfRange) },
+        { "minus known level", level, IntegerOffset::Of(level) },
+        { "minus mean of every 512th line", SampledMean(v, 512), IntegerOffset::MeanOfEvery(512) },
+        { "minus mean of every 64th line", SampledMean(v, 64), IntegerOffset::MeanOfEvery(64) },
+        { "minus rounded mean", std::round(mean), IntegerOffset::MeanOfAll() },
     };
     std::printf("  offsets:");
     for (const Policy& p : policies) {
@@ -489,6 +528,18 @@ void Run(const Volume& v)
             ByFrequency(spectrum, reference, v);
             RoundTrip(spectrum, p.offset, v, cufft);
         }
+        // The R-5 kernel: H(0) already holds the offset, so it is measured
+        // with none.
+        const std::vector<float> spectrum = v.halfRange < 256.0 ? IntegerOnDevice<uint8_t>(v, p.library)
+                                                                : IntegerOnDevice<uint16_t>(v, p.library);
+        Row((std::string("R-5 kernel, ") + p.name).c_str(), Measure(spectrum, 0.0, reference));
+        ByFrequency(spectrum, reference, v);
+        // Back with the offset taken out of H(0) and added on the way out, as
+        // the inverse path of stage 4 will: back through the full H(0) would
+        // be the round trip of no offset at all.
+        std::vector<float> centred = spectrum;
+        centred[0] = static_cast<float>(static_cast<double>(centred[0]) - p.offset * static_cast<double>(count));
+        RoundTrip(centred, p.offset, v, false);
     }
     std::fflush(stdout);
 }

@@ -22,6 +22,11 @@ after step 0.4 (2026-11-25):
   C4 (first look) the round trip through the float spectrum restores every
                   voxel.
 
+Reports from step 3.2 on carry a third row a policy, "R-5 kernel": the integers
+read by the first pass, the offset resolved by the library on the device. The
+rules above are then checked for it too (step 3.2: C3 by the R-5 kernel, not
+by the path with a conversion).
+
 Without --all the table shows the inputs of at least 512^3 voxels, the ones
 the rules look at. Standard library only.
 """
@@ -40,7 +45,7 @@ LOSS_LIMIT = 0.01  # %, voxels the round trip may lose on a real input (S8)
 LARGE = 512**3  # the rules look at inputs of at least this many voxels
 
 HEADER = re.compile(r"^(\d+)(?:\^3|x(\d+)x(\d+)), (.*?) \(mean")
-ROW = re.compile(r"^  (cuFFT \+ conversion|GPUFactored), (.*?)\s+rms (\S+)\s+largest (\S+)\s+zero frequency (\S+)")
+ROW = re.compile(r"^  (cuFFT \+ conversion|GPUFactored|R-5 kernel), (.*?)\s+rms (\S+)\s+largest (\S+)\s+zero frequency (\S+)")
 FLOOR = re.compile(r"^  floor: exact spectrum stored as float\s+rms (\S+)\s+largest (\S+)")
 TRIP = re.compile(r"^      round trip: (\d+) of (\d+) voxels not restored \((\S+) %\), largest \|x' - x\| (\S+)")
 
@@ -59,7 +64,7 @@ class Input:
     voxels: int
     floor: float = 0.0
     policies: list[str] = field(default_factory=list)
-    # (library, policy) -> Result; library is "ours" or "cufft"
+    # (library, policy) -> Result; library is "ours", "cufft" or "r5"
     results: dict[tuple[str, str], Result] = field(default_factory=dict)
 
     @property
@@ -85,7 +90,7 @@ def parse(path: str) -> list[Input]:
             elif inputs and (m := FLOOR.match(line)):
                 inputs[-1].floor = float(m.group(2))
             elif inputs and (m := ROW.match(line)):
-                library = "cufft" if m.group(1).startswith("cuFFT") else "ours"
+                library = {"cuFFT + conversion": "cufft", "GPUFactored": "ours", "R-5 kernel": "r5"}[m.group(1)]
                 policy = m.group(2).strip()
                 if policy not in inputs[-1].policies:
                     inputs[-1].policies.append(policy)
@@ -116,10 +121,12 @@ def table(inputs: list[Input], show_all: bool) -> None:
             if ours is None or cufft is None:
                 continue
             mark = "" if passes(inp, "ours", policy) else "  ✗"
+            r5 = inp.results.get(("r5", policy))
+            r5_text = f"   R-5: {r5.largest:.3g}, rms {r5.rms:.2e}, lost {r5.lost}" if r5 else ""
             print(
                 f"  {policy:<32} {ours.largest:14.3g} {ours.largest / inp.floor if inp.floor else float('inf'):7.1f}"
                 f" {ours.rms:9.2e} {cufft.largest:15.3g} {ours.largest / cufft.largest if cufft.largest else float('nan'):10.2f}"
-                f"  {ours.lost}, {cufft.lost}{mark}"
+                f"  {ours.lost}, {cufft.lost}{mark}{r5_text}"
             )
 
 
@@ -159,6 +166,21 @@ def verdict(inputs: list[Input]) -> None:
         c3 &= ok
         print(f"  {inp.name:<58} rms {ours.rms:.2e}  {ratio:5.2f}× cuFFT  {'да' if ok else 'НЕТ'}")
     print(f"  Ц3: {'выполнен' if c3 else 'НЕ выполнен'}")
+
+    if any(("r5", chosen) in i.results for i in inputs):
+        failing = [i.name for i in large if ("r5", chosen) in i.results and not passes(i, "r5", chosen)]
+        print(f"\nЯдро R-5 при политике «{chosen}» (шаг 3.2):")
+        print(f"  правило политики на входах от 512^3: {'проходит' if not failing else 'нет: ' + '; '.join(failing)}")
+        c3r5 = True
+        for inp in inputs:
+            if not inp.realistic or ("r5", chosen) not in inp.results:
+                continue
+            r5, cufft = inp.results[("r5", chosen)], inp.results[("cufft", chosen)]
+            ratio = r5.largest / cufft.largest if cufft.largest else float("inf")
+            ok = r5.rms <= RMS_LIMIT and ratio <= CUFFT_LIMIT
+            c3r5 &= ok
+            print(f"  {inp.name:<58} rms {r5.rms:.2e}  {ratio:5.2f}× cuFFT  {'да' if ok else 'НЕТ'}")
+        print(f"  Ц3 ядром R-5: {'выполнен' if c3r5 else 'НЕ выполнен'}")
 
     print("\nТуда и обратно (Ц4, предварительно; все политики, обе библиотеки):")
     worst = max(

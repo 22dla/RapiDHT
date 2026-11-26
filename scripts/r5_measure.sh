@@ -169,6 +169,8 @@ echo "== 5/5 benchmark: R-4 rows and the R-5 families, 7 repetitions (clock not 
 #   cuFFTIntLto  LTO load callback                                            (step 0.2c)
 #   IntConvertFactored  conversion kernel + FactoredResident                  (step 0.3)
 #   IntFactored  the first pass reads the integers itself                     (step 2.3)
+#   IntFactored<Policy>  the same with the library's offset policy: None, Every512,
+#                Every64 (the default), Mean -- IntFactored subtracts half the range (step 3.2)
 #   IntOffset    the mean offset on the device: exact, every 64th / 512th line (step 1.2)
 sizes='(128x128x128|256x256x256|512x512x512)'
 r4_rows="(cuFFT|cuFFT_R2C|FactoredResident|FactoredResidentSeparable)/f32/3D/$sizes"
@@ -180,7 +182,7 @@ if [[ ${R5_LARGE:-0} == 1 ]]; then
     r5_sizes='(128x128x128|256x256x256|512x512x512|1024x1024x512|1024x1024x1024)'
     echo "   (large sizes: R5_LARGE=1)"
 fi
-r5_rows="(cuFFTInt|cuFFTIntCb|cuFFTIntLto|IntConvertFactored|IntFactored)/(u8|u16)/3D/$r5_sizes"
+r5_rows="(cuFFTInt|cuFFTIntCb|cuFFTIntLto|IntConvertFactored|IntFactored|IntFactored(None|Every512|Every64|Mean))/(u8|u16)/3D/$r5_sizes"
 # 2D (step 2.6): the first present pass is y. The float rows of the same images
 # alongside, for the gap to cuFFT that R-4 left in 2D.
 sizes_2d='(512x512|1024x1024|2048x2048)'
