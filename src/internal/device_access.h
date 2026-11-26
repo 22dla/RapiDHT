@@ -33,6 +33,16 @@ struct DeviceAccess {
         transform.FactoredFromIntegers(deviceIn, out, offset, separable);
     }
 
+    /// R-5 step 4.2: the inverse of `spectrum` into integers at `deviceOut`
+    /// (HartleyTransform::FactoredToIntegers); `spectrum` is used as the work
+    /// buffer. The mean policies take the rounded mean off H(0).
+    template <typename T, typename TOut>
+    static void InverseToIntegers(HartleyTransform<T>& transform, DeviceVolume<T>& spectrum, TOut* deviceOut,
+        const IntegerOffset& offset, size_t* saturated = nullptr, bool separable = false)
+    {
+        transform.FactoredToIntegers(spectrum, deviceOut, offset, saturated, separable);
+    }
+
     /// The same with a known integer `offset` (IntegerOffset::Of).
     template <typename T, typename TIn>
     static void ForwardFromIntegers(

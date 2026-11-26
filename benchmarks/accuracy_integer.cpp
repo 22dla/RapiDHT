@@ -441,6 +441,43 @@ void RoundTrip(const std::vector<float>& spectrum, double offset, const Volume& 
         back.size(), 100.0 * static_cast<double>(mismatched) / static_cast<double>(back.size()), largest);
 }
 
+/// R-5 step 4.2: `spectrum` (the transform of the input itself) back into
+/// integers on the device, compared voxel by voxel; printed as RoundTrip does,
+/// with the clamped count.
+template <typename TOut>
+void IntegerRoundTrip(const std::vector<float>& spectrum, const Volume& v)
+{
+    const size_t count = v.Count();
+    TOut* out = nullptr;
+    if (cudaMalloc(&out, count * sizeof(TOut)) != cudaSuccess) {
+        throw std::runtime_error("cudaMalloc failed");
+    }
+    std::vector<TOut> back(count);
+    size_t saturated = 0;
+    try {
+        HartleyTransform<float> transform(v.width, v.height, v.depth, Modes::GPUFactored);
+        DeviceVolume<float> work(count);
+        work.Upload(spectrum.data());
+        RapiDHT::internal::DeviceAccess::InverseToIntegers(
+            transform, work, out, RapiDHT::internal::IntegerOffset::MeanOfAll(), &saturated);
+        cudaMemcpy(back.data(), out, count * sizeof(TOut), cudaMemcpyDeviceToHost);
+    } catch (...) {
+        cudaFree(out);
+        throw;
+    }
+    cudaFree(out);
+    size_t mismatched = 0;
+    double largest = 0.0;
+    for (size_t i = 0; i < count; ++i) {
+        const double d = std::fabs(static_cast<double>(back[i]) - v.data[i]);
+        largest = std::max(largest, d);
+        mismatched += d != 0.0 ? 1 : 0;
+    }
+    std::printf("      round trip: %zu of %zu voxels not restored (%.3g %%), largest |x' - x| %.3e"
+                " (into integers on the device, %zu clamped)\n",
+        mismatched, count, 100.0 * static_cast<double>(mismatched) / static_cast<double>(count), largest, saturated);
+}
+
 /// The mean over every `step`-th line along x (lines y + H*z = 0, step, ...),
 /// rounded: the sampled-mean offset policies of step 0.5.
 double SampledMean(const Volume& v, size_t step)
@@ -534,12 +571,14 @@ void Run(const Volume& v)
                                                                 : IntegerOnDevice<uint16_t>(v, p.library);
         Row((std::string("R-5 kernel, ") + p.name).c_str(), Measure(spectrum, 0.0, reference));
         ByFrequency(spectrum, reference, v);
-        // Back with the offset taken out of H(0) and added on the way out, as
-        // the inverse path of stage 4 will: back through the full H(0) would
-        // be the round trip of no offset at all.
-        std::vector<float> centred = spectrum;
-        centred[0] = static_cast<float>(static_cast<double>(centred[0]) - p.offset * static_cast<double>(count));
-        RoundTrip(centred, p.offset, v, false);
+        // Back into integers by the inverse of R-5 step 4.2 (the mean read
+        // off H(0), the voxels rounded and clamped on the device): criterion
+        // C4 on this input.
+        if (v.halfRange < 256.0) {
+            IntegerRoundTrip<uint8_t>(spectrum, v);
+        } else {
+            IntegerRoundTrip<uint16_t>(spectrum, v);
+        }
     }
     std::fflush(stdout);
 }

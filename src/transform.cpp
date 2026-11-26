@@ -387,6 +387,30 @@ void HartleyTransform<T>::FactoredFromIntegers(
 #endif
 }
 
+template <typename T>
+template <typename TOut>
+void HartleyTransform<T>::FactoredToIntegers(DeviceVolume<T>& spectrum, TOut* deviceOut,
+    const internal::IntegerOffset& offset, size_t* saturated, bool separable)
+{
+    PROFILE_FUNCTION();
+
+    CheckResidentVolume(spectrum);
+    if (_mode != Modes::GPUFactored) {
+        throw std::invalid_argument("An inverse transform into integers needs Modes::GPUFactored.");
+    }
+    if (deviceOut == nullptr) {
+        throw std::invalid_argument("The integer output holds no allocation.");
+    }
+#ifdef RAPIDHT_WITH_CUDA
+    FactoredInversePasses(static_cast<T*>(spectrum.DeviceData()), deviceOut, offset, saturated, separable);
+#else
+    (void)offset;
+    (void)saturated;
+    (void)separable;
+    ThrowGpuUnavailable();
+#endif
+}
+
 template class DeviceVolume<float>;
 template class DeviceVolume<double>;
 
@@ -401,5 +425,13 @@ template void HartleyTransform<double>::FactoredFromIntegers<std::uint8_t>(
     const std::uint8_t*, DeviceVolume<double>&, const internal::IntegerOffset&, bool);
 template void HartleyTransform<double>::FactoredFromIntegers<std::uint16_t>(
     const std::uint16_t*, DeviceVolume<double>&, const internal::IntegerOffset&, bool);
+template void HartleyTransform<float>::FactoredToIntegers<std::uint8_t>(
+    DeviceVolume<float>&, std::uint8_t*, const internal::IntegerOffset&, size_t*, bool);
+template void HartleyTransform<float>::FactoredToIntegers<std::uint16_t>(
+    DeviceVolume<float>&, std::uint16_t*, const internal::IntegerOffset&, size_t*, bool);
+template void HartleyTransform<double>::FactoredToIntegers<std::uint8_t>(
+    DeviceVolume<double>&, std::uint8_t*, const internal::IntegerOffset&, size_t*, bool);
+template void HartleyTransform<double>::FactoredToIntegers<std::uint16_t>(
+    DeviceVolume<double>&, std::uint16_t*, const internal::IntegerOffset&, size_t*, bool);
 
 } // namespace RapiDHT

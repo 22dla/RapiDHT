@@ -308,6 +308,27 @@ private:
     void FactoredFromIntegers(
         const TIn* deviceIn, DeviceVolume<T>& out, const internal::IntegerOffset& offset, bool separable);
 
+    /// R-5 step 4.2: the passes of the inverse of an integer volume -- the
+    /// offset taken out of H(0), the passes in place on `data`, the last one
+    /// writing TOut to `out`. Defined in backend_cuda.cpp.
+    template <typename TOut>
+    void FactoredInversePasses(
+        T* data, TOut* out, const internal::IntegerOffset& offset, size_t* saturated, bool separable);
+
+    /**
+     * R-5 step 4.2 (internal until step 6.1): the inverse transform of the
+     * spectrum in `spectrum` into integers, TOut = std::uint8_t or
+     * std::uint16_t, written to `deviceOut`: each voxel rint(x / N + offset)
+     * clamped to the type. The offset (a value, or the rounded mean read off
+     * H(0) for the mean policies) is taken out of H(0) first and added back
+     * as the voxels are written. `spectrum` is used as the work buffer and
+     * does not hold the spectrum afterwards. *saturated, if given, receives
+     * the number of clamped voxels. Modes::GPUFactored only.
+     */
+    template <typename TOut>
+    void FactoredToIntegers(DeviceVolume<T>& spectrum, TOut* deviceOut, const internal::IntegerOffset& offset,
+        size_t* saturated, bool separable);
+
     friend struct internal::DeviceAccess;
 
     /**

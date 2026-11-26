@@ -662,6 +662,7 @@ bg=#FFFFFF</panel_attributes>
 *internal::DeviceAccess*  «R-5, friend of HartleyTransform»
 --
 ForwardFromIntegers(transform, in: uint8/16*, out, offset)
+InverseToIntegers(transform, spectrum, out: uint8/16*, offset, saturated*)
     — the integer path until the API decision (R-5 step 6.1);
       used by bench_transform and test_factored, not installed
 bg=#FFFFFF</panel_attributes>

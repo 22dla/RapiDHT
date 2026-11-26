@@ -17,6 +17,7 @@
 #ifndef RAPIDHT_INTERNAL_FACTORED_KERNELS_CUH
 #define RAPIDHT_INTERNAL_FACTORED_KERNELS_CUH
 
+#include "internal/integer_convert.h"
 #include "internal/kernels.h"
 
 #include <cstddef>
@@ -1333,10 +1334,21 @@ __device__ __forceinline__ void GroupLoad(const T* data, int batch, T (&reg)[kMa
     }
 }
 
-template <typename T, int kMaxQuads, int kItems, bool kFold, int kN, int kLanes>
+/// R-5 step 4.2: where the last pass of an inverse writes integers instead of
+/// T in place -- out of place, through ToIntegerSaturated (integer_convert.h).
+template <typename T, typename TOut>
+struct FusedIntegerOut {
+    TOut* out = nullptr;
+    T scale = T(0); ///< 1/N
+    const T* offset = nullptr; ///< on the device, added after the scale
+    unsigned long long* saturated = nullptr; ///< clamped voxels, added to
+};
+
+template <typename T, int kMaxQuads, int kItems, bool kFold, int kN, int kLanes, typename TOut = T>
 __device__ __forceinline__ void FusedLastBody(T* data, FactoredAxisTables<T> t, int H, int D, int groupsY,
-    int groups, int lanes, int batches, int workStride)
+    int groups, int lanes, int batches, int workStride, FusedIntegerOut<T, TOut> io = {})
 {
+    constexpr bool kToIntegers = !std::is_same<TOut, T>::value;
     extern __shared__ __align__(16) unsigned char sharedPipe[];
     FactoredSpecialize<T, kN, kLanes>(t, lanes, workStride);
     const int n = t.n;
@@ -1365,6 +1377,11 @@ __device__ __forceinline__ void FusedLastBody(T* data, FactoredAxisTables<T> t, 
     const Pow2 quadsPerRow = MakePow2(lanes / 4); // = groups per batch
     const int quads = n << quadsPerRow.shift;
     const T half = static_cast<T>(0.5);
+    T offset = T(0);
+    unsigned long long clamped = 0;
+    if constexpr (kToIntegers) {
+        offset = *io.offset;
+    }
 
     T reg[kMaxQuads][4];
     int batch = static_cast<int>(blockIdx.x);
@@ -1424,11 +1441,40 @@ __device__ __forceinline__ void FusedLastBody(T* data, FactoredAxisTables<T> t, 
                 FactoredRecombineQuad(tile, mi, lg * 4, lanes, n1, n2, n1P, n2P, sm);
             }
             const int g = min((batch << quadsPerRow.shift) + lg, groups - 1);
-            RAPIDHT_UNROLL
-            for (int m = 0; m < 4; ++m) {
-                const size_t line = fixedGroup ? ownLine[m] : GroupLine(g, m, n, H, D, groupsY);
-                data[line + static_cast<size_t>(i)] = half * (sm[m] + s[m ^ 1] + s[m ^ 2] - sm[m ^ 3]);
+            if constexpr (kToIntegers) {
+                // A lane that repeats a lower lane's line (a mirror axis) is
+                // written again but not counted again; nor is a group past the
+                // last, which a ragged last batch clamps onto it.
+                const bool ownGroup = (batch << quadsPerRow.shift) + lg < groups;
+                size_t lines[4];
+                RAPIDHT_UNROLL
+                for (int m = 0; m < 4; ++m) {
+                    lines[m] = fixedGroup ? ownLine[m] : GroupLine(g, m, n, H, D, groupsY);
+                }
+                RAPIDHT_UNROLL
+                for (int m = 0; m < 4; ++m) {
+                    unsigned long long c = 0;
+                    const T value = half * (sm[m] + s[m ^ 1] + s[m ^ 2] - sm[m ^ 3]);
+                    io.out[lines[m] + static_cast<size_t>(i)] = internal::ToIntegerSaturated<TOut>(value, io.scale, offset, c);
+                    bool copy = false;
+                    RAPIDHT_UNROLL
+                    for (int j = 0; j < m; ++j) {
+                        copy = copy || lines[j] == lines[m];
+                    }
+                    clamped += (copy || !ownGroup) ? 0 : c;
+                }
+            } else {
+                RAPIDHT_UNROLL
+                for (int m = 0; m < 4; ++m) {
+                    const size_t line = fixedGroup ? ownLine[m] : GroupLine(g, m, n, H, D, groupsY);
+                    data[line + static_cast<size_t>(i)] = half * (sm[m] + s[m ^ 1] + s[m ^ 2] - sm[m ^ 3]);
+                }
             }
+        }
+    }
+    if constexpr (kToIntegers) {
+        if (clamped != 0) { // rare: no atomics at all when nothing clamps
+            atomicAdd(io.saturated, clamped);
         }
     }
 }
@@ -1447,6 +1493,25 @@ __global__ void __launch_bounds__(256, kMinBlocks) FactoredLastAxisBracewellKern
     FactoredAxisTables<T> t, int H, int D, int groupsY, int groups, int lanes, int batches, int workStride)
 {
     FusedLastBody<T, kMaxQuads, kItems, kFold, kN, kLanes>(data, t, H, D, groupsY, groups, lanes, batches, workStride);
+}
+
+/// R-5 step 4.2: the two fused last passes ending in integers -- the last
+/// pass of the inverse of an integer volume, writing TOut to io.out.
+template <typename T, typename TOut, int kMaxQuads, bool kFold, int kN = 0, int kLanes = 0>
+__global__ void FactoredLastAxisBracewellKernelTo(T* data, FusedIntegerOut<T, TOut> io, FactoredAxisTables<T> t,
+    int H, int D, int groupsY, int groups, int lanes, int batches, int workStride)
+{
+    FusedLastBody<T, kMaxQuads, 0, kFold, kN, kLanes, TOut>(
+        data, t, H, D, groupsY, groups, lanes, batches, workStride, io);
+}
+
+template <typename T, typename TOut, int kMaxQuads, int kItems, int kMinBlocks, bool kFold, int kN = 0, int kLanes = 0>
+__global__ void __launch_bounds__(256, kMinBlocks) FactoredLastAxisBracewellKernelInPlaceTo(T* data,
+    FusedIntegerOut<T, TOut> io, FactoredAxisTables<T> t, int H, int D, int groupsY, int groups, int lanes,
+    int batches, int workStride)
+{
+    FusedLastBody<T, kMaxQuads, kItems, kFold, kN, kLanes, TOut>(
+        data, t, H, D, groupsY, groups, lanes, batches, workStride, io);
 }
 
 /// Mirror of an index along an axis of length n: (n - i) mod n.

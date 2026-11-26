@@ -685,4 +685,177 @@ TEST(Factored, IntegerOffsetPolicies_GPU)
         ExpectOffsetPolicies<uint16_t>(s);
     }
 }
+
+namespace {
+
+/*
+ * R-5 step 4.2: the inverse into integers on the device against the float
+ * path on the same values -- the offset out of H(0) the same way (rint(H(0) /
+ * N) for the mean policy, in double), the same passes (ForwardTransform or
+ * ForwardSeparable), then ToIntegerSaturated on the host, the function the
+ * kernel runs. Bit for bit, and the clamped count too. `gain` scales the
+ * spectrum: 2 pushes voxels above the range, so the count is not zero.
+ */
+template <typename TOut>
+void ExpectInverseMatchesHost(const IntegerShape& s, const internal::IntegerOffset& policy, bool separable, double gain)
+{
+    using internal::IntegerOffset;
+    const size_t H = s.height == 0 ? 1 : s.height;
+    const size_t D = s.depth == 0 ? 1 : s.depth;
+    const size_t count = s.width * H * D;
+    std::vector<float> spectrum(count);
+    {
+        // A realistic spectrum: the forward transform of integers of TOut.
+        std::vector<TOut> host(count);
+        for (size_t i = 0; i < count; ++i) {
+            host[i] = static_cast<TOut>(static_cast<uint32_t>((i + 1) * 2654435761u) >> (32 - 8 * sizeof(TOut)));
+        }
+        HartleyTransform<float> forward(s.width, s.height, s.depth, Modes::GPUFactored);
+        TOut* in = nullptr;
+        ASSERT_EQ(cudaMalloc(&in, count * sizeof(TOut)), cudaSuccess);
+        ASSERT_EQ(cudaMemcpy(in, host.data(), count * sizeof(TOut), cudaMemcpyHostToDevice), cudaSuccess);
+        DeviceVolume<float> out(count);
+        internal::DeviceAccess::ForwardFromIntegers(forward, in, out, IntegerOffset::Default(), separable);
+        cudaFree(in);
+        out.Download(spectrum.data());
+        for (float& v : spectrum) {
+            v = static_cast<float>(v * gain);
+        }
+    }
+    HartleyTransform<float> transform(s.width, s.height, s.depth, Modes::GPUFactored);
+
+    // The device.
+    DeviceVolume<float> work(count);
+    work.Upload(spectrum.data());
+    TOut* got = nullptr;
+    ASSERT_EQ(cudaMalloc(&got, count * sizeof(TOut)), cudaSuccess);
+    size_t saturated = 0;
+    internal::DeviceAccess::InverseToIntegers(transform, work, got, policy, &saturated, separable);
+    std::vector<TOut> device(count);
+    ASSERT_EQ(cudaMemcpy(device.data(), got, count * sizeof(TOut), cudaMemcpyDeviceToHost), cudaSuccess);
+    cudaFree(got);
+
+    // The host, on the float path's values.
+    const double n = static_cast<double>(count);
+    float offset = 0.0f;
+    if (policy.kind == IntegerOffset::Kind::Mean || policy.kind == IntegerOffset::Kind::SampledMean) {
+        offset = static_cast<float>(std::rint(static_cast<double>(spectrum[0]) / n));
+    } else if (policy.kind == IntegerOffset::Kind::Value) {
+        offset = static_cast<float>(policy.value);
+    }
+    std::vector<float> centred = spectrum;
+    if (offset != 0.0f) {
+        centred[0] = static_cast<float>(static_cast<double>(centred[0]) - static_cast<double>(offset) * n);
+    }
+    DeviceVolume<float> viaFloat(count);
+    viaFloat.Upload(centred.data());
+    if (separable) {
+        transform.ForwardSeparable(viaFloat);
+    } else {
+        transform.ForwardTransform(viaFloat);
+    }
+    viaFloat.Download(centred.data());
+    const float scale = static_cast<float>(1.0 / n);
+    size_t expectedSaturated = 0;
+    std::vector<TOut> expected(count);
+    for (size_t i = 0; i < count; ++i) {
+        expected[i] = ToIntegerSaturated<TOut>(centred[i], scale, offset, expectedSaturated);
+    }
+    ASSERT_EQ(device, expected);
+    EXPECT_EQ(saturated, expectedSaturated);
+    if (gain > 1.0) {
+        EXPECT_GT(saturated, 0u);
+    }
+}
+
+} // namespace
+
+TEST(Factored, IntegerInverseMatchesHost_GPU)
+{
+    SKIP_IF_NO_GPU();
+    using internal::IntegerOffset;
+    // The fused last pass in each variant (128^3 through the work buffer,
+    // 512^3 in place), unequal axes, 2D, and the fallback with a conversion
+    // kernel: 1D, axes too short for the fused pass, the separable inverse.
+    const IntegerShape shapes[] = { { 128, 128, 128 }, { 512, 512, 512 }, { 64, 32, 16 }, { 512, 256, 0 },
+        { 1024, 0, 0 }, { 8, 4, 16 } };
+    for (const IntegerShape& s : shapes) {
+        for (const bool separable : { false, true }) {
+            if (separable && s.height == 0) {
+                continue;
+            }
+            SCOPED_TRACE(std::to_string(s.width) + "x" + std::to_string(s.height) + "x" + std::to_string(s.depth)
+                         + (separable ? ", separable" : ""));
+            for (const IntegerOffset& policy : { IntegerOffset::MeanOfAll(), IntegerOffset::Of(77.0) }) {
+                ExpectInverseMatchesHost<uint8_t>(s, policy, separable, 1.0);
+                ExpectInverseMatchesHost<uint16_t>(s, policy, separable, 1.0);
+            }
+            ExpectInverseMatchesHost<uint8_t>(s, IntegerOffset::NoOffset(), separable, 2.0);
+            ExpectInverseMatchesHost<uint16_t>(s, IntegerOffset::NoOffset(), separable, 2.0);
+        }
+    }
+}
+
+namespace {
+
+/// Forward from integers with the default policy and back into integers
+/// with the mean read off H(0): every voxel as it was, none clamped.
+/// `tomogram`: a band of uint16 around 30000 with a smooth large structure
+/// and noise, the case where the mean is far from zero; else white noise
+/// over the full range.
+template <typename TIn>
+void ExpectRoundTripIsExact(size_t n, bool tomogram)
+{
+    using internal::IntegerOffset;
+    const size_t count = n * n * n;
+    std::vector<TIn> host(count);
+    for (size_t i = 0; i < count; ++i) {
+        const uint32_t h = static_cast<uint32_t>((i + 1) * 2654435761u);
+        if (tomogram) {
+            const size_t x = i % n, y = (i / n) % n, z = i / (n * n);
+            const double r2 = (std::pow(double(x) / n - 0.5, 2) + std::pow(double(y) / n - 0.5, 2)) * 4.0;
+            const double level = r2 < 1.0 ? 30000.0 + 2000.0 * std::sin(0.05 * double(z)) - 1500.0 * r2 : 1000.0;
+            host[i] = static_cast<TIn>(level + static_cast<double>(h >> 22)); // + 0..1023 noise
+        } else {
+            host[i] = static_cast<TIn>(h >> (32 - 8 * sizeof(TIn)));
+        }
+    }
+    HartleyTransform<float> transform(n, n, n, Modes::GPUFactored);
+    DeviceVolume<float> spectrum(count);
+    {
+        TIn* in = nullptr;
+        ASSERT_EQ(cudaMalloc(&in, count * sizeof(TIn)), cudaSuccess);
+        ASSERT_EQ(cudaMemcpy(in, host.data(), count * sizeof(TIn), cudaMemcpyHostToDevice), cudaSuccess);
+        internal::DeviceAccess::ForwardFromIntegers(transform, in, spectrum, IntegerOffset::Default());
+        cudaFree(in); // at 1024^3 uint16 the input, the spectrum and the output do not fit together
+    }
+    TIn* out = nullptr;
+    ASSERT_EQ(cudaMalloc(&out, count * sizeof(TIn)), cudaSuccess);
+    size_t saturated = 0;
+    internal::DeviceAccess::InverseToIntegers(transform, spectrum, out, IntegerOffset::MeanOfAll(), &saturated);
+    std::vector<TIn> back(count);
+    ASSERT_EQ(cudaMemcpy(back.data(), out, count * sizeof(TIn), cudaMemcpyDeviceToHost), cudaSuccess);
+    cudaFree(out);
+    EXPECT_EQ(saturated, 0u);
+    size_t differ = 0;
+    for (size_t i = 0; i < count; ++i) {
+        differ += back[i] != host[i] ? 1 : 0;
+    }
+    EXPECT_EQ(differ, 0u) << "of " << count << " voxels";
+}
+
+} // namespace
+
+TEST(Factored, IntegerRoundTripIsExact_GPU)
+{
+    SKIP_IF_NO_GPU();
+    // R-5 step 4.2, criterion C4: the whole round trip through the float
+    // spectrum is lossless, 128^3-1024^3.
+    for (const size_t n : { size_t { 128 }, size_t { 256 }, size_t { 512 }, size_t { 1024 } }) {
+        SCOPED_TRACE(std::to_string(n) + "^3");
+        ExpectRoundTripIsExact<uint8_t>(n, false);
+        ExpectRoundTripIsExact<uint16_t>(n, false);
+        ExpectRoundTripIsExact<uint16_t>(n, true);
+    }
+}
 #endif

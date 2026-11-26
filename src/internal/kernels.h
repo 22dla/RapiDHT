@@ -124,6 +124,30 @@ void SetIntegerOffset(T* offset, double value);
 template <typename T, typename TIn>
 void IntegerMeanOffset(const TIn* in, size_t width, size_t lines, size_t step, unsigned long long* sum, T* offset);
 
+/// R-5 step 4.2: FactoredLastAxisBracewell ending in integers -- the last pass
+/// of the inverse of an integer volume. Each value goes through
+/// ToIntegerSaturated(value, scale, *offset) into `out` (TOut = std::uint8_t or
+/// std::uint16_t, same layout, not in place); clamped voxels are added to
+/// *saturated, each once. Returns false, launching nothing, where the fused
+/// kernel does not apply.
+template <typename T, typename TOut>
+bool FactoredLastAxisBracewellTo(T* data, TOut* out, T scale, const T* offset, unsigned long long* saturated,
+    const FactoredAxisTables<T>& tables, size_t H, size_t D);
+
+/// R-5 step 4.2: out[i] = ToIntegerSaturated(in[i], scale, *offset) for i <
+/// count, clamped voxels added to *saturated.
+template <typename T, typename TOut>
+void ConvertToIntegers(const T* in, TOut* out, size_t count, T scale, const T* offset, unsigned long long* saturated);
+
+/// R-5 step 4.2: data[0] -= *offset * n, in double.
+template <typename T>
+void SubtractOffsetFromFirst(T* data, const T* offset, double n);
+
+/// R-5 step 4.2: *offset = rint(data[0] / n) -- the rounded mean of the volume
+/// whose spectrum `data` is.
+template <typename T>
+void MeanFromFirst(const T* data, double n, T* offset);
+
 /**
  * The last pass along x (the fastest axis) of a true 2D or 3D transform with
  * the Bracewell correction folded in (R-4 step 3.3): call it after the z and y

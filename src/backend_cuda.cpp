@@ -312,10 +312,10 @@ void HartleyTransform<T>::FactoredPasses(
     if constexpr (kFromIntegers) {
         using Kind = internal::IntegerOffset::Kind;
         internal::DeviceArray<unsigned long long>& slots = _impl->integerOffset;
-        if (slots.Size() < 2) {
-            slots.Resize(2);
-            const unsigned long long zero[2] = { 0, 0 };
-            slots.Upload(zero, 2); // also waits for the allocation on its stream
+        if (slots.Size() < 3) {
+            slots.Resize(3);
+            const unsigned long long zero[3] = { 0, 0, 0 };
+            slots.Upload(zero, 3); // also waits for the allocation on its stream
         }
         T* slot = reinterpret_cast<T*>(slots.Data() + 1);
         offset = slot;
@@ -460,9 +460,125 @@ template void HartleyTransform<float>::DHT3DCuda(float*, bool);
 template void HartleyTransform<float>::DHT3DOnDevice(float*, float*, bool);
 template void HartleyTransform<float>::FactoredOnDevice(float*, bool);
 template void HartleyTransform<float>::FactoredOnHost(float*, bool);
+/*
+ * R-5 step 4.2: the inverse of an integer volume. The offset goes into the
+ * device slot first -- a value, or rint(H(0) / N), the rounded mean of the
+ * volume being restored, for the mean policies -- and out of H(0); then the
+ * passes of FactoredPasses in place, the last one (x with Bracewell) writing
+ * ToIntegerSaturated(x, 1/N, offset) to `out`. Where the fused pass does not
+ * apply (double, short x, 1D, separable) the passes and the Bracewell pass
+ * run as usual and a kernel converts the whole volume.
+ */
+template <typename T>
+template <typename TOut>
+void HartleyTransform<T>::FactoredInversePasses(
+    T* data, TOut* out, const internal::IntegerOffset& policy, size_t* saturated, bool separable)
+{
+    PROFILE_FUNCTION();
+    KernelTrace trace;
+    using Kind = internal::IntegerOffset::Kind;
+
+    const size_t W = Width();
+    const size_t H = (Height() == 0 ? 1 : Height());
+    const size_t D = (Depth() == 0 ? 1 : Depth());
+    const double count = static_cast<double>(W * H * D);
+    const T scale = static_cast<T>(1.0 / count);
+
+    internal::DeviceArray<unsigned long long>& slots = _impl->integerOffset;
+    if (slots.Size() < 3) {
+        slots.Resize(3);
+        const unsigned long long zero[3] = { 0, 0, 0 };
+        slots.Upload(zero, 3); // also waits for the allocation on its stream
+    }
+    T* offset = reinterpret_cast<T*>(slots.Data() + 1);
+    unsigned long long* clamped = slots.Data() + 2;
+    RAPIDHT_CUDA_CHECK(cudaMemsetAsync(clamped, 0, sizeof(unsigned long long)));
+    trace.Mark("offset");
+    if (policy.kind == Kind::Mean || policy.kind == Kind::SampledMean) {
+        MeanFromFirst(data, count, offset);
+        SubtractOffsetFromFirst(data, offset, count);
+    } else {
+        const double value = policy.kind == Kind::Value ? policy.value : 0.0;
+        SetIntegerOffset(offset, value);
+        if (value != 0.0) {
+            SubtractOffsetFromFirst(data, offset, count);
+        }
+    }
+
+    struct Geometry {
+        Direction axis;
+        size_t axisStride, laneStride, laneLength, otherStride, otherLength;
+    };
+    const Geometry passes[] = {
+        { Direction::Z, W * H, 1, W, W, H },
+        { Direction::X, W, 1, W, W * H, D },
+        { Direction::Y, 1, W, H, W * H, D },
+    };
+    const char* const passNames[] = { "axis-z(depth)", "axis-y(height)", "axis-x(width)" };
+    int passIndex = 0;
+    bool written = false;
+    for (const Geometry& g : passes) {
+        const char* passName = passNames[passIndex++];
+        const size_t a = static_cast<size_t>(g.axis);
+        const internal::FactoredSplit& split = _impl->factoredSplit[a];
+        if (split.n <= 1) {
+            continue;
+        }
+        trace.Mark(passName);
+        const size_t n1 = split.n1;
+        const size_t n2 = split.n2;
+        const size_t pairs = (n1 / 2 == 0 ? 1 : n1 / 2);
+        const T* t = _impl->factoredTables[a].Data();
+        FactoredAxisTables<T> tables;
+        tables.c1 = t;
+        tables.c2 = tables.c1 + n1 * n1;
+        tables.cHalf = tables.c2 + n2 * n2;
+        tables.twC = tables.cHalf + n2 * n2;
+        tables.twD = tables.twC + pairs * n2;
+        tables.n = static_cast<int>(split.n);
+        tables.n1 = static_cast<int>(n1);
+        tables.n2 = static_cast<int>(n2);
+        const bool last = &g == &passes[std::size(passes) - 1];
+        if (last && !separable && Height() > 0
+            && FactoredLastAxisBracewellTo(data, out, scale, offset, clamped, tables, H, D)) {
+            written = true;
+            continue;
+        }
+        FactoredAxis(data, tables, g.axisStride, g.laneStride, g.laneLength, g.otherStride, g.otherLength);
+    }
+    if (!written) {
+        if (!separable) {
+            trace.Mark("bracewell");
+            if (Depth() > 0) {
+                BracewellInPlace3D(data, static_cast<int>(W), static_cast<int>(H), static_cast<int>(D));
+            } else if (Height() > 0) {
+                BracewellInPlace2D(data, static_cast<int>(W), static_cast<int>(H));
+            }
+        }
+        trace.Mark("convert");
+        ConvertToIntegers(static_cast<const T*>(data), out, W * H * D, scale, static_cast<const T*>(offset), clamped);
+    }
+    trace.Mark("end");
+    RAPIDHT_CUDA_CHECK(cudaDeviceSynchronize());
+    trace.Print();
+    if (saturated != nullptr) {
+        unsigned long long host = 0;
+        RAPIDHT_CUDA_CHECK(cudaMemcpy(&host, clamped, sizeof(host), cudaMemcpyDeviceToHost));
+        *saturated = static_cast<size_t>(host);
+    }
+}
+
 template void HartleyTransform<float>::FactoredPasses<std::uint8_t>(const std::uint8_t*, float*, const internal::IntegerOffset*, bool);
 template void HartleyTransform<float>::FactoredPasses<std::uint16_t>(const std::uint16_t*, float*, const internal::IntegerOffset*, bool);
 template void HartleyTransform<double>::FactoredPasses<std::uint8_t>(const std::uint8_t*, double*, const internal::IntegerOffset*, bool);
 template void HartleyTransform<double>::FactoredPasses<std::uint16_t>(const std::uint16_t*, double*, const internal::IntegerOffset*, bool);
+template void HartleyTransform<float>::FactoredInversePasses<std::uint8_t>(
+    float*, std::uint8_t*, const internal::IntegerOffset&, size_t*, bool);
+template void HartleyTransform<float>::FactoredInversePasses<std::uint16_t>(
+    float*, std::uint16_t*, const internal::IntegerOffset&, size_t*, bool);
+template void HartleyTransform<double>::FactoredInversePasses<std::uint8_t>(
+    double*, std::uint8_t*, const internal::IntegerOffset&, size_t*, bool);
+template void HartleyTransform<double>::FactoredInversePasses<std::uint16_t>(
+    double*, std::uint16_t*, const internal::IntegerOffset&, size_t*, bool);
 
 } // namespace RapiDHT

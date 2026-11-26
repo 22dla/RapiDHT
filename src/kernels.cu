@@ -598,6 +598,41 @@ void LaunchFusedLastAs(FactoredDeviceInfo& info, size_t batches, size_t sharedBy
     RAPIDHT_CUDA_CHECK(cudaGetLastError());
 }
 
+/// R-5 step 4.2: LaunchFusedLastAs for the variants ending in integers.
+template <typename T, typename TOut, int kItems, int kMinBlocks, int kN, int kLanes>
+void LaunchFusedLastToAs(FactoredDeviceInfo& info, size_t batches, size_t sharedBytes, T* data,
+    const FusedIntegerOut<T, TOut>& io, const FactoredAxisTables<T>& tables, size_t H, size_t D, size_t groupsY,
+    size_t groups, size_t lanes, int workStride)
+{
+    constexpr bool kFold = FactoredFoldsTwiddle(true, kItems);
+    int perSm = 0;
+    if constexpr (kItems == 0) {
+        perSm = FactoredBlocksPerSm(
+            info, FactoredLastAxisBracewellKernelTo<T, TOut, kFactoredMaxQuads, kFold, kN, kLanes>, sharedBytes);
+    } else {
+        perSm = FactoredBlocksPerSm(info,
+            FactoredLastAxisBracewellKernelInPlaceTo<T, TOut, kFactoredMaxQuads, kItems, kMinBlocks, kFold, kN,
+                kLanes>,
+            sharedBytes);
+    }
+    const size_t resident = static_cast<size_t>(perSm) * static_cast<size_t>(info.sms);
+    const unsigned int grid = static_cast<unsigned int>(batches < resident ? batches : resident);
+    const int Hi = static_cast<int>(H);
+    const int Di = static_cast<int>(D);
+    const int gy = static_cast<int>(groupsY);
+    const int gs = static_cast<int>(groups);
+    const int lanesI = static_cast<int>(lanes);
+    const int batchesI = static_cast<int>(batches);
+    if constexpr (kItems == 0) {
+        FactoredLastAxisBracewellKernelTo<T, TOut, kFactoredMaxQuads, kFold, kN, kLanes>
+            <<<grid, kFactoredThreads, sharedBytes>>>(data, io, tables, Hi, Di, gy, gs, lanesI, batchesI, workStride);
+    } else {
+        FactoredLastAxisBracewellKernelInPlaceTo<T, TOut, kFactoredMaxQuads, kItems, kMinBlocks, kFold, kN, kLanes>
+            <<<grid, kFactoredThreads, sharedBytes>>>(data, io, tables, Hi, Di, gy, gs, lanesI, batchesI, workStride);
+    }
+    RAPIDHT_CUDA_CHECK(cudaGetLastError());
+}
+
 /*
  * R-4 step 4D: kernels compiled for one (length, batch width) -- the sizes
  * become constants (FactoredSpecialize in factored_kernels.cuh). Only where
@@ -762,6 +797,51 @@ void LaunchFusedLast(FactoredDeviceInfo& info, size_t batches, size_t sharedByte
         LaunchFusedLastAs<T, kItems, kMinBlocks, decltype(kN)::value, decltype(kL)::value>(
             info, batches, sharedBytes, data, tables, H, D, groupsY, groups, lanes, workStride);
     });
+}
+
+template <typename T, typename TOut, int kItems, int kMinBlocks>
+void LaunchFusedLastTo(FactoredDeviceInfo& info, size_t batches, size_t sharedBytes, T* data,
+    const FusedIntegerOut<T, TOut>& io, const FactoredAxisTables<T>& tables, size_t H, size_t D, size_t groupsY,
+    size_t groups, size_t lanes, int workStride)
+{
+    FactoredDispatchSize<T, true, kItems, kMinBlocks>(tables, lanes, [&](auto kN, auto kL) {
+        LaunchFusedLastToAs<T, TOut, kItems, kMinBlocks, decltype(kN)::value, decltype(kL)::value>(
+            info, batches, sharedBytes, data, io, tables, H, D, groupsY, groups, lanes, workStride);
+    });
+}
+
+/// R-5 step 4.2: out[i] = ToIntegerSaturated(in[i], scale, *offset) -- the
+/// end of an inverse where the fused last pass does not apply. Each voxel
+/// once, so every clamped one is counted.
+template <typename T, typename TOut>
+__global__ void ConvertToIntegersKernel(
+    const T* in, TOut* out, size_t count, T scale, const T* offsetOnDevice, unsigned long long* saturated)
+{
+    const T offset = *offsetOnDevice;
+    unsigned long long clamped = 0;
+    const size_t stride = static_cast<size_t>(gridDim.x) * blockDim.x;
+    for (size_t i = static_cast<size_t>(blockIdx.x) * blockDim.x + threadIdx.x; i < count; i += stride) {
+        out[i] = internal::ToIntegerSaturated<TOut>(in[i], scale, offset, clamped);
+    }
+    if (clamped != 0) {
+        atomicAdd(saturated, clamped);
+    }
+}
+
+/// data[0] -= *offset * n in double: the offset taken out of H(0) before an
+/// inverse into integers (AddOffsetToFirstKernel backwards).
+template <typename T>
+__global__ void SubtractOffsetFromFirstKernel(T* data, const T* offset, double n)
+{
+    data[0] = static_cast<T>(static_cast<double>(data[0]) - static_cast<double>(*offset) * n);
+}
+
+/// *offset = rint(H(0) / n): the rounded mean of the volume an inverse
+/// returns, read off its spectrum -- the mean policy of the inverse, free.
+template <typename T>
+__global__ void MeanFromFirstKernel(const T* data, double n, T* offset)
+{
+    *offset = static_cast<T>(rint(static_cast<double>(data[0]) / n));
 }
 
 } // namespace
@@ -1039,8 +1119,58 @@ void FactoredAxis(T* data, const FactoredAxisTables<T>& tables, size_t axisStrid
     RAPIDHT_CUDA_CHECK(cudaGetLastError());
 }
 
+namespace {
+template <typename T, typename TOut>
+bool FactoredLastAxisBracewellImpl(
+    T* data, const FusedIntegerOut<T, TOut>& io, const FactoredAxisTables<T>& tables, size_t H, size_t D);
+} // namespace
+
 template <typename T>
 bool FactoredLastAxisBracewell(T* data, const FactoredAxisTables<T>& tables, size_t H, size_t D)
+{
+    return FactoredLastAxisBracewellImpl<T, T>(data, {}, tables, H, D);
+}
+
+template <typename T, typename TOut>
+bool FactoredLastAxisBracewellTo(T* data, TOut* out, T scale, const T* offset, unsigned long long* saturated,
+    const FactoredAxisTables<T>& tables, size_t H, size_t D)
+{
+    FusedIntegerOut<T, TOut> io;
+    io.out = out;
+    io.scale = scale;
+    io.offset = offset;
+    io.saturated = saturated;
+    return FactoredLastAxisBracewellImpl<T, TOut>(data, io, tables, H, D);
+}
+
+template <typename T, typename TOut>
+void ConvertToIntegers(
+    const T* in, TOut* out, size_t count, T scale, const T* offset, unsigned long long* saturated)
+{
+    ConvertToIntegersKernel<T, TOut><<<1024, 256>>>(in, out, count, scale, offset, saturated);
+    RAPIDHT_CUDA_CHECK(cudaGetLastError());
+}
+
+template <typename T>
+void SubtractOffsetFromFirst(T* data, const T* offset, double n)
+{
+    SubtractOffsetFromFirstKernel<T><<<1, 1>>>(data, offset, n);
+    RAPIDHT_CUDA_CHECK(cudaGetLastError());
+}
+
+template <typename T>
+void MeanFromFirst(const T* data, double n, T* offset)
+{
+    MeanFromFirstKernel<T><<<1, 1>>>(data, n, offset);
+    RAPIDHT_CUDA_CHECK(cudaGetLastError());
+}
+
+namespace {
+
+/// FactoredLastAxisBracewell, writing T in place (TOut = T) or TOut to io.out.
+template <typename T, typename TOut>
+bool FactoredLastAxisBracewellImpl(
+    T* data, const FusedIntegerOut<T, TOut>& io, const FactoredAxisTables<T>& tables, size_t H, size_t D)
 {
     const size_t n = static_cast<size_t>(tables.n);
     const size_t n1 = static_cast<size_t>(tables.n1);
@@ -1071,17 +1201,36 @@ bool FactoredLastAxisBracewell(T* data, const FactoredAxisTables<T>& tables, siz
     const size_t batches = (groups + perBatch - 1) / perBatch;
     const size_t sharedBytes = PipelinedSharedBytes<T>(n, n1, n2, lanes, path.items != 0);
     const int ws = static_cast<int>(FactoredWorkStride<T>(n2, lanes));
-    if (path.items == 0) {
-        LaunchFusedLast<T, 0, 0>(info, batches, sharedBytes, data, tables, H, D, groupsY, groups, lanes, ws);
-    } else if (path.items == 2) {
-        LaunchFusedLast<T, 2, 1>(info, batches, sharedBytes, data, tables, H, D, groupsY, groups, lanes, ws);
-    } else if (path.minBlocks == 1) {
-        LaunchFusedLast<T, 1, 1>(info, batches, sharedBytes, data, tables, H, D, groupsY, groups, lanes, ws);
+    if constexpr (std::is_same<TOut, T>::value) {
+        (void)io;
+        if (path.items == 0) {
+            LaunchFusedLast<T, 0, 0>(info, batches, sharedBytes, data, tables, H, D, groupsY, groups, lanes, ws);
+        } else if (path.items == 2) {
+            LaunchFusedLast<T, 2, 1>(info, batches, sharedBytes, data, tables, H, D, groupsY, groups, lanes, ws);
+        } else if (path.minBlocks == 1) {
+            LaunchFusedLast<T, 1, 1>(info, batches, sharedBytes, data, tables, H, D, groupsY, groups, lanes, ws);
+        } else {
+            LaunchFusedLast<T, 1, 2>(info, batches, sharedBytes, data, tables, H, D, groupsY, groups, lanes, ws);
+        }
     } else {
-        LaunchFusedLast<T, 1, 2>(info, batches, sharedBytes, data, tables, H, D, groupsY, groups, lanes, ws);
+        if (path.items == 0) {
+            LaunchFusedLastTo<T, TOut, 0, 0>(
+                info, batches, sharedBytes, data, io, tables, H, D, groupsY, groups, lanes, ws);
+        } else if (path.items == 2) {
+            LaunchFusedLastTo<T, TOut, 2, 1>(
+                info, batches, sharedBytes, data, io, tables, H, D, groupsY, groups, lanes, ws);
+        } else if (path.minBlocks == 1) {
+            LaunchFusedLastTo<T, TOut, 1, 1>(
+                info, batches, sharedBytes, data, io, tables, H, D, groupsY, groups, lanes, ws);
+        } else {
+            LaunchFusedLastTo<T, TOut, 1, 2>(
+                info, batches, sharedBytes, data, io, tables, H, D, groupsY, groups, lanes, ws);
+        }
     }
     return true;
 }
+
+} // namespace
 
 template <typename T>
 void BracewellInPlace2D(T* data, int W, int H)
@@ -1124,6 +1273,22 @@ template void AddOffsetToFirst<float>(float*, const float*, double);
 template void AddOffsetToFirst<double>(double*, const double*, double);
 template void SetIntegerOffset<float>(float*, double);
 template void SetIntegerOffset<double>(double*, double);
+template bool FactoredLastAxisBracewellTo<float, std::uint8_t>(
+    float*, std::uint8_t*, float, const float*, unsigned long long*, const FactoredAxisTables<float>&, size_t, size_t);
+template void ConvertToIntegers<float, std::uint8_t>(const float*, std::uint8_t*, size_t, float, const float*, unsigned long long*);
+template bool FactoredLastAxisBracewellTo<float, std::uint16_t>(
+    float*, std::uint16_t*, float, const float*, unsigned long long*, const FactoredAxisTables<float>&, size_t, size_t);
+template void ConvertToIntegers<float, std::uint16_t>(const float*, std::uint16_t*, size_t, float, const float*, unsigned long long*);
+template void SubtractOffsetFromFirst<float>(float*, const float*, double);
+template void MeanFromFirst<float>(const float*, double, float*);
+template bool FactoredLastAxisBracewellTo<double, std::uint8_t>(
+    double*, std::uint8_t*, double, const double*, unsigned long long*, const FactoredAxisTables<double>&, size_t, size_t);
+template void ConvertToIntegers<double, std::uint8_t>(const double*, std::uint8_t*, size_t, double, const double*, unsigned long long*);
+template bool FactoredLastAxisBracewellTo<double, std::uint16_t>(
+    double*, std::uint16_t*, double, const double*, unsigned long long*, const FactoredAxisTables<double>&, size_t, size_t);
+template void ConvertToIntegers<double, std::uint16_t>(const double*, std::uint16_t*, size_t, double, const double*, unsigned long long*);
+template void SubtractOffsetFromFirst<double>(double*, const double*, double);
+template void MeanFromFirst<double>(const double*, double, double*);
 template bool FactoredLastAxisBracewell<float>(float*, const FactoredAxisTables<float>&, size_t, size_t);
 template bool FactoredLastAxisBracewell<double>(double*, const FactoredAxisTables<double>&, size_t, size_t);
 template void BracewellInPlace2D<float>(float*, int, int);
