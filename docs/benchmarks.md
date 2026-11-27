@@ -1042,6 +1042,51 @@ What it says:
 
 *Drawn by `tools/r5_figures.py tasks …_r5_s51.json`.*
 
+### Verdict by task (R-5 step 5.2, 2026-11-27)
+
+The totals come from `…_r5_s51.json`, as in the table above. The split into
+kernels comes from `bash scripts/r5_tasks_breakdown.sh`:
+`…_r5_s52_breakdown.txt` (512³ u16) and `…_r5_s52L_breakdown.txt`
+(1024 × 1024 × 512). The script runs one nsys process per task row, 30
+iterations, input on the device, σ = 2. The clock is not locked, so the
+kernel times are good for shares, not for verdicts.
+
+Kernel times at 512³ u16, ms per call. One copy of the volume (1 GiB of
+traffic) takes 2.59 ms.
+
+| | this library | cuFFT |
+| --- | --- | --- |
+| T1 | z from integers 3.6, y 2.9, x + Bracewell 3.3 | x R2C with LTO load 1.96, two passes of 2.76, Hartley conversion 2.61 |
+| T2 | forward 3.3 + 3.1 + 2.9; product 2.6; inverse 3.2 + 3.2 + 3.4 (x writes integers) | 1.95 + 2 × 2.76; product 2.6; 2 × 2.76 + 1.95 (LTO store) |
+| T2, spatial | x 1.96, y 2.63, z 1.96 | |
+| T3 | forward 3.5 + 3.1 + 3.3; binning 3.7 (separable: 3.5 + 2 × 3.1; 3.3) | 1.96 + 2 × 2.77; binning 2.5 |
+
+At 1024 × 1024 × 512 one copy takes 10.4 ms. Our length-1024 passes are
+the slowest kernels of every task. y takes 16.6 ms against 12.5 for cuFFT's
+1024 pass. x with Bracewell takes 21.3 ms, twice the copy (R-4 tuned the
+kernels for 512). The integer z pass takes 13.2 ms, and cuFFT's LTO x pass
+takes 7.8.
+
+- **T1 spectrum.** Stronger on the device at 256³–512³ (0.94–0.96), and from
+  the host against today's float path (0.56–0.62). Memory is 0.6 of cuFFT's.
+  Weaker for u8 (1.05) and at 1024 × 1024 × 512 (1.24), where the 1024
+  passes cost 38 of the 51 ms. Every one of our passes is slower than
+  cuFFT's: the integer z pass is 3.6 ms against cuFFT's x edge pass at 1.96,
+  which runs at copy speed. We win only because cuFFT pays 2.6 ms for the
+  conversion into Hartley.
+- **T2 filter.** Weaker everywhere (1.20–1.47). We run six passes of about
+  3.2 ms; cuFFT runs four of 2.76 and two edge passes at copy speed, 1.95.
+  The product is a separate pass of 2.6 ms on both sides. At
+  1024 × 1024 × 512 the two x + Bracewell passes alone take 41.6 ms of 108.
+  For σ ≤ 2 the spatial filter (three passes near copy speed) beats both,
+  2.6–4 times.
+- **T3 power spectrum.** Weaker (1.26–1.43). Our forward takes 9.7–9.9 ms
+  against 7.5 for R2C, which here owes no conversion. Our binning is
+  3.3–3.7 ms against 2.5 because it covers twice as many coefficients.
+
+None of this is fixed in R-5. The openings it ranks feed section 10 of
+`docs/R5_PLAN.md`.
+
 ## FFTW, for reference
 
 `FFTW_DHT` in double takes 15 871 / 144 146 / 1 500 455 µs on the same volumes
