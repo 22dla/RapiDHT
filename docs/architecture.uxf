@@ -44,7 +44,7 @@ bg=#E8F1FB</panel_attributes>
       <x>40</x>
       <y>70</y>
       <w>440</w>
-      <h>490</h>
+      <h>580</h>
     </coordinates>
     <panel_attributes>*HartleyTransform&lt;T&gt;*
 «T = float | double, move-only»
@@ -61,6 +61,14 @@ bg=#E8F1FB</panel_attributes>
 +ForwardTransform(volume: DeviceVolume&lt;T&gt;&amp;)
 +ForwardSeparable(volume: DeviceVolume&lt;T&gt;&amp;)
 +InverseTransform(volume: DeviceVolume&lt;T&gt;&amp;)
+«U = uint8_t | uint16_t, integer voxels (R-5)»
++ForwardTransform&lt;U&gt;(in: DeviceVolume&lt;U&gt;, out: DeviceVolume&lt;T&gt;, offset)
++ForwardSeparable&lt;U&gt;(in: DeviceVolume&lt;U&gt;, out: DeviceVolume&lt;T&gt;, offset)
++InverseTransform&lt;U&gt;(in: DeviceVolume&lt;T&gt;, out: DeviceVolume&lt;U&gt;,
+    offset, saturated*)  — the three: GPUFactored only
++ForwardTransform&lt;U&gt;(in: const U*, out: T*, offset), ForwardSeparable
++InverseTransform&lt;U&gt;(in: const T*, out: U*, offset, saturated*)
+    — host pointers, every mode
 +Width(), Height(), Depth(), Length(dir)
 +LinearIndex(i, j, k), AxisIndex(...)
 --
@@ -124,7 +132,7 @@ bg=#FFFFFF</panel_attributes>
       <h>180</h>
     </coordinates>
     <panel_attributes>*DeviceVolume&lt;T&gt;*
-«a volume kept in GPU memory»
+«a volume kept in GPU memory; T = float | double | uint8_t | uint16_t»
 --
 -impl: unique_ptr&lt;Impl&gt;
 --
@@ -204,7 +212,7 @@ bg=#FFFFFF</panel_attributes>
       <x>40</x>
       <y>820</y>
       <w>380</w>
-      <h>190</h>
+      <h>205</h>
     </coordinates>
     <panel_attributes>*HartleyTransform&lt;T&gt;::Impl*
 «exists only for Modes::GPU and Modes::GPUFactored»
@@ -216,6 +224,7 @@ bg=#FFFFFF</panel_attributes>
 +scratchB: DeviceArray&lt;T&gt;  — GEMM ping-pong, GPU
 +cublas: unique_ptr&lt;CublasHandle&gt;  — GPU
 +factoredTables[3], factoredSplit[3]  — GPUFactored
++integerOffset, integerStaging  — R-5: offset slots; integers of the host path
 bg=#FFFFFF</panel_attributes>
     <additional_attributes/>
   </element>
@@ -664,9 +673,9 @@ bg=#FFFFFF</panel_attributes>
 *internal::DeviceAccess*  «R-5, friend of HartleyTransform»
 --
 ForwardFromIntegers(transform, in: uint8/16*, out, offset)
-InverseToIntegers(transform, spectrum, out: uint8/16*, offset, saturated*)
-    — the integer path until the API decision (R-5 step 6.1);
-      used by bench_transform and test_factored, not installed
+InverseToIntegers(transform, spectrum, out: uint8/16*, offset, saturated*, separable)
+    — the integer path on raw device pointers (the public overloads take
+      DeviceVolume&lt;U&gt;); bench_transform and test_factored, not installed
 bg=#FFFFFF</panel_attributes>
     <additional_attributes/>
   </element>
@@ -679,11 +688,30 @@ bg=#FFFFFF</panel_attributes>
       <h>120</h>
     </coordinates>
     <panel_attributes>«header» internal/integer_offset.h
-*internal::IntegerOffset*  «R-5 step 3.1»
+*internal::IntegerOffset*
 --
-None | Value(v) | Mean | SampledMean(step); Default = every 64th line
-    — resolved on the device in FactoredPasses (SetIntegerOffset,
-      IntegerMeanOffset in kernels.cu); kernels read it from there
+alias of RapiDHT::IntegerOffset (public since R-5 step 6.1);
+    resolved on the device in FactoredPasses (SetIntegerOffset,
+    IntegerMeanOffset in kernels.cu); kernels read it from there
+bg=#FFFFFF</panel_attributes>
+    <additional_attributes/>
+  </element>
+  <element>
+    <id>UMLClass</id>
+    <coordinates>
+      <x>900</x>
+      <y>540</y>
+      <w>410</w>
+      <h>140</h>
+    </coordinates>
+    <panel_attributes>«header» rapidht/integer_offset.h
+*IntegerOffset*  «R-5: what integer voxels are centred on»
+--
++kind: None | Value | Mean | SampledMean
++value: double, step: size_t
+--
++NoOffset(), Of(v), MeanOfAll(), MeanOfEvery(step)
++Default() = MeanOfEvery(64)
 bg=#FFFFFF</panel_attributes>
     <additional_attributes/>
   </element>

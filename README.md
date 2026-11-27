@@ -65,10 +65,64 @@ transform, so this is not a micro-optimisation.
 | 🧊 **True multidimensional** | Not the separable product of 1D transforms — the per-axis passes are followed by the Bracewell correction, and the tests check this against a directly evaluated definition |
 | 🖥️ **Four backends** | `CPU` (OpenMP butterflies), `GPUFactored` (CUDA, N = N₁·N₂ factorisation in shared memory, in place), `GPU` (CUDA, dense matrices through cuBLAS), `RFFT` (real FFT, 1D only) |
 | 📌 **Device-resident data** | `DeviceVolume` keeps a volume on the card so a pipeline pays for the transfer once |
+| 🩻 **Integer tomograms** | `uint8` and `uint16` voxels in and out, read and written by the transform's own passes — no float copy of the input, two bytes a voxel across the bus |
 | 🧩 **Optional everything** | CUDA and MPI are off by default; the public headers name no CUDA type, so consuming the library needs no toolkit |
 | 🔷 **Minkowski functionals** | Volume, surface, mean curvature and Euler characteristic of binary volumes, their local densities, and their fields over a bank of ball or Gaussian windows (`<rapidht/minkowski.h>`), every scale for one forward transform per density |
 | 🎯 **Both precisions** | `float` and `double`; on consumer GPUs `float` is 26–38× faster |
-| ✅ **Verified, not asserted** | 110 tests, including comparison against an `O(N²)` reference and analytically known transform pairs |
+| ✅ **Verified, not asserted** | 129 tests, including comparison against an `O(N²)` reference and analytically known transform pairs |
+
+---
+
+## 🩻 Integer tomograms
+
+Tomographs write `uint8` or `uint16` voxels. The transform takes them as they
+are: its first pass reads the integers and its last pass of the inverse writes
+them, so there is no float copy of the input on the device and half the bytes
+(uint16) or a quarter (uint8) cross the bus.
+
+```cpp
+#include <rapidht/transform.h>
+#include <vector>
+
+using namespace RapiDHT;
+
+std::vector<uint16_t> voxels(512ull * 512 * 512);   // a tomogram
+std::vector<float> spectrum(voxels.size());
+
+HartleyTransform<float> ht(512, 512, 512, Modes::GPUFactored);
+ht.ForwardTransform(voxels.data(), spectrum.data());   // uint16 in, float out
+// ... work on the spectrum ...
+size_t clamped = 0;
+ht.InverseTransform(spectrum.data(), voxels.data(), IntegerOffset::MeanOfAll(), &clamped);
+```
+
+The same overloads take `DeviceVolume<uint16_t>` / `DeviceVolume<uint8_t>` on
+`Modes::GPUFactored`; the host-pointer ones work on every mode (the CPU and
+dense GPU backends convert on the host).
+
+The transform works around an integer offset (`<rapidht/integer_offset.h>`):
+it subtracts it as it reads the voxels and returns it to the zero frequency, so
+a float spectrum of a uint16 volume around 30 000 keeps the accuracy of one
+around zero. The default — the rounded mean of every 64th line — costs 0.2 %
+of a 512³ transform. Forward with the default and back with `MeanOfAll()`
+restores every voxel, 128³ to 1024³, white noise and real tomograms alike;
+voxels that leave the type's range are clamped and counted.
+
+Against cuFFT with load and store callbacks (its strongest variant on integer
+input; RTX 3060 Ti, `uint16`):
+
+| task | 256³–512³ | 1024 × 1024 × 512 |
+| --- | ---: | ---: |
+| spectrum of a tomogram, volume on the device | **0.94–0.96** | 1.24 |
+| spectrum of a tomogram, from pinned host memory | 0.98 | 1.07 |
+| Gaussian filter (forward, product, inverse into uint16) | 1.20–1.25 | 1.47 |
+| radial power spectrum | 1.26–1.28 | 1.43 |
+
+(time relative to cuFFT; below 1 is faster). The spectrum needs 800 MiB of
+device memory at 512³ against 1 284 MiB, and from host memory it takes about
+0.6 of the time of today's float path (convert on the host, copy floats). The filter and the power
+spectrum lose to cuFFT, which needs no conversion to Hartley there; where the
+time goes is in [docs/benchmarks.md](docs/benchmarks.md) (R-5).
 
 ---
 
@@ -82,9 +136,11 @@ single long 1D transform degenerates into.
 
 ```
 ForwardTransform
-├── CPU   ─ per-axis FDHT1D (precomputed twiddles) ─ Bracewell correction
-├── GPU   ─ per-axis GEMM (cuBLAS) ─ Bracewell correction
-└── RFFT  ─ real FFT, then Re(X) − Im(X)                       [1D only]
+├── CPU          ─ per-axis FDHT1D (precomputed twiddles) ─ Bracewell correction
+├── GPU          ─ per-axis GEMM (cuBLAS) ─ Bracewell correction
+├── GPUFactored  ─ per axis N = N₁·N₂, two small multiplies in shared memory,
+│                  in place ─ Bracewell fused into the last pass
+└── RFFT         ─ real FFT, then Re(X) − Im(X)                [1D only]
 ```
 
 ```

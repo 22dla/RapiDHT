@@ -87,8 +87,8 @@ target_link_libraries(bench_transform PRIVATE coreht benchmark::benchmark rapidh
 # CUDA private, as it should, so the benchmark asks for both on its own account.
 if(RAPIDHT_WITH_CUDA)
     rapidht_use_cufft_baseline(bench_transform)
-    # R-5 step 2.3: IntFactored/ reaches the integer path through
-    # src/internal/device_access.h, which is not public API until step 6.1.
+    # R-5: the integer rows reach the integer path on raw device pointers
+    # through src/internal/device_access.h.
     target_include_directories(bench_transform PRIVATE "${PROJECT_SOURCE_DIR}/src")
     if(TARGET rapidht_cufft_callback)
         target_link_libraries(bench_transform PRIVATE rapidht_cufft_callback)
@@ -117,8 +117,8 @@ if(RAPIDHT_WITH_CUDA)
     add_executable(accuracy_integer accuracy_integer.cpp cufft_baseline.cu)
     target_link_libraries(accuracy_integer PRIVATE coreht rapidht_warnings)
     rapidht_use_cufft_baseline(accuracy_integer)
-    # R-5 step 3.2: the R-5 kernel and its offset policies, through
-    # src/internal/device_access.h (not public API until step 6.1).
+    # R-5 step 3.2: the R-5 kernel and its offset policies, on raw device
+    # pointers through src/internal/device_access.h.
     target_include_directories(accuracy_integer PRIVATE "${PROJECT_SOURCE_DIR}/src")
     # R-4 step 0.5: does the cuFFT baseline fit a given volume at all.
     add_executable(capacity_gpu3d capacity_gpu3d.cpp cufft_baseline.cu)

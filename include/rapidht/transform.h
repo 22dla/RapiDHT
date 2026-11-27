@@ -385,7 +385,8 @@ private:
     void FactoredPasses(const TIn* in, T* data, const IntegerOffset* offset, bool separable);
 
     /**
-     * R-5 (internal until the API decision of docs/R5_PLAN.md, step 6.1): the
+     * R-5: the raw-pointer form of ForwardTransform(const DeviceVolume<U>&,
+     * ...), for internal::DeviceAccess (benchmarks, tests): the
      * factored transform of an integer volume already on the device, TIn =
      * std::uint8_t or std::uint16_t, into `out`. The integer `offset` gives
      * (a value or a mean, computed on the device) is subtracted from every
@@ -405,7 +406,8 @@ private:
         T* data, TOut* out, const IntegerOffset& offset, size_t* saturated, bool separable);
 
     /**
-     * R-5 step 4.2 (internal until step 6.1): the inverse transform of the
+     * R-5 step 4.2, the raw-pointer form of InverseTransform(DeviceVolume<T>&,
+     * DeviceVolume<U>&, ...), also separable: the inverse transform of the
      * spectrum in `spectrum` into integers, TOut = std::uint8_t or
      * std::uint16_t, written to `deviceOut`: each voxel rint(x / N + offset)
      * clamped to the type. The offset (a value, or the rounded mean read off
