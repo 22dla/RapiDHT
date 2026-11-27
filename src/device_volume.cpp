@@ -9,6 +9,7 @@
 
 #include "internal/impl.h"
 
+#include <cstdint>
 #include <stdexcept>
 
 namespace RapiDHT {
@@ -102,5 +103,7 @@ void* DeviceVolume<T>::DeviceData() const noexcept
 
 template class DeviceVolume<float>;
 template class DeviceVolume<double>;
+template class DeviceVolume<std::uint8_t>; // R-5 step 6.1: integer voxels
+template class DeviceVolume<std::uint16_t>;
 
 } // namespace RapiDHT

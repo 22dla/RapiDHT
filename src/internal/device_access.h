@@ -1,13 +1,14 @@
 /*
  * Project: RapiDHT
  * File: src/internal/device_access.h
- * Brief: R-5 -- the internal entry points that are not public API yet.
+ * Brief: R-5 -- the internal entry points on raw device pointers.
  *
- * The transform of an integer volume (docs/R5_PLAN.md, stage 2) runs inside
- * HartleyTransform, but whether and how it becomes public is decided only at
- * step 6.1, from the measurements of stages 2-5. Until then benchmarks and
- * tests reach it here: HartleyTransform befriends this struct, and the
- * struct lives in src/internal, which no installed header includes.
+ * The transform of an integer volume (docs/R5_PLAN.md, stage 2) became public
+ * at step 6.1 as overloads on DeviceVolume<std::uint8_t / std::uint16_t> and
+ * on host pointers. These entry points take the integers at a raw device
+ * pointer instead, and the inverse can be separable; the benchmarks and the
+ * tests of stages 2-5 use them. HartleyTransform befriends this struct, and
+ * the struct lives in src/internal, which no installed header includes.
  */
 
 #ifndef RAPIDHT_INTERNAL_DEVICE_ACCESS_H

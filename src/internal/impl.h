@@ -133,6 +133,17 @@ struct HartleyTransform<T>::Impl {
     // reads it -- slot 0 the uint64 sum of a mean, slot 1 the offset as T.
     // Allocated on the first integer transform.
     internal::DeviceArray<unsigned long long> integerOffset;
+
+    // R-5 step 6.1: the integer voxels of the host-pointer integer overloads,
+    // as bytes (uint8 or uint16), allocated on first use like `staging`.
+    internal::DeviceArray<unsigned char> integerStaging;
+    internal::DeviceArray<unsigned char>& IntegerStaging(size_t bytes)
+    {
+        if (integerStaging.Size() < bytes) {
+            integerStaging.Resize(bytes);
+        }
+        return integerStaging;
+    }
 #endif
 };
 

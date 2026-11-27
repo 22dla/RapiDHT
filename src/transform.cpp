@@ -8,6 +8,7 @@
 #include <rapidht/utilities.h>
 
 #include "internal/impl.h"
+#include "internal/integer_convert.h"
 #include "internal/integer_offset.h"
 #include "internal/support.h"
 
@@ -20,6 +21,7 @@
 #include <cstdint>
 #include <stdexcept>
 #include <string>
+#include <vector>
 
 namespace RapiDHT {
 
@@ -411,6 +413,206 @@ void HartleyTransform<T>::FactoredToIntegers(DeviceVolume<T>& spectrum, TOut* de
 #endif
 }
 
+/* ------------------------- Integer voxels (R-5) -------------------------- */
+
+template <typename T>
+void HartleyTransform<T>::CheckIntegerCall(
+    const char* what, size_t inSize, const void* inData, size_t outSize, const void* outData, bool device) const
+{
+    if (device && _mode != Modes::GPUFactored) {
+        throw std::invalid_argument(std::string(what) + ": a DeviceVolume of integers needs Modes::GPUFactored.");
+    }
+    const size_t expected = Width() * (Height() == 0 ? size_t { 1 } : Height())
+                          * (Depth() == 0 ? size_t { 1 } : Depth());
+    if (inSize != expected || outSize != expected) {
+        throw std::invalid_argument(std::string(what) + ": the volumes hold " + std::to_string(inSize) + " and "
+                                    + std::to_string(outSize) + " elements but this transform expects "
+                                    + std::to_string(expected) + ".");
+    }
+    if (inData == nullptr || outData == nullptr) {
+        throw std::invalid_argument(std::string(what) + ": input or output holds no data.");
+    }
+}
+
+namespace {
+
+/// The offset a policy gives for the forward transform of `in`, on the host:
+/// the rounded mean of lines 0, step, 2 step, ... along x, as the device
+/// reduction (IntegerMeanOffset) computes it -- an exact integer sum.
+template <typename U>
+double HostForwardOffset(const U* in, size_t width, size_t lines, const IntegerOffset& policy)
+{
+    using Kind = IntegerOffset::Kind;
+    if (policy.kind == Kind::Value) {
+        return policy.value;
+    }
+    if (policy.kind != Kind::Mean && policy.kind != Kind::SampledMean) {
+        return 0.0;
+    }
+    const size_t step = policy.kind == Kind::Mean || policy.step == 0 ? 1 : policy.step;
+    unsigned long long sum = 0;
+    size_t sampled = 0;
+    for (size_t line = 0; line < lines; line += step, ++sampled) {
+        const U* row = in + line * width;
+        for (size_t i = 0; i < width; ++i) {
+            sum += row[i];
+        }
+    }
+    return std::rint(static_cast<double>(sum) / static_cast<double>(sampled * width));
+}
+
+} // namespace
+
+/*
+ * The host-pointer overloads. On Modes::GPUFactored the integers go to the
+ * device as integers (a staging buffer of their own) and through the same
+ * passes as the DeviceVolume overloads. On every other mode the arithmetic of
+ * those passes is repeated around the floating-point path: the voxels minus
+ * the offset, the transform, the offset times N back into H(0); for the
+ * inverse, the offset times N out of H(0), the unscaled transform and
+ * ToIntegerSaturated -- the function the device kernels run.
+ */
+template <typename T>
+template <typename U>
+void HartleyTransform<T>::ForwardFromIntegersOnHost(
+    const U* in, T* out, const IntegerOffset& offset, bool separable)
+{
+    const size_t lines = (Height() == 0 ? 1 : Height()) * (Depth() == 0 ? 1 : Depth());
+    const size_t count = Width() * lines;
+    CheckIntegerCall("ForwardTransform", count, in, count, out, false);
+#ifdef RAPIDHT_WITH_CUDA
+    if (_mode == Modes::GPUFactored) {
+        auto& staging = _impl->Staging(count);
+        auto& integers = _impl->IntegerStaging(count * sizeof(U));
+        integers.Upload(reinterpret_cast<const unsigned char*>(in), count * sizeof(U));
+        FactoredPasses(reinterpret_cast<const U*>(integers.Data()), staging.Data(), &offset, separable);
+        staging.Download(out, count);
+        return;
+    }
+#endif
+    const double c = HostForwardOffset(in, Width(), lines, offset);
+    for (size_t i = 0; i < count; ++i) {
+        out[i] = static_cast<T>(static_cast<double>(in[i]) - c);
+    }
+    if (separable) {
+        ForwardSeparable(out);
+    } else {
+        ForwardTransform(out);
+    }
+    if (c != 0.0) {
+        out[0] = static_cast<T>(static_cast<double>(out[0]) + c * static_cast<double>(count));
+    }
+}
+
+template <typename T>
+template <typename U>
+void HartleyTransform<T>::InverseToIntegersOnHost(
+    const T* in, U* out, const IntegerOffset& offset, size_t* saturated)
+{
+    using Kind = IntegerOffset::Kind;
+    const size_t count = Width() * (Height() == 0 ? 1 : Height()) * (Depth() == 0 ? 1 : Depth());
+    CheckIntegerCall("InverseTransform", count, in, count, out, false);
+#ifdef RAPIDHT_WITH_CUDA
+    if (_mode == Modes::GPUFactored) {
+        auto& staging = _impl->Staging(count);
+        staging.Upload(in, count);
+        auto& integers = _impl->IntegerStaging(count * sizeof(U));
+        FactoredInversePasses(staging.Data(), reinterpret_cast<U*>(integers.Data()), offset, saturated, false);
+        integers.Download(reinterpret_cast<unsigned char*>(out), count * sizeof(U));
+        return;
+    }
+#endif
+    const double n = static_cast<double>(count);
+    std::vector<T> work(in, in + count);
+    double c = 0.0;
+    if (offset.kind == Kind::Mean || offset.kind == Kind::SampledMean) {
+        c = std::rint(static_cast<double>(work[0]) / n);
+    } else if (offset.kind == Kind::Value) {
+        c = offset.value;
+    }
+    if (c != 0.0) {
+        work[0] = static_cast<T>(static_cast<double>(work[0]) - c * n);
+    }
+    ForwardTransform(work.data()); // unscaled: the 1/N goes into the conversion
+    const T scale = static_cast<T>(1.0 / n);
+    const T shift = static_cast<T>(c);
+    size_t clamped = 0;
+    for (size_t i = 0; i < count; ++i) {
+        out[i] = internal::ToIntegerSaturated<U>(work[i], scale, shift, clamped);
+    }
+    if (saturated != nullptr) {
+        *saturated = clamped;
+    }
+}
+
+template <typename T>
+template <typename U>
+void HartleyTransform<T>::ForwardTransform(const DeviceVolume<U>& in, DeviceVolume<T>& out, IntegerOffset offset)
+{
+    PROFILE_FUNCTION();
+    CheckIntegerCall("ForwardTransform", in.Size(), in.DeviceData(), out.Size(), out.DeviceData(), true);
+#ifdef RAPIDHT_WITH_CUDA
+    FactoredPasses(static_cast<const U*>(in.DeviceData()), static_cast<T*>(out.DeviceData()), &offset, false);
+#else
+    (void)offset;
+    ThrowGpuUnavailable();
+#endif
+}
+
+template <typename T>
+template <typename U>
+void HartleyTransform<T>::ForwardSeparable(const DeviceVolume<U>& in, DeviceVolume<T>& out, IntegerOffset offset)
+{
+    PROFILE_FUNCTION();
+    CheckIntegerCall("ForwardSeparable", in.Size(), in.DeviceData(), out.Size(), out.DeviceData(), true);
+#ifdef RAPIDHT_WITH_CUDA
+    FactoredPasses(static_cast<const U*>(in.DeviceData()), static_cast<T*>(out.DeviceData()), &offset, true);
+#else
+    (void)offset;
+    ThrowGpuUnavailable();
+#endif
+}
+
+template <typename T>
+template <typename U>
+void HartleyTransform<T>::InverseTransform(
+    DeviceVolume<T>& in, DeviceVolume<U>& out, IntegerOffset offset, size_t* saturated)
+{
+    PROFILE_FUNCTION();
+    CheckIntegerCall("InverseTransform", in.Size(), in.DeviceData(), out.Size(), out.DeviceData(), true);
+#ifdef RAPIDHT_WITH_CUDA
+    FactoredInversePasses(static_cast<T*>(in.DeviceData()), static_cast<U*>(out.DeviceData()), offset, saturated, false);
+#else
+    (void)offset;
+    (void)saturated;
+    ThrowGpuUnavailable();
+#endif
+}
+
+template <typename T>
+template <typename U>
+void HartleyTransform<T>::ForwardTransform(const U* in, T* out, IntegerOffset offset)
+{
+    PROFILE_FUNCTION();
+    ForwardFromIntegersOnHost(in, out, offset, false);
+}
+
+template <typename T>
+template <typename U>
+void HartleyTransform<T>::ForwardSeparable(const U* in, T* out, IntegerOffset offset)
+{
+    PROFILE_FUNCTION();
+    ForwardFromIntegersOnHost(in, out, offset, true);
+}
+
+template <typename T>
+template <typename U>
+void HartleyTransform<T>::InverseTransform(const T* in, U* out, IntegerOffset offset, size_t* saturated)
+{
+    PROFILE_FUNCTION();
+    InverseToIntegersOnHost(in, out, offset, saturated);
+}
+
 template class DeviceVolume<float>;
 template class DeviceVolume<double>;
 
@@ -433,5 +635,21 @@ template void HartleyTransform<double>::FactoredToIntegers<std::uint8_t>(
     DeviceVolume<double>&, std::uint8_t*, const internal::IntegerOffset&, size_t*, bool);
 template void HartleyTransform<double>::FactoredToIntegers<std::uint16_t>(
     DeviceVolume<double>&, std::uint16_t*, const internal::IntegerOffset&, size_t*, bool);
+
+#define RAPIDHT_INTEGER_OVERLOADS(T, U)                                                              \
+    template void HartleyTransform<T>::ForwardTransform<U>(const DeviceVolume<U>&, DeviceVolume<T>&, \
+        IntegerOffset);                                                                              \
+    template void HartleyTransform<T>::ForwardSeparable<U>(const DeviceVolume<U>&, DeviceVolume<T>&, \
+        IntegerOffset);                                                                              \
+    template void HartleyTransform<T>::InverseTransform<U>(DeviceVolume<T>&, DeviceVolume<U>&,       \
+        IntegerOffset, size_t*);                                                                     \
+    template void HartleyTransform<T>::ForwardTransform<U>(const U*, T*, IntegerOffset);             \
+    template void HartleyTransform<T>::ForwardSeparable<U>(const U*, T*, IntegerOffset);             \
+    template void HartleyTransform<T>::InverseTransform<U>(const T*, U*, IntegerOffset, size_t*);
+RAPIDHT_INTEGER_OVERLOADS(float, std::uint8_t)
+RAPIDHT_INTEGER_OVERLOADS(float, std::uint16_t)
+RAPIDHT_INTEGER_OVERLOADS(double, std::uint8_t)
+RAPIDHT_INTEGER_OVERLOADS(double, std::uint16_t)
+#undef RAPIDHT_INTEGER_OVERLOADS
 
 } // namespace RapiDHT

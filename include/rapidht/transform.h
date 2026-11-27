@@ -10,6 +10,7 @@
 
 #include <rapidht/config_flags.h>
 #include <rapidht/device_volume.h>
+#include <rapidht/integer_offset.h>
 
 #include <array>
 #include <cstdint>
@@ -63,7 +64,6 @@ enum class Modes { CPU, ///< OpenMP, fast Hartley transform.
  */
 namespace internal {
 struct DeviceAccess; // R-5: the internal entry points benchmarks and tests reach (src/internal)
-struct IntegerOffset; // R-5: what an integer volume has subtracted on reading (src/internal)
 } // namespace internal
 
 template <typename T>
@@ -163,6 +163,95 @@ public:
      * @param volume Input/output, left holding the transformed data.
      */
     void InverseTransform(DeviceVolume<T>& volume);
+
+    /*
+     * Integer voxels (R-5). U is std::uint8_t or std::uint16_t, the only two
+     * instantiated; T, the spectrum, stays float or double. The integers are
+     * read as they are -- a uint16 volume crosses the bus and sits in device
+     * memory at two bytes a voxel, not four -- and converted inside the first
+     * pass; the inverse writes them from inside its last one. The offset
+     * policy (<rapidht/integer_offset.h>) decides the integer the passes work
+     * around; it changes rounding only, never the result's meaning.
+     *
+     * The DeviceVolume overloads need Modes::GPUFactored. The host-pointer
+     * overloads work on every mode: on Modes::GPUFactored they upload the
+     * integers as integers; on the others they convert on the host and run
+     * the floating-point path, with the same offset arithmetic.
+     */
+
+    /**
+     * @brief The transform of an integer volume on the device into a spectrum.
+     *
+     * out = H(in), unnormalised, as ForwardTransform(DeviceVolume&) gives for
+     * the same values in floating point. `in` is only read. Device memory:
+     * the two volumes and nothing else (no scratch volume on this mode).
+     *
+     * @param in Integer voxels, Width()*Height()*Depth() of them.
+     * @param out Receives the spectrum; the same size.
+     * @param offset Integer worked around; the default samples every 64th line.
+     * @throws std::invalid_argument Unless the mode is Modes::GPUFactored and
+     *         both sizes match.
+     */
+    template <typename U>
+    void ForwardTransform(const DeviceVolume<U>& in, DeviceVolume<T>& out,
+        IntegerOffset offset = IntegerOffset::Default());
+
+    /**
+     * @brief The separable transform (ForwardSeparable) of an integer volume
+     *        on the device. Arguments and requirements as above.
+     */
+    template <typename U>
+    void ForwardSeparable(const DeviceVolume<U>& in, DeviceVolume<T>& out,
+        IntegerOffset offset = IntegerOffset::Default());
+
+    /**
+     * @brief The inverse of a spectrum on the device into integer voxels.
+     *
+     * Each voxel is rint(x / N) of the inverse transform, clamped to the range
+     * of U. A spectrum of integers comes back exactly: in float, the forward
+     * transform with the default policy and this inverse with MeanOfAll()
+     * restore every voxel of the uint8 and uint16 volumes tested, 128^3 to
+     * 1024^3. An offset far from the mean (NoOffset() on a uint16 tomogram)
+     * can miss voxels by one.
+     *
+     * @param in The spectrum. Used as work space: it does not hold the
+     *        spectrum afterwards.
+     * @param out Receives the voxels; the same size.
+     * @param offset Integer worked around. MeanOfAll() (the default) and
+     *        MeanOfEvery() read it off H(0) as rint(H(0) / N), at no cost.
+     * @param saturated If not null, receives the number of voxels clamped to
+     *        the range of U (NaN counts, and gives 0).
+     * @throws std::invalid_argument Unless the mode is Modes::GPUFactored and
+     *         both sizes match.
+     */
+    template <typename U>
+    void InverseTransform(DeviceVolume<T>& in, DeviceVolume<U>& out,
+        IntegerOffset offset = IntegerOffset::MeanOfAll(), size_t* saturated = nullptr);
+
+    /**
+     * @brief The transform of integer voxels in host memory into a spectrum
+     *        in host memory. Every mode.
+     * @param in Integer voxels, Width()*Height()*Depth() of them; only read.
+     * @param out Receives the spectrum; the same count, not overlapping `in`.
+     * @param offset As for the DeviceVolume overload.
+     */
+    template <typename U>
+    void ForwardTransform(const U* in, T* out, IntegerOffset offset = IntegerOffset::Default());
+
+    /// The separable transform of integer voxels in host memory. Every mode.
+    template <typename U>
+    void ForwardSeparable(const U* in, T* out, IntegerOffset offset = IntegerOffset::Default());
+
+    /**
+     * @brief The inverse of a spectrum in host memory into integer voxels in
+     *        host memory. Every mode; `in` is only read.
+     *
+     * Rounding, clamping, `offset` and `saturated` as for the DeviceVolume
+     * overload.
+     */
+    template <typename U>
+    void InverseTransform(const T* in, U* out, IntegerOffset offset = IntegerOffset::MeanOfAll(),
+        size_t* saturated = nullptr);
 
     constexpr size_t Width() const noexcept { return _dims[static_cast<size_t>(Direction::Y)]; }
     constexpr size_t Height() const noexcept { return _dims[static_cast<size_t>(Direction::X)]; }
@@ -293,7 +382,7 @@ private:
     /// offset the policy gives, not written) and the rest in place on `data`.
     /// Defined in backend_cuda.cpp.
     template <typename TIn>
-    void FactoredPasses(const TIn* in, T* data, const internal::IntegerOffset* offset, bool separable);
+    void FactoredPasses(const TIn* in, T* data, const IntegerOffset* offset, bool separable);
 
     /**
      * R-5 (internal until the API decision of docs/R5_PLAN.md, step 6.1): the
@@ -306,14 +395,14 @@ private:
      */
     template <typename TIn>
     void FactoredFromIntegers(
-        const TIn* deviceIn, DeviceVolume<T>& out, const internal::IntegerOffset& offset, bool separable);
+        const TIn* deviceIn, DeviceVolume<T>& out, const IntegerOffset& offset, bool separable);
 
     /// R-5 step 4.2: the passes of the inverse of an integer volume -- the
     /// offset taken out of H(0), the passes in place on `data`, the last one
     /// writing TOut to `out`. Defined in backend_cuda.cpp.
     template <typename TOut>
     void FactoredInversePasses(
-        T* data, TOut* out, const internal::IntegerOffset& offset, size_t* saturated, bool separable);
+        T* data, TOut* out, const IntegerOffset& offset, size_t* saturated, bool separable);
 
     /**
      * R-5 step 4.2 (internal until step 6.1): the inverse transform of the
@@ -326,8 +415,19 @@ private:
      * the number of clamped voxels. Modes::GPUFactored only.
      */
     template <typename TOut>
-    void FactoredToIntegers(DeviceVolume<T>& spectrum, TOut* deviceOut, const internal::IntegerOffset& offset,
+    void FactoredToIntegers(DeviceVolume<T>& spectrum, TOut* deviceOut, const IntegerOffset& offset,
         size_t* saturated, bool separable);
+
+    /// The checks of the integer overloads: the mode (`device`: Modes::GPUFactored
+    /// only), the sizes, the pointers. `what` names the entry point.
+    void CheckIntegerCall(const char* what, size_t inSize, const void* inData, size_t outSize,
+        const void* outData, bool device) const;
+
+    /// The host-pointer integer overloads, for every mode.
+    template <typename U>
+    void ForwardFromIntegersOnHost(const U* in, T* out, const IntegerOffset& offset, bool separable);
+    template <typename U>
+    void InverseToIntegersOnHost(const T* in, U* out, const IntegerOffset& offset, size_t* saturated);
 
     friend struct internal::DeviceAccess;
 

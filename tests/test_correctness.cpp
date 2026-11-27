@@ -17,6 +17,7 @@
 #include <cstdint>
 #include <numeric>
 #include <string>
+#include <type_traits>
 #include <vector>
 
 #include "test_support.h"
@@ -573,6 +574,202 @@ TEST(Correctness, DeviceVolumeIsRejectedWithoutCuda)
         GTEST_SKIP() << "Built with CUDA, so DeviceVolume is available";
     }
     EXPECT_THROW(DeviceVolume<double>(64), std::runtime_error);
+}
+
+// ---------------------------------------------------------------------------
+// Integer voxels (R-5 step 6.1)
+// ---------------------------------------------------------------------------
+
+namespace {
+
+// Unequal axes in 1D, 2D and 3D, with lines longer than a CPU block (32).
+const Extent kIntegerExtents[] = { { 64, 0, 0 }, { 32, 8, 0 }, { 8, 4, 16 }, { 64, 4, 2 } };
+
+const IntegerOffset kIntegerPolicies[] = { IntegerOffset::Default(), IntegerOffset::NoOffset(),
+    IntegerOffset::Of(77.0), IntegerOffset::MeanOfAll(), IntegerOffset::MeanOfEvery(3) };
+
+/// Integers over the full range of U, from a fixed formula, with a large
+/// mean on top for uint16 (the tomogram case the offset is for).
+template <typename U>
+std::vector<U> IntegerSignal(size_t count)
+{
+    std::vector<U> v(count);
+    for (size_t i = 0; i < count; ++i) {
+        const uint32_t h = static_cast<uint32_t>((i + 1) * 2654435761u);
+        v[i] = sizeof(U) == 1 ? static_cast<U>(h >> 24) : static_cast<U>(30000 + (h >> 22));
+    }
+    return v;
+}
+
+template <typename V>
+std::vector<double> AsDouble(const std::vector<V>& v)
+{
+    return std::vector<double>(v.begin(), v.end());
+}
+
+/// The integer overloads of one mode against the definition (true
+/// transform) and against the double separable path of the CPU (separable),
+/// then forward and back: every voxel as it was.
+template <typename T, typename U>
+void ExpectIntegerHostOverloads(Modes mode, double tolerance)
+{
+    for (const Extent& e : kIntegerExtents) {
+        SCOPED_TRACE("extent " + Describe(e) + (sizeof(U) == 1 ? ", u8" : ", u16"));
+        const Dims dims = Dims::Of(e.width, e.height, e.depth);
+        const auto input = IntegerSignal<U>(dims.Total());
+        const auto truth = ReferenceDht(AsDouble(input), dims);
+        std::vector<double> separableTruth = AsDouble(input);
+        HartleyTransform<double>(e.width, e.height, e.depth, Modes::CPU).ForwardSeparable(separableTruth.data());
+
+        HartleyTransform<T> ht(e.width, e.height, e.depth, mode);
+        std::vector<T> spectrum(dims.Total());
+        for (const IntegerOffset& policy : kIntegerPolicies) {
+            SCOPED_TRACE("policy " + std::to_string(static_cast<int>(policy.kind)) + ", step "
+                         + std::to_string(policy.step) + ", value " + std::to_string(policy.value));
+            ht.ForwardTransform(input.data(), spectrum.data(), policy);
+            ExpectClose(AsDouble(spectrum), truth, tolerance);
+            ht.ForwardSeparable(input.data(), spectrum.data(), policy);
+            ExpectClose(AsDouble(spectrum), separableTruth, tolerance);
+
+            ht.ForwardTransform(input.data(), spectrum.data(), policy);
+            const std::vector<T> kept = spectrum;
+            std::vector<U> back(dims.Total());
+            size_t saturated = 99;
+            ht.InverseTransform(spectrum.data(), back.data(), policy, &saturated);
+            EXPECT_EQ(spectrum, kept) << "the host inverse only reads its input";
+            EXPECT_EQ(saturated, 0u);
+            const bool nearMean
+                = policy.kind == IntegerOffset::Kind::Mean || policy.kind == IntegerOffset::Kind::SampledMean;
+            if (std::is_same<T, float>::value && !nearMean) {
+                // With an offset far from the mean (none, or 77 under a mean
+                // near 30500) float misses uint16 voxels by one on Modes::GPU:
+                // what the mean policies are for.
+                for (size_t i = 0; i < back.size(); ++i) {
+                    ASSERT_LE(std::abs(int(back[i]) - int(input[i])), 1) << "at " << i;
+                }
+            } else {
+                ASSERT_EQ(back, input);
+            }
+        }
+
+        // Three times the spectrum: the voxels above the range clamp to its top.
+        std::vector<double> scaled = truth;
+        for (double& v : scaled) {
+            v *= 3.0;
+        }
+        const std::vector<T> tripled(scaled.begin(), scaled.end());
+        size_t above = 0;
+        std::vector<U> expected(dims.Total());
+        for (size_t i = 0; i < expected.size(); ++i) {
+            const double v = 3.0 * static_cast<double>(input[i]);
+            above += v > (sizeof(U) == 1 ? 255.0 : 65535.0) ? 1 : 0;
+            expected[i] = static_cast<U>(std::min(v, sizeof(U) == 1 ? 255.0 : 65535.0));
+        }
+        std::vector<U> back(dims.Total());
+        size_t saturated = 0;
+        ht.InverseTransform(tripled.data(), back.data(), IntegerOffset::MeanOfAll(), &saturated);
+        EXPECT_GT(above, 0u);
+        EXPECT_EQ(saturated, above);
+        ASSERT_EQ(back, expected);
+    }
+}
+
+} // namespace
+
+TEST(Correctness, IntegerOverloadsMatchReference_CPU)
+{
+    ExpectIntegerHostOverloads<double, uint8_t>(Modes::CPU, 1e-12);
+    ExpectIntegerHostOverloads<double, uint16_t>(Modes::CPU, 1e-12);
+    ExpectIntegerHostOverloads<float, uint8_t>(Modes::CPU, 1e-5);
+    ExpectIntegerHostOverloads<float, uint16_t>(Modes::CPU, 1e-5);
+}
+
+TEST(Correctness, IntegerOverloadsMatchReference_GPU)
+{
+    SKIP_IF_NO_GPU();
+    for (const Modes mode : { Modes::GPUFactored, Modes::GPU }) {
+        SCOPED_TRACE(mode == Modes::GPU ? "Modes::GPU" : "Modes::GPUFactored");
+        ExpectIntegerHostOverloads<double, uint8_t>(mode, 1e-10);
+        ExpectIntegerHostOverloads<double, uint16_t>(mode, 1e-10);
+        ExpectIntegerHostOverloads<float, uint8_t>(mode, 1e-5);
+        ExpectIntegerHostOverloads<float, uint16_t>(mode, 1e-5);
+    }
+}
+
+// The DeviceVolume overloads run the passes the host-pointer ones run on
+// Modes::GPUFactored, so the two agree bit for bit; and forward and back on
+// the device restores every voxel. 128^3 takes the fused last pass.
+TEST(Correctness, IntegerDeviceVolumesMatchHostOverloads_GPU)
+{
+    SKIP_IF_NO_GPU();
+    const Extent extents[] = { { 128, 128, 128 }, { 8, 4, 16 }, { 256, 32, 0 }, { 512, 0, 0 } };
+    for (const Extent& e : extents) {
+        SCOPED_TRACE("extent " + Describe(e));
+        const Dims dims = Dims::Of(e.width, e.height, e.depth);
+        const auto input = IntegerSignal<uint16_t>(dims.Total());
+        HartleyTransform<float> ht(e.width, e.height, e.depth, Modes::GPUFactored);
+        DeviceVolume<uint16_t> voxels(dims.Total());
+        voxels.Upload(input.data());
+        DeviceVolume<float> spectrum(dims.Total());
+
+        for (const bool separable : { false, true }) {
+            SCOPED_TRACE(separable ? "separable" : "true transform");
+            std::vector<float> fromHost(dims.Total());
+            std::vector<float> fromDevice(dims.Total());
+            if (separable) {
+                ht.ForwardSeparable(input.data(), fromHost.data());
+                ht.ForwardSeparable(voxels, spectrum);
+            } else {
+                ht.ForwardTransform(input.data(), fromHost.data());
+                ht.ForwardTransform(voxels, spectrum);
+            }
+            spectrum.Download(fromDevice.data());
+            ASSERT_EQ(fromDevice, fromHost);
+        }
+
+        ht.ForwardTransform(voxels, spectrum);
+        std::vector<float> host(dims.Total());
+        spectrum.Download(host.data());
+        std::vector<uint16_t> fromHost(dims.Total());
+        size_t hostSaturated = 99;
+        ht.InverseTransform(host.data(), fromHost.data(), IntegerOffset::MeanOfAll(), &hostSaturated);
+        DeviceVolume<uint16_t> restored(dims.Total());
+        size_t saturated = 99;
+        ht.InverseTransform(spectrum, restored, IntegerOffset::MeanOfAll(), &saturated);
+        std::vector<uint16_t> back(dims.Total());
+        restored.Download(back.data());
+        EXPECT_EQ(saturated, 0u);
+        EXPECT_EQ(hostSaturated, 0u);
+        ASSERT_EQ(back, input);
+        ASSERT_EQ(fromHost, input);
+    }
+}
+
+TEST(Correctness, IntegerDeviceVolumesRejectOtherModesAndSizes_GPU)
+{
+    SKIP_IF_NO_GPU();
+    DeviceVolume<uint16_t> voxels(16 * 8 * 4);
+    DeviceVolume<float> spectrum(16 * 8 * 4);
+    HartleyTransform<float> dense(16, 8, 4, Modes::GPU);
+    EXPECT_THROW(dense.ForwardTransform(voxels, spectrum), std::invalid_argument);
+    EXPECT_THROW(dense.InverseTransform(spectrum, voxels), std::invalid_argument);
+    HartleyTransform<float> cpu(16, 8, 4, Modes::CPU);
+    EXPECT_THROW(cpu.ForwardSeparable(voxels, spectrum), std::invalid_argument);
+    HartleyTransform<float> other(16, 8, 2, Modes::GPUFactored);
+    EXPECT_THROW(other.ForwardTransform(voxels, spectrum), std::invalid_argument);
+    DeviceVolume<uint8_t> shorter(16 * 8 * 2);
+    HartleyTransform<float> factored(16, 8, 4, Modes::GPUFactored);
+    EXPECT_THROW(factored.InverseTransform(spectrum, shorter), std::invalid_argument);
+}
+
+TEST(Correctness, IntegerOverloadsRejectNullData)
+{
+    HartleyTransform<float> ht(16, 8, 4, Modes::CPU);
+    std::vector<float> spectrum(16 * 8 * 4);
+    std::vector<uint16_t> voxels(16 * 8 * 4);
+    EXPECT_THROW(ht.ForwardTransform(static_cast<const uint16_t*>(nullptr), spectrum.data()), std::invalid_argument);
+    EXPECT_THROW(ht.ForwardSeparable(voxels.data(), static_cast<float*>(nullptr)), std::invalid_argument);
+    EXPECT_THROW(ht.InverseTransform(spectrum.data(), static_cast<uint16_t*>(nullptr)), std::invalid_argument);
 }
 
 // ---------------------------------------------------------------------------

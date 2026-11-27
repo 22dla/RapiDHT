@@ -29,6 +29,10 @@ class HartleyTransform;
  * header still requires no CUDA toolkit. It owns its allocation and is
  * move-only, since device memory cannot be duplicated implicitly.
  *
+ * T is float or double for the transforms, or std::uint8_t / std::uint16_t
+ * for integer voxels (the integer overloads of HartleyTransform, which read
+ * and write them without a floating-point copy).
+ *
  * Constructing one in a build without CUDA throws std::runtime_error.
  */
 template <typename T>
