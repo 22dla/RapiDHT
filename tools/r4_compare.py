@@ -212,7 +212,7 @@ def load_trace(path: str, pick=min) -> dict[str, dict[str, float]]:
 # Only the samples taken right after a size ran: the one before it is taken
 # with the card idle, at 210 MHz even with the clock locked (2026-11-20 s4d),
 # and says nothing about the clock the kernels ran at.
-GPU = re.compile(r"^(n=\d+(?:/[a-z0-9]+)?) # gpu after sm_mhz=(\d+) temp_c=(\d+)")
+GPU = re.compile(r"^(n=[0-9x]+(?:/[a-z0-9]+)?) # gpu after sm_mhz=(\d+) temp_c=(\d+)")
 
 
 def load_clocks(path: str) -> dict[str, tuple[int, int, int]]:

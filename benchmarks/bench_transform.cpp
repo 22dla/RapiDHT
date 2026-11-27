@@ -1070,6 +1070,9 @@ const Extent kExtentsR4Only2D[] = { { 2048, 2048, 0 } };
 const Extent kExtentsR5Large3D[] = { { 1024, 1024, 512 }, { 1024, 1024, 1024 } };
 // R-4 step 5.3: the largest convolution, 2 GiB in float.
 const Extent kExtentsConvLargest[] = { { 1024, 1024, 512 } };
+// R-6 step 0.1: the float transform at the size of a real tomogram slab, where
+// the passes of length 1024 lose to cuFFT (docs/R6_PLAN.md, direction B).
+const Extent kExtentsR6Float3D[] = { { 1024, 1024, 512 } };
 
 /*
  * R-4: the factored device path. Registered for every extent up to its 2048
@@ -2140,6 +2143,8 @@ int main(int argc, char** argv)
     RegisterFactored<float>(kExtents3D, CountOf(kExtents3D), "3D", "f32");
     RegisterCufft(kExtentsR4Only3D, CountOf(kExtentsR4Only3D), "3D");
     RegisterFactored<float>(kExtentsR4Only3D, CountOf(kExtentsR4Only3D), "3D", "f32");
+    RegisterCufft(kExtentsR6Float3D, CountOf(kExtentsR6Float3D), "3D");
+    RegisterFactored<float>(kExtentsR6Float3D, CountOf(kExtentsR6Float3D), "3D", "f32");
     RegisterIntegerInput(kExtents3D, CountOf(kExtents3D));
     RegisterIntegerInput(kExtentsR5Large3D, CountOf(kExtentsR5Large3D));
 #ifdef RAPIDHT_WITH_CUDA

@@ -9,6 +9,7 @@
  *
  *   nsys profile --stats=true ./profile_gpu3d 512 20 f32
  *   RAPIDHT_TRACE_KERNELS=1 ./profile_gpu3d 512 15 u16 factored   # R-5
+ *   RAPIDHT_TRACE_KERNELS=1 ./profile_gpu3d 1024x1024x512 15 f32 factored   # R-6: W x H x D
  *
  * The point of the exercise is the CUDA Kernel Summary that nsys prints. The
  * matrix formulation is only worth defending if the GEMMs dominate it; time
@@ -74,18 +75,44 @@ double FreeMiB()
 #endif
 }
 
-template <typename T>
-int Run(size_t width, int iterations, const char* label, RapiDHT::Modes mode)
+/// The volume profiled: a cube N^3, or W x H x D (R-6 step 0.1).
+struct Extent {
+    size_t width = 0, height = 0, depth = 0;
+    size_t Count() const { return width * height * depth; }
+    std::string Name() const
+    {
+        return (width == height && height == depth)
+                 ? std::to_string(width) + "^3"
+                 : std::to_string(width) + "x" + std::to_string(height) + "x" + std::to_string(depth);
+    }
+};
+
+/// Multiply-adds per element of one axis: dense 2n, factored 2(N1 + N2),
+/// N1 = 2^ceil(log2(n)/2), the twiddle not counted.
+double PerAxisFlops(size_t n, bool factored)
 {
-    const size_t count = width * width * width;
+    if (!factored) {
+        return 2.0 * static_cast<double>(n);
+    }
+    size_t n1 = 1;
+    while (n1 * n1 < n) {
+        n1 *= 2;
+    }
+    return 2.0 * static_cast<double>(n1 + n / n1);
+}
+
+template <typename T>
+int Run(const Extent& e, int iterations, const char* label, RapiDHT::Modes mode)
+{
+    const size_t count = e.Count();
 
     std::vector<T> data(count);
     for (size_t i = 0; i < count; ++i) {
         data[i] = static_cast<T>(std::sin(0.7 * static_cast<double>(i)) + 1.0);
     }
 
-    std::printf("%s  %zu^3  (%zu elements, %.1f MiB per buffer)  x%d iterations\n",
-        label, width, count, static_cast<double>(count * sizeof(T)) / (1024.0 * 1024.0),
+    std::printf("%s  %s  (%zu elements, %.1f MiB per buffer)  x%d iterations\n",
+        label, e.Name().c_str(), count, static_cast<double>(count * sizeof(T)) / (1024.0 * 1024.0),
         iterations);
 
     try {
@@ -95,7 +122,7 @@ int Run(size_t width, int iterations, const char* label, RapiDHT::Modes mode)
         volume.Upload(data.data());
 
         const double base = UsedMiB();
-        RapiDHT::HartleyTransform<T> transform(width, width, width, mode);
+        RapiDHT::HartleyTransform<T> transform(e.width, e.height, e.depth, mode);
         const double afterConstruct = UsedMiB();
 
         // Untimed warm-up: the first call pays for context creation and for
@@ -110,18 +137,9 @@ int Run(size_t width, int iterations, const char* label, RapiDHT::Modes mode)
 
         const double ms = std::chrono::duration<double, std::milli>(finish - start).count();
         const double msPer = ms / iterations;
-        // 3 axes, W^2 lines each, 2*W^2 flops per line.
-        // Dense matrices: 2W flops per element per axis. Factored (R-4): 2(N1 + N2),
-        // N1 = 2^ceil(log2(W)/2), the twiddle not counted.
-        double perAxis = 2.0 * static_cast<double>(width);
-        if (mode == RapiDHT::Modes::GPUFactored) {
-            size_t n1 = 1;
-            while (n1 * n1 < width) {
-                n1 *= 2;
-            }
-            perAxis = 2.0 * static_cast<double>(n1 + width / n1);
-        }
-        const double gflop = 3.0 * perAxis * std::pow(static_cast<double>(width), 3.0) / 1e9;
+        const bool f = mode == RapiDHT::Modes::GPUFactored;
+        const double gflop = (PerAxisFlops(e.width, f) + PerAxisFlops(e.height, f) + PerAxisFlops(e.depth, f))
+                           * static_cast<double>(count) / 1e9;
         // GFLOP per millisecond is already TFLOP per second; the earlier
         // division by 1000 here printed 0.00 for every run.
         std::printf("  %.2f ms per transform, %.1f GFLOP of multiply-add arithmetic, %.2f TFLOP/s\n",
@@ -162,9 +180,9 @@ int Run(size_t width, int iterations, const char* label, RapiDHT::Modes mode)
  * integer path per kernel the way it does the float one.
  */
 template <typename TIn>
-int RunIntegers(size_t width, int iterations, const char* label)
+int RunIntegers(const Extent& e, int iterations, const char* label)
 {
-    const size_t count = width * width * width;
+    const size_t count = e.Count();
     std::vector<TIn> host(count);
     std::uint64_t state = 0x9E3779B97F4A7C15ull;
     for (size_t i = 0; i < count; ++i) {
@@ -173,7 +191,7 @@ int RunIntegers(size_t width, int iterations, const char* label)
     }
     const double offset = static_cast<double>(1u << (8 * sizeof(TIn) - 1));
 
-    std::printf("%s factored  %zu^3  (%zu elements, %.1f MiB of input)  x%d iterations\n", label, width, count,
+    std::printf("%s factored  %s  (%zu elements, %.1f MiB of input)  x%d iterations\n", label, e.Name().c_str(), count,
         static_cast<double>(count * sizeof(TIn)) / (1024.0 * 1024.0), iterations);
 
     TIn* in = nullptr;
@@ -185,7 +203,7 @@ int RunIntegers(size_t width, int iterations, const char* label)
     try {
         cudaMemcpy(in, host.data(), count * sizeof(TIn), cudaMemcpyHostToDevice);
         RapiDHT::DeviceVolume<float> out(count);
-        RapiDHT::HartleyTransform<float> transform(width, width, width, RapiDHT::Modes::GPUFactored);
+        RapiDHT::HartleyTransform<float> transform(e.width, e.height, e.depth, RapiDHT::Modes::GPUFactored);
         RapiDHT::internal::DeviceAccess::ForwardFromIntegers(transform, in, out, offset); // warm-up
 
         const auto start = std::chrono::high_resolution_clock::now();
@@ -220,16 +238,29 @@ int main(int argc, char** argv)
         return 1;
     }
 
-    const size_t width = (argc > 1) ? std::strtoul(argv[1], nullptr, 10) : 256;
+    // N for a cube N^3, or WxHxD (R-6 step 0.1: 1024x1024x512).
+    Extent e;
+    {
+        const char* arg = (argc > 1) ? argv[1] : "256";
+        char* end = nullptr;
+        e.width = std::strtoul(arg, &end, 10);
+        e.height = e.depth = e.width;
+        if (*end == 'x') {
+            e.height = std::strtoul(end + 1, &end, 10);
+            e.depth = (*end == 'x') ? std::strtoul(end + 1, &end, 10) : 0;
+        }
+    }
     const int iterations = (argc > 2) ? std::atoi(argv[2]) : 10;
     const bool useDouble = (argc > 3) && std::strcmp(argv[3], "f64") == 0;
     // A fourth argument "factored" runs the R-4 path instead of the matrices.
     const bool factored = (argc > 4) && std::strcmp(argv[4], "factored") == 0;
     const RapiDHT::Modes mode = factored ? RapiDHT::Modes::GPUFactored : RapiDHT::Modes::GPU;
 
-    if (width == 0 || (width & (width - 1)) != 0) {
-        std::fprintf(stderr, "width must be a power of two, got %zu\n", width);
-        return 1;
+    for (const size_t n : { e.width, e.height, e.depth }) {
+        if (n == 0 || (n & (n - 1)) != 0) {
+            std::fprintf(stderr, "extents must be powers of two, got %s\n", e.Name().c_str());
+            return 1;
+        }
     }
 
     // R-5: "u16" or "u8" in place of the precision runs the integer path.
@@ -241,11 +272,11 @@ int main(int argc, char** argv)
             return 1;
         }
 #ifdef RAPIDHT_WITH_CUDA
-        return u16 ? RunIntegers<std::uint16_t>(width, iterations, "u16")
-                   : RunIntegers<std::uint8_t>(width, iterations, "u8");
+        return u16 ? RunIntegers<std::uint16_t>(e, iterations, "u16")
+                   : RunIntegers<std::uint8_t>(e, iterations, "u8");
 #endif
     }
 
     const char* label = useDouble ? (factored ? "f64 factored" : "f64") : (factored ? "f32 factored" : "f32");
-    return useDouble ? Run<double>(width, iterations, label, mode) : Run<float>(width, iterations, label, mode);
+    return useDouble ? Run<double>(e, iterations, label, mode) : Run<float>(e, iterations, label, mode);
 }
