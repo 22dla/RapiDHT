@@ -99,6 +99,8 @@ OPPONENT_LABEL = {
     "cuFFT_R2C": "cuFFT R2C без преобразования",
     "ConvCufft": "свёртка cuFFT R2C + C2R",
     "ConvCufftEven": "свёртка cuFFT R2C + C2R, чётное ядро",
+    "ConvHartleySeven": "наша свёртка в семь проходов",
+    "ConvHartleyEvenSeven": "наша свёртка в семь проходов, чётное ядро",
     "cuFFTInt": "перевод в float + cuFFT R2C + Хартли",
     "cuFFTIntCb": "cuFFT с колбэком загрузки + Хартли",
     "cuFFTIntLto": "cuFFT с колбэком LTO + Хартли",

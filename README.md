@@ -278,12 +278,13 @@ place (142 ms), where cuFFT does not fit on the card. It is slower than cuFFT
 at 64³ (1.6×) and on 2D images (1.6–2.3×), and slower than the bare R2C
 transform everywhere.
 
-In a convolution (forward, multiply, back) cuFFT needs no conversion, and there
-it stays ahead: a 512³ convolution takes 22.9 ms through Hartley against
-20.0 ms through cuFFT R2C + C2R. Hartley's convolution needs a third of the
-memory (512 against 1 542 MiB), so only Hartley convolves 1024 × 1024 × 512 on
-an 8 GB card. On the GPU this is benchmark code for now: the library's
-convolution classes are CPU-only. In `double` the CPU backend is the faster
+In a convolution (forward, multiply, back) cuFFT needs no conversion. The
+library's convolutions on `Modes::GPUFactored` (`CircularConvolution` for any
+kernel, `EvenKernelConvolution`, `EvenKernelBank`) fuse the product into the x
+pass and take five passes over the volume instead of seven: a 512³ convolution
+takes 18.4 ms against 20.0 ms through cuFFT R2C + C2R (0.86–0.94 of cuFFT from
+128³ to 512³), with half its memory (512 against 1 028 MiB). At
+1024 × 1024 × 512 it is still 1.10 times slower. In `double` the CPU backend is the faster
 one, because a GeForce runs FP64 at 1/64 of FP32. The full tables, the method
 and the history
 are in **[docs/benchmarks.md](docs/benchmarks.md)**.

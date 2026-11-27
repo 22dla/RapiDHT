@@ -356,6 +356,42 @@ and a few MiB more for cuFFT (`extraMiB`).
   folded into the x pass) and 20–38 % in 2D, where the true transform is the
   slower one.
 
+### Convolution in five passes (R-6 step 1.3, 2026-11-27)
+
+The convolution of step 5.3 took seven passes over the volume: three of the
+transform, the product, three of the transform again. The one-dimensional
+transforms commute, and so does the Bracewell combination with each of them,
+so the x pass can hold both transforms and the product: z, y, then x with the
+product inside, then y, z. For any kernel the fused pass also takes the
+Bracewell combination on both sides of the pair product; the four mirror lines
+its block holds are every point that needs (`FactoredConvolveXKernel`,
+`docs/R6_PLAN.md`, section 1). The library's convolutions now run this way on
+`Modes::GPUFactored`: `CircularConvolution` (any kernel), `EvenKernelConvolution`
+and `EvenKernelBank`. Same machine, CUDA 13.2, f32, resident, median of 7
+(`…_r6_s13.json`, `R6_LARGE=1 bash scripts/r6_measure.sh s13`); the seven-pass
+rows are the step 5.3 code, timed in the same run.
+
+| | any kernel | seven passes | cuFFT | ratio | even kernel | seven passes | cuFFT, even | ratio |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| 128³ | 280 µs | 366 µs | 324 µs | **0.86** | 278 µs | 361 µs | 314 µs | **0.89** |
+| 256³ | 2.24 ms | 2.85 ms | 2.49 ms | **0.90** | 2.22 ms | 2.84 ms | 2.41 ms | **0.92** |
+| 512³ | 18.4 ms | 22.9 ms | 20.0 ms | **0.92** | 18.2 ms | 22.2 ms | 19.3 ms | **0.94** |
+| 1024 × 1024 × 512 | 91.3 ms | 117 ms | 83.3 ms | 1.10 | 89.0 ms | 103 ms | 80.8 ms | 1.10 |
+
+Memory beside the volume (`allocMiB`): the kernel's spectrum, 512 MiB at 512³,
+against 1 028 MiB for cuFFT (771 for an even kernel); 2 048 against 4 104 at
+1024 × 1024 × 512.
+
+- **Fusion pays 18–24 %** on every size, and the convolution is now faster
+  than cuFFT's from 128³ to 512³ — before it was 1.13–1.18 times slower.
+- **1024 × 1024 × 512 still loses** (1.10): the passes of length 1024 are slow
+  (x with Bracewell 21.4 ms, y 16.6, against z of length 512 at 12.1 in the
+  float trace of the same run), which is direction B of R-6. With CUDA 13.2
+  cuFFT's convolution fits this size on the 8 GB card; under 12.4 (step 5.3)
+  it did not.
+- The even kernel gains almost nothing over any kernel (1–3 %): the Bracewell
+  combination and the pair product cost little inside the pass.
+
 ### CUDA 13.2 against 12.4 (R-5 step 0.0a, 2026-11-25)
 
 Every R-4 figure above was taken with Ubuntu's CUDA 12.4 (nvcc 12.4.131,
