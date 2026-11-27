@@ -484,7 +484,11 @@ FactoredPath FactoredPathFor(size_t n, size_t lanes, int axis) // axis 0 = x, 1 
     // Four tiles a thread only where they were measured: y and z at 512 with
     // 32 lines (FactoredPreferredLanes gives them to z). Elsewhere at most
     // two, as before.
-    const size_t maxItems = (n == 512 && axis != 0) ? kFactoredMaxItems : 2;
+    // R-6 step 2.2: y at 1024 too -- 16 lines, four tiles (the width y takes
+    // from 512) instead of 8 lines and two: 16.46 -> 15.03 ms at 1024 x 1024
+    // x 512 (build-bench/r6logs/diag21.txt, minima of 15 calls). x at 1024
+    // with 16 lines and four tiles lost: 21.19 -> 29.18.
+    const size_t maxItems = ((n == 512 && axis != 0) || (n == 1024 && axis == 1)) ? kFactoredMaxItems : 2;
     const bool inPlace = items <= maxItems && (n >= 512 || (axis == 2 && n == 256));
     if (!inPlace) {
         return { 0, 0 };
@@ -577,7 +581,7 @@ void LaunchFusedLastAs(FactoredDeviceInfo& info, size_t batches, size_t sharedBy
             info, FactoredLastAxisBracewellKernel<T, kFactoredMaxQuads, kFold, kN, kLanes>, sharedBytes);
     } else {
         perSm = FactoredBlocksPerSm(info,
-            FactoredLastAxisBracewellKernelInPlace<T, kFactoredMaxQuads, kItems, kMinBlocks, kFold, kN, kLanes>,
+            FactoredLastAxisBracewellKernelInPlace<T, FactoredMaxQuadsFor(kItems), kItems, kMinBlocks, kFold, kN, kLanes>,
             sharedBytes);
     }
     const size_t resident = static_cast<size_t>(perSm) * static_cast<size_t>(info.sms);
@@ -592,7 +596,7 @@ void LaunchFusedLastAs(FactoredDeviceInfo& info, size_t batches, size_t sharedBy
         FactoredLastAxisBracewellKernel<T, kFactoredMaxQuads, kFold, kN, kLanes>
             <<<grid, kFactoredThreads, sharedBytes>>>(data, tables, Hi, Di, gy, gs, lanesI, batchesI, workStride);
     } else {
-        FactoredLastAxisBracewellKernelInPlace<T, kFactoredMaxQuads, kItems, kMinBlocks, kFold, kN, kLanes>
+        FactoredLastAxisBracewellKernelInPlace<T, FactoredMaxQuadsFor(kItems), kItems, kMinBlocks, kFold, kN, kLanes>
             <<<grid, kFactoredThreads, sharedBytes>>>(data, tables, Hi, Di, gy, gs, lanesI, batchesI, workStride);
     }
     RAPIDHT_CUDA_CHECK(cudaGetLastError());
@@ -611,7 +615,7 @@ void LaunchFusedLastToAs(FactoredDeviceInfo& info, size_t batches, size_t shared
             info, FactoredLastAxisBracewellKernelTo<T, TOut, kFactoredMaxQuads, kFold, kN, kLanes>, sharedBytes);
     } else {
         perSm = FactoredBlocksPerSm(info,
-            FactoredLastAxisBracewellKernelInPlaceTo<T, TOut, kFactoredMaxQuads, kItems, kMinBlocks, kFold, kN,
+            FactoredLastAxisBracewellKernelInPlaceTo<T, TOut, FactoredMaxQuadsFor(kItems), kItems, kMinBlocks, kFold, kN,
                 kLanes>,
             sharedBytes);
     }
@@ -627,7 +631,7 @@ void LaunchFusedLastToAs(FactoredDeviceInfo& info, size_t batches, size_t shared
         FactoredLastAxisBracewellKernelTo<T, TOut, kFactoredMaxQuads, kFold, kN, kLanes>
             <<<grid, kFactoredThreads, sharedBytes>>>(data, io, tables, Hi, Di, gy, gs, lanesI, batchesI, workStride);
     } else {
-        FactoredLastAxisBracewellKernelInPlaceTo<T, TOut, kFactoredMaxQuads, kItems, kMinBlocks, kFold, kN, kLanes>
+        FactoredLastAxisBracewellKernelInPlaceTo<T, TOut, FactoredMaxQuadsFor(kItems), kItems, kMinBlocks, kFold, kN, kLanes>
             <<<grid, kFactoredThreads, sharedBytes>>>(data, io, tables, Hi, Di, gy, gs, lanesI, batchesI, workStride);
     }
     RAPIDHT_CUDA_CHECK(cudaGetLastError());
@@ -654,6 +658,13 @@ void LaunchFusedLastToAs(FactoredDeviceInfo& info, size_t batches, size_t shared
  */
 constexpr bool FactoredSpecializes(bool fused, int items, int minBlocks, int n, int lanes)
 {
+    // R-6 step 2.2, length 1024 (build-bench/r6logs/diag21.txt, 1024 x 1024 x
+    // 512): the fused x pass, 8 lines two tiles, 21.2 -> 17.9 ms; y, 16 lines
+    // four tiles, 15.0 -> 14.5. The axis kernel with 8 lines two tiles
+    // specialized went the other way, 16.5 -> 30.4 -- not taken.
+    if (n == 1024) {
+        return fused ? (items == 2 && lanes == 8) : (items == 4 && lanes == 16);
+    }
     if (fused) {
         return (items == 0 && lanes == 16 && (n == 128 || n == 256))
             || (items == 1 && minBlocks == 2 && n == 512 && lanes == 8);
@@ -683,7 +694,9 @@ void FactoredDispatchSize(const FactoredAxisTables<T>& tables, size_t lanes, Lau
     };
     if constexpr (std::is_same_v<T, float>) {
         using std::integral_constant;
-        if (as(integral_constant<int, 128> {}, integral_constant<int, 16> {})
+        if (as(integral_constant<int, 1024> {}, integral_constant<int, 8> {})
+            || as(integral_constant<int, 1024> {}, integral_constant<int, 16> {})
+            || as(integral_constant<int, 128> {}, integral_constant<int, 16> {})
             || as(integral_constant<int, 256> {}, integral_constant<int, 16> {})
             || as(integral_constant<int, 512> {}, integral_constant<int, 8> {})
             || as(integral_constant<int, 512> {}, integral_constant<int, 16> {})
@@ -1283,7 +1296,7 @@ bool FactoredConvolveX(T* data, const T* spectrum, const FactoredAxisTables<T>& 
     const size_t batches = (groups + perBatch - 1) / perBatch;
     const size_t sharedBytes = PipelinedSharedBytes<T>(n, n1, n2, lanes, false);
     const int ws = static_cast<int>(FactoredWorkStride<T>(n2, lanes));
-    FactoredDispatchSize<T, true, 0, 0>(tables, lanes, [&](auto kN, auto kL) {
+    auto launch = [&](auto kN, auto kL) {
         constexpr int kNv = decltype(kN)::value;
         constexpr int kLv = decltype(kL)::value;
         if (pair) {
@@ -1293,7 +1306,16 @@ bool FactoredConvolveX(T* data, const T* spectrum, const FactoredAxisTables<T>& 
             LaunchConvolveXAs<T, false, kNv, kLv>(
                 info, batches, sharedBytes, data, spectrum, tables, H, D, groupsY, groups, lanes, ws);
         }
-    });
+    };
+    // R-6 step 2.2: specialized at 1024 x 8 lines, the convolution at 1024 x
+    // 1024 x 512 86.6 -> 83.6 ms (any kernel), 84.7 -> 82.9 (even).
+    if constexpr (std::is_same_v<T, float>) {
+        if (n == 1024 && lanes == 8 && n1 == 32) {
+            launch(std::integral_constant<int, 1024> {}, std::integral_constant<int, 8> {});
+            return true;
+        }
+    }
+    FactoredDispatchSize<T, true, 0, 0>(tables, lanes, launch);
     return true;
 }
 

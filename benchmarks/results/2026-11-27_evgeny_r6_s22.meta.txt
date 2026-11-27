@@ -1,0 +1,35 @@
+tag: s22
+date: 2026-11-27T19:30:09+04:00
+settings: (none)
+table: 128-512 + 1024x1024x512
+cuda: 13.2 (13.2.51)
+commit: 1a0f6b95e9dfd1f516509f978beb49706816709b
+uncommitted:
+   M src/kernels.cu
+   M tests/test_correctness.cpp
+  ?? benchmarks/results/2026-11-27_evgeny_r6_s02.json
+  ?? benchmarks/results/2026-11-27_evgeny_r6_s02.meta.txt
+  ?? benchmarks/results/2026-11-27_evgeny_r6_s02_trace.txt
+  ?? benchmarks/results/2026-11-27_evgeny_r6_s22.meta.txt
+sources:
+  89eb1abfe3dd3ada8ee8494c0dedcf45f96442b3cc7eb087ff1e1681f241ffe1  src/internal/factored_kernels.cuh
+  55ccb8d8357cb49d070519e5e28ac157f8194169c66aa5966bc39db7a28db041  src/kernels.cu
+  e635f486e0f37fc4e0e0ec1925a41699b0f0b8701f86f41e481a55ce948b15f3  src/backend_cuda.cpp
+  e55196a6152af21ba837bcbe6dc3c92925c1eabe3c571b3541b6841f97ac3dea  src/internal/kernels.h
+  7bb6af3f17333dc78688afdf81a38804567f0e4402f19f6add1c482ff8f0aef2  benchmarks/bench_transform.cpp
+  9bd980a1fcf25f7d0d1e277684fb5bf04b8f35652b4d20f2235650a403d00b2a  benchmarks/cufft_baseline.h
+  9c7ebf15d28e241d327451c0a9ea831e7d8bce7debb2194e951426e0e46c3441  benchmarks/cufft_baseline.cu
+  8b76c86b7fd6ffedf3df94a3ec7205a3c49d91cb5be7c3eb160aa7c993540c43  benchmarks/cufft_common.cuh
+  ccb27ab79a4f706dd91354e2c4767600f947060f0f958c6f5ccd8aa1fa1eed59  benchmarks/cufft_int_callback.cu
+  40a383524503938aa8cd85a98240255e1e94bf2dd8aebd290f6b67e0d6c266dd  benchmarks/cufft_int_lto_callback.cu
+  e1954d2c9813b16e137f70aa2b3ceafa30c4618a50734551326c5a1944ef878a  benchmarks/profile_gpu3d.cpp
+  27b53ec714cb61745db1761283cf837ce7819f2769621ba618967217466990a2  benchmarks/convolution_gpu.h
+  53b0569ea79bc144eb374a54791bd63c631efcd1a67df7fee697fe933740efa3  benchmarks/convolution_gpu.cu
+  fec641f2b479bdee080ddc69d9ab62d4cd5fbfb4c61d806c81728b630e268bfb  src/convolution.cpp
+  dd9d08a755427d1bbd04f4b0e670ab9ca1ffb4c68c035684c262d4b21ea68333  include/rapidht/convolution.h
+binaries:
+  -rwxrwxr-x 1 evgeny evgeny 7479496 2026-11-27 19:28 build-bench/benchmarks/bench_transform
+  -rwxrwxr-x 1 evgeny evgeny 6141208 2026-11-27 19:28 build-bench/benchmarks/profile_gpu3d
+gpu:
+  NVIDIA GeForce RTX 3060 Ti, 595.99.02, 35, 10.82 W, 15 MiB
+other processes on the gpu (they add noise; close what you can):

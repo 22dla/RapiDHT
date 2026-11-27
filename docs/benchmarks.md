@@ -392,6 +392,23 @@ against 1 028 MiB for cuFFT (771 for an even kernel); 2 048 against 4 104 at
 - The even kernel gains almost nothing over any kernel (1–3 %): the Bracewell
   combination and the pair product cost little inside the pass.
 
+### Passes of length 1024 (R-6 step 2.3, 2026-11-27)
+
+y of length 1024 now takes 16 lines and four tiles a thread, and the kernels
+of length 1024 are specialized at compile time (`…_r6_s22.json` against
+`…_r6_s13.json`, 1024 × 1024 × 512, f32 unless said; 128³–512³ within noise):
+
+| | before | after | against |
+| --- | ---: | ---: | ---: |
+| true transform | 50.2 ms | 44.8 ms | — (cuFFT with conversion does not fit) |
+| separable | 44.4 ms | 42.2 ms | 1.24 of R2C |
+| uint16 → spectrum | 51.7 ms | 46.2 ms | 1.11 of the LTO callback |
+| convolution, any kernel | 91.3 ms | 83.8 ms | 1.01 of cuFFT |
+| convolution, even kernel | 89.0 ms | 83.0 ms | 1.03 of cuFFT |
+
+Per pass (trace, unlocked clock): z 12.0 ms, y 14.6 (was 16.6), x with
+Bracewell 18.0 (was 21.4); a copy of the volume is 10.4.
+
 ### CUDA 13.2 against 12.4 (R-5 step 0.0a, 2026-11-25)
 
 Every R-4 figure above was taken with Ubuntu's CUDA 12.4 (nvcc 12.4.131,

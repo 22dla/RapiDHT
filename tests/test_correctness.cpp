@@ -215,6 +215,7 @@ TEST(Correctness, FactoredFloatAgreesWithCpuOnLongAxes_GPU)
         { 64, 512, 32 },
         { 32, 64, 512 },
         { 1024, 32, 16 },
+        { 32, 1024, 16 },
         { 16, 32, 1024 },
         { 2048, 16, 16 },
         { 256, 128, 0 },
