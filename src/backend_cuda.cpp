@@ -431,6 +431,99 @@ void HartleyTransform<T>::FactoredPasses(
     trace.Print();
 }
 
+/*
+ * R-6 step 1.2: circular convolution on the device. z and y passes of the
+ * separable transform, the fused x pass (FactoredConvolveX: transform,
+ * product, transform), y and z again -- five passes where forward, product
+ * and inverse took seven. The axes are named by memory layout, as in
+ * FactoredPasses (Direction::Y is the fastest axis there).
+ */
+template <typename T>
+void HartleyTransform<T>::FactoredConvolvePasses(
+    T* data, const T* spectrum, bool pair, const T* prepared, bool prepareOnly)
+{
+    PROFILE_FUNCTION();
+    KernelTrace trace;
+    const size_t W = Width();
+    const size_t H = (Height() == 0 ? 1 : Height());
+    const size_t D = (Depth() == 0 ? 1 : Depth());
+
+    struct Geometry {
+        Direction axis;
+        size_t axisStride, laneStride, laneLength, otherStride, otherLength;
+    };
+    const Geometry zPass { Direction::Z, W * H, 1, W, W, H };
+    const Geometry yPass { Direction::X, W, 1, W, W * H, D };
+    const Geometry xPass { Direction::Y, 1, W, H, W * H, D };
+
+    auto present = [&](Direction axis) { return _impl->factoredSplit[static_cast<size_t>(axis)].n > 1; };
+    auto tablesOf = [&](Direction axis) {
+        const size_t a = static_cast<size_t>(axis);
+        const internal::FactoredSplit& split = _impl->factoredSplit[a];
+        const size_t n1 = split.n1;
+        const size_t n2 = split.n2;
+        const size_t pairs = (n1 / 2 == 0 ? 1 : n1 / 2);
+        FactoredAxisTables<T> tables;
+        tables.c1 = _impl->factoredTables[a].Data();
+        tables.c2 = tables.c1 + n1 * n1;
+        tables.cHalf = tables.c2 + n2 * n2;
+        tables.twC = tables.cHalf + n2 * n2;
+        tables.twD = tables.twC + pairs * n2;
+        tables.n = static_cast<int>(split.n);
+        tables.n1 = static_cast<int>(n1);
+        tables.n2 = static_cast<int>(n2);
+        return tables;
+    };
+    auto run = [&](const Geometry& g, const char* name) {
+        if (present(g.axis)) {
+            trace.Mark(name);
+            FactoredAxis(data, tablesOf(g.axis), g.axisStride, g.laneStride, g.laneLength, g.otherStride,
+                g.otherLength);
+        }
+    };
+
+    if (prepared != nullptr) {
+        RAPIDHT_CUDA_CHECK(cudaMemcpy(data, prepared, W * H * D * sizeof(T), cudaMemcpyDeviceToDevice));
+    } else {
+        run(zPass, "axis-z(depth)");
+        run(yPass, "axis-y(height)");
+    }
+    if (prepareOnly) {
+        trace.Mark("end");
+        RAPIDHT_CUDA_CHECK(cudaDeviceSynchronize());
+        trace.Print();
+        return;
+    }
+
+    trace.Mark("convolve-x");
+    if (present(xPass.axis) && FactoredConvolveX(data, spectrum, tablesOf(xPass.axis), H, D, pair)) {
+        run(yPass, "axis-y(height)");
+        run(zPass, "axis-z(depth)");
+        trace.Mark("end");
+        RAPIDHT_CUDA_CHECK(cudaDeviceSynchronize());
+        trace.Print();
+        return;
+    }
+
+    // No fused pass: finish the forward transform (x, and B for any kernel),
+    // the product over the whole spectrum, the transform again.
+    run(xPass, "axis-x(width)");
+    if (pair) {
+        trace.Mark("bracewell");
+        if (Depth() > 0) {
+            BracewellInPlace3D(data, static_cast<int>(W), static_cast<int>(H), static_cast<int>(D));
+        } else if (Height() > 0) {
+            BracewellInPlace2D(data, static_cast<int>(W), static_cast<int>(H));
+        }
+    }
+    trace.Mark("product");
+    ConvolutionProduct(data, spectrum, W, H, D, pair);
+    trace.Mark("end");
+    RAPIDHT_CUDA_CHECK(cudaDeviceSynchronize());
+    trace.Print();
+    FactoredOnDevice(data, !pair);
+}
+
 template <typename T>
 void HartleyTransform<T>::FactoredOnHost(T* hostData, bool separable)
 {
@@ -452,6 +545,7 @@ template void HartleyTransform<double>::DHT3DCuda(double*, bool);
 template void HartleyTransform<double>::DHT3DOnDevice(double*, double*, bool);
 template void HartleyTransform<double>::FactoredOnDevice(double*, bool);
 template void HartleyTransform<double>::FactoredOnHost(double*, bool);
+template void HartleyTransform<double>::FactoredConvolvePasses(double*, const double*, bool, const double*, bool);
 template void HartleyTransform<float>::DHT1DCuda(float*);
 template void HartleyTransform<float>::DHT1DOnDevice(float*, float*);
 template void HartleyTransform<float>::DHT2DCuda(float*, bool);
@@ -460,6 +554,7 @@ template void HartleyTransform<float>::DHT3DCuda(float*, bool);
 template void HartleyTransform<float>::DHT3DOnDevice(float*, float*, bool);
 template void HartleyTransform<float>::FactoredOnDevice(float*, bool);
 template void HartleyTransform<float>::FactoredOnHost(float*, bool);
+template void HartleyTransform<float>::FactoredConvolvePasses(float*, const float*, bool, const float*, bool);
 /*
  * R-5 step 4.2: the inverse of an integer volume. The offset goes into the
  * device slot first -- a value, or rint(H(0) / N), the rounded mean of the

@@ -100,6 +100,59 @@ inline std::vector<double> ReferenceDht(const std::vector<double>& in, const Dim
     return out;
 }
 
+/// Direct O(N^2) circular convolution, (f * g)(p) = sum_q f(q) g(p - q), every
+/// index taken modulo its extent: the reference of the convolutions (R-6).
+inline std::vector<double> ReferenceCircularConvolution(
+    const std::vector<double>& f, const std::vector<double>& g, const Dims& dims)
+{
+    std::vector<double> out(f.size(), 0.0);
+    for (size_t c = 0; c < dims.depth; ++c) {
+        for (size_t b = 0; b < dims.height; ++b) {
+            for (size_t a = 0; a < dims.width; ++a) {
+                double sum = 0.0;
+                for (size_t k = 0; k < dims.depth; ++k) {
+                    const size_t kk = (c + dims.depth - k) % dims.depth;
+                    for (size_t j = 0; j < dims.height; ++j) {
+                        const size_t jj = (b + dims.height - j) % dims.height;
+                        for (size_t i = 0; i < dims.width; ++i) {
+                            const size_t ii = (a + dims.width - i) % dims.width;
+                            sum += f[dims.Index(i, j, k)] * g[dims.Index(ii, jj, kk)];
+                        }
+                    }
+                }
+                out[dims.Index(a, b, c)] = sum;
+            }
+        }
+    }
+    return out;
+}
+
+/// A convolution kernel for the tests: off-centre and lopsided (`even` false),
+/// so that a product which assumed symmetry would fail, or even along every
+/// axis (a product of 1D bumps in the wrapped layout, centre at index 0).
+inline std::vector<double> MakeConvolutionKernel(const Dims& dims, bool even)
+{
+    std::vector<double> g(dims.Total());
+    auto bump = [](size_t i, size_t n) {
+        const double d = static_cast<double>(std::min(i, n - i));
+        return std::exp(-0.3 * d * d);
+    };
+    for (size_t k = 0; k < dims.depth; ++k) {
+        for (size_t j = 0; j < dims.height; ++j) {
+            for (size_t i = 0; i < dims.width; ++i) {
+                double v = bump(i, dims.width) * bump(j, dims.height) * bump(k, dims.depth);
+                if (!even) {
+                    v = bump((i + dims.width - 1) % dims.width, dims.width) * bump(j, dims.height)
+                          * bump((k + 1) % dims.depth, dims.depth)
+                      + 0.25 * std::sin(0.9 * static_cast<double>(i + 3 * j + 7 * k));
+                }
+                g[dims.Index(i, j, k)] = v;
+            }
+        }
+    }
+    return g;
+}
+
 /// Deterministic, reproducible test signal. A fixed formula is used instead of
 /// a random generator so that a failure can always be replayed.
 inline std::vector<double> MakeSignal(size_t count)

@@ -1232,6 +1232,130 @@ bool FactoredLastAxisBracewellImpl(
 
 } // namespace
 
+namespace {
+
+/*
+ * R-6 step 1.1: the x pass of a convolution, FactoredConvolveXKernel. The batch
+ * width of the fused last pass, through the work buffer (kItems = 0) and with
+ * the twiddle inside step 1, as that pass takes it there.
+ */
+template <typename T, bool kPair, int kN, int kLanes>
+void LaunchConvolveXAs(FactoredDeviceInfo& info, size_t batches, size_t sharedBytes, T* data, const T* spectrum,
+    const FactoredAxisTables<T>& tables, size_t H, size_t D, size_t groupsY, size_t groups, size_t lanes,
+    int workStride)
+{
+    constexpr bool kFold = FactoredFoldsTwiddle(true, 0);
+    const int perSm = FactoredBlocksPerSm(
+        info, FactoredConvolveXKernel<T, kFactoredMaxQuads, kFold, kPair, kN, kLanes>, sharedBytes);
+    const size_t resident = static_cast<size_t>(perSm) * static_cast<size_t>(info.sms);
+    const unsigned int grid = static_cast<unsigned int>(batches < resident ? batches : resident);
+    FactoredConvolveXKernel<T, kFactoredMaxQuads, kFold, kPair, kN, kLanes><<<grid, kFactoredThreads, sharedBytes>>>(
+        data, spectrum, tables, static_cast<int>(H), static_cast<int>(D), static_cast<int>(groupsY),
+        static_cast<int>(groups), static_cast<int>(lanes), static_cast<int>(batches), workStride);
+    RAPIDHT_CUDA_CHECK(cudaGetLastError());
+}
+
+} // namespace
+
+template <typename T>
+bool FactoredConvolveX(T* data, const T* spectrum, const FactoredAxisTables<T>& tables, size_t H, size_t D, bool pair)
+{
+    const size_t n = static_cast<size_t>(tables.n);
+    const size_t n1 = static_cast<size_t>(tables.n1);
+    const size_t n2 = static_cast<size_t>(tables.n2);
+    if (sizeof(T) != 4 || n1 < 4 || n2 < 4) {
+        return false; // as FactoredLastAxisBracewell
+    }
+    int device = 0;
+    RAPIDHT_CUDA_CHECK(cudaGetDevice(&device));
+    FactoredDeviceInfo& info = FactoredInfo<T>(device);
+    const size_t groupsY = H / 2 + 1;
+    const size_t groupsZ = D / 2 + 1;
+    const size_t groups = groupsY * groupsZ;
+    size_t lanes = n >= 512 ? 8 : FactoredPreferredLanes(n, 1, H);
+    while (lanes > 4 && (lanes / 4 > groups || !PipelinedFits<T>(n, n1, n2, lanes, info.optIn))) {
+        lanes /= 2;
+    }
+    if (!PipelinedFits<T>(n, n1, n2, lanes, info.optIn)) {
+        return false;
+    }
+    const size_t perBatch = lanes / 4;
+    const size_t batches = (groups + perBatch - 1) / perBatch;
+    const size_t sharedBytes = PipelinedSharedBytes<T>(n, n1, n2, lanes, false);
+    const int ws = static_cast<int>(FactoredWorkStride<T>(n2, lanes));
+    FactoredDispatchSize<T, true, 0, 0>(tables, lanes, [&](auto kN, auto kL) {
+        constexpr int kNv = decltype(kN)::value;
+        constexpr int kLv = decltype(kL)::value;
+        if (pair) {
+            LaunchConvolveXAs<T, true, kNv, kLv>(
+                info, batches, sharedBytes, data, spectrum, tables, H, D, groupsY, groups, lanes, ws);
+        } else {
+            LaunchConvolveXAs<T, false, kNv, kLv>(
+                info, batches, sharedBytes, data, spectrum, tables, H, D, groupsY, groups, lanes, ws);
+        }
+    });
+    return true;
+}
+
+namespace {
+
+/*
+ * R-6: the product of the convolution theorem on a whole spectrum, where the
+ * fused pass does not apply (double, short x). Any kernel: Z(k) = F(k) E(k) +
+ * F(-k) O(k), the thread of the lower index of a pair (k, -k) writes both;
+ * even kernel: Z = F . G.
+ */
+template <typename T>
+__global__ void ConvolutionPairProductKernel(T* data, const T* spectrum, int W, int H, int D)
+{
+    const int x = blockIdx.x * blockDim.x + threadIdx.x;
+    const int y = blockIdx.y * blockDim.y + threadIdx.y;
+    const int z = blockIdx.z * blockDim.z + threadIdx.z;
+    if (x >= W || y >= H || z >= D) {
+        return;
+    }
+    const size_t i = x + static_cast<size_t>(W) * (y + static_cast<size_t>(H) * z);
+    const size_t m = (x == 0 ? 0 : W - x) + static_cast<size_t>(W) * ((y == 0 ? 0 : H - y) + static_cast<size_t>(H) * (z == 0 ? 0 : D - z));
+    if (i > m) {
+        return;
+    }
+    const T fk = data[i];
+    const T fm = data[m];
+    const T even = T(0.5) * (spectrum[i] + spectrum[m]);
+    const T odd = T(0.5) * (spectrum[i] - spectrum[m]);
+    data[i] = fk * even + fm * odd;
+    if (m != i) {
+        data[m] = fm * even - fk * odd;
+    }
+}
+
+template <typename T>
+__global__ void ConvolutionProductKernel(T* data, const T* spectrum, size_t count)
+{
+    const size_t stride = static_cast<size_t>(gridDim.x) * blockDim.x;
+    for (size_t i = static_cast<size_t>(blockIdx.x) * blockDim.x + threadIdx.x; i < count; i += stride) {
+        data[i] *= spectrum[i];
+    }
+}
+
+} // namespace
+
+template <typename T>
+void ConvolutionProduct(T* data, const T* spectrum, size_t W, size_t H, size_t D, bool pair)
+{
+    if (pair) {
+        const dim3 block(32, 4, 2);
+        const dim3 grid(static_cast<unsigned>((W + block.x - 1) / block.x), static_cast<unsigned>((H + block.y - 1) / block.y),
+            static_cast<unsigned>((D + block.z - 1) / block.z));
+        ConvolutionPairProductKernel<T><<<grid, block>>>(data, spectrum, static_cast<int>(W), static_cast<int>(H), static_cast<int>(D));
+    } else {
+        const size_t count = W * H * D;
+        const size_t blocks = (count + 255) / 256 < 65535 ? (count + 255) / 256 : 65535;
+        ConvolutionProductKernel<T><<<static_cast<unsigned>(blocks), 256>>>(data, spectrum, count);
+    }
+    RAPIDHT_CUDA_CHECK(cudaGetLastError());
+}
+
 template <typename T>
 void BracewellInPlace2D(T* data, int W, int H)
 {
@@ -1291,6 +1415,10 @@ template void SubtractOffsetFromFirst<double>(double*, const double*, double);
 template void MeanFromFirst<double>(const double*, double, double*);
 template bool FactoredLastAxisBracewell<float>(float*, const FactoredAxisTables<float>&, size_t, size_t);
 template bool FactoredLastAxisBracewell<double>(double*, const FactoredAxisTables<double>&, size_t, size_t);
+template bool FactoredConvolveX<float>(float*, const float*, const FactoredAxisTables<float>&, size_t, size_t, bool);
+template bool FactoredConvolveX<double>(double*, const double*, const FactoredAxisTables<double>&, size_t, size_t, bool);
+template void ConvolutionProduct<float>(float*, const float*, size_t, size_t, size_t, bool);
+template void ConvolutionProduct<double>(double*, const double*, size_t, size_t, size_t, bool);
 template void BracewellInPlace2D<float>(float*, int, int);
 template void BracewellInPlace2D<double>(double*, int, int);
 template void BracewellInPlace3D<float>(float*, int, int, int);

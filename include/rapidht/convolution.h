@@ -1,17 +1,20 @@
 /*
  * Project: RapiDHT
  * File: include/rapidht/convolution.h
- * Brief: Circular convolution with kernels that are even along every axis,
- *        through the separable Hartley transform.
+ * Brief: Circular convolution through the Hartley transform: kernels even
+ *        along every axis (separable transform, plain product) and any kernel
+ *        (true transform, pair product), on the CPU and on the device.
  * Author: Volkov Evgeny Aleksandrovich, volkov22dla@yandex.ru
  */
 
 #ifndef RAPIDHT_CONVOLUTION_H
 #define RAPIDHT_CONVOLUTION_H
 
+#include <rapidht/device_volume.h>
 #include <rapidht/transform.h>
 
 #include <cstddef>
+#include <memory>
 #include <vector>
 
 namespace RapiDHT {
@@ -45,6 +48,13 @@ bool IsEvenPerAxis(const T* kernel, size_t width, size_t height, size_t depth,
  * kernel in the padded extent) so that wrap-around cannot reach the region of
  * interest.
  *
+ * On Modes::GPUFactored the kernel's spectrum lives on the device, and one
+ * application is five passes over the volume: z and y of the transform, one
+ * fused pass along x (transform, product, transform), then y and z again
+ * (R-6). Apply(DeviceVolume&) works on a volume that is already there; the
+ * host-pointer Apply uploads, convolves and downloads, through a device copy
+ * of the volume allocated on first use.
+ *
  * Usage:
  * @code
  *   EvenKernelConvolution<float> conv(256, 256, 256, Modes::CPU);
@@ -59,7 +69,7 @@ class EvenKernelConvolution {
 public:
     /**
      * @param width, height, depth Extent, as for HartleyTransform.
-     * @param mode Backend. Only Modes::CPU is supported for now.
+     * @param mode Backend: Modes::CPU or Modes::GPUFactored.
      * @throws std::invalid_argument for any other mode.
      */
     EvenKernelConvolution(size_t width, size_t height, size_t depth, Modes mode = Modes::CPU);
@@ -76,6 +86,13 @@ public:
     /// @brief data <- data * kernel (circular), in place. Requires SetKernel.
     void Apply(T* data);
 
+    /**
+     * @brief The same on a volume on the device, in place.
+     * @throws std::invalid_argument Unless the mode is Modes::GPUFactored and
+     *         the volume's size matches.
+     */
+    void Apply(DeviceVolume<T>& volume);
+
     size_t Size() const noexcept { return _size; }
 
 private:
@@ -83,8 +100,11 @@ private:
     size_t _height;
     size_t _depth;
     size_t _size;
+    Modes _mode;
     HartleyTransform<T> _transform;
-    std::vector<T> _spectrum; ///< S(g) / N, so Apply needs no extra scaling.
+    std::vector<T> _spectrum; ///< S(g) / N, so Apply needs no extra scaling (CPU).
+    std::unique_ptr<DeviceVolume<T>> _deviceSpectrum; ///< the same on the device (GPUFactored)
+    std::unique_ptr<DeviceVolume<T>> _staging; ///< the host-pointer Apply's device copy
 };
 
 /**
@@ -92,7 +112,9 @@ private:
  *
  * A field is transformed once and multiplied by every kernel's spectrum, so K
  * outputs cost 1 + K separable transforms instead of the 2K that K separate
- * EvenKernelConvolution calls would take.
+ * EvenKernelConvolution calls would take. On Modes::GPUFactored the field
+ * goes through the z and y passes once, and each kernel costs a copy of that
+ * and three passes (the fused x pass, y and z).
  *
  * Usage:
  * @code
@@ -124,7 +146,7 @@ public:
      */
     void Apply(const T* field, T* out);
 
-    size_t KernelCount() const noexcept { return _spectra.size(); }
+    size_t KernelCount() const noexcept { return _mode == Modes::CPU ? _spectra.size() : _deviceSpectra.size(); }
     size_t Size() const noexcept { return _size; }
 
 private:
@@ -132,9 +154,68 @@ private:
     size_t _height;
     size_t _depth;
     size_t _size;
+    Modes _mode;
     HartleyTransform<T> _transform;
-    std::vector<std::vector<T>> _spectra; ///< S(g_k) / N each.
-    std::vector<T> _scratch; ///< S(field).
+    std::vector<std::vector<T>> _spectra; ///< S(g_k) / N each (CPU).
+    std::vector<T> _scratch; ///< S(field) (CPU).
+    std::vector<std::unique_ptr<DeviceVolume<T>>> _deviceSpectra; ///< S(g_k) / N each (GPUFactored)
+    std::unique_ptr<DeviceVolume<T>> _field; ///< the field after the z and y passes (GPUFactored)
+    std::unique_ptr<DeviceVolume<T>> _work; ///< one output at a time (GPUFactored)
+};
+
+/**
+ * @brief Circular convolution with any kernel, through the true transform.
+ *
+ * The Hartley convolution theorem for a kernel without symmetry:
+ *
+ *     H(f * g)(k) = F(k) E(k) + F(-k) O(k),   E, O = (G(k) +- G(-k)) / 2,
+ *
+ * F = H(f), G = H(g), -k negated along every axis. So one application is the
+ * true transform, this product of mirror pairs, and the true transform again
+ * (with the 1/N folded into the kernel's spectrum, computed once in SetKernel).
+ * For a kernel even along every axis EvenKernelConvolution gives the same
+ * result for a little less work.
+ *
+ * On Modes::GPUFactored the whole product sits inside one fused pass along x,
+ * with the Bracewell combination on both sides of it: five passes over the
+ * volume (R-6), as for an even kernel.
+ *
+ * Usage:
+ * @code
+ *   CircularConvolution<float> conv(512, 512, 512, Modes::GPUFactored);
+ *   conv.SetKernel(psf.data());        // wrapped layout, centre at index 0
+ *   conv.Apply(deviceVolume);          // volume <- volume * psf, on the device
+ * @endcode
+ *
+ * @tparam T float or double.
+ */
+template <typename T>
+class CircularConvolution {
+public:
+    /// @copydoc EvenKernelConvolution::EvenKernelConvolution
+    CircularConvolution(size_t width, size_t height, size_t depth, Modes mode = Modes::CPU);
+
+    /// @brief Sets the kernel (Size() elements, wrapped layout) and precomputes its spectrum.
+    void SetKernel(const T* kernel);
+
+    /// @brief data <- data * kernel (circular), in place. Requires SetKernel.
+    void Apply(T* data);
+
+    /// @copydoc EvenKernelConvolution::Apply(DeviceVolume<T>&)
+    void Apply(DeviceVolume<T>& volume);
+
+    size_t Size() const noexcept { return _size; }
+
+private:
+    size_t _width;
+    size_t _height;
+    size_t _depth;
+    size_t _size;
+    Modes _mode;
+    HartleyTransform<T> _transform;
+    std::vector<T> _spectrum; ///< H(g) / N (CPU).
+    std::unique_ptr<DeviceVolume<T>> _deviceSpectrum; ///< the same on the device (GPUFactored)
+    std::unique_ptr<DeviceVolume<T>> _staging; ///< the host-pointer Apply's device copy
 };
 
 } // namespace RapiDHT

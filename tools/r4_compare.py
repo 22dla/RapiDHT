@@ -72,8 +72,10 @@ CUFFT_INT = ("cuFFTInt", "cuFFTIntCb", "cuFFTIntLto")
 OPPONENTS: dict[str, tuple[tuple[str, ...], ...]] = {
     "FactoredResident": (("cuFFT",),),
     "FactoredResidentSeparable": (("cuFFT_R2C",),),
-    "ConvHartley": (("ConvCufft",),),
-    "ConvHartleyEven": (("ConvCufftEven",),),
+    "ConvHartley": (("ConvCufft",), ("ConvHartleySeven",)),
+    "ConvHartleyEven": (("ConvCufftEven",), ("ConvHartleyEvenSeven",)),
+    "ConvHartleySeven": (("ConvCufft",),),
+    "ConvHartleyEvenSeven": (("ConvCufftEven",),),
     "IntConvertFactored": (CUFFT_INT,),
     "IntFactored": (CUFFT_INT, ("IntConvertFactored",)),
     # Step 3.2: the integer path with each offset policy of the library.

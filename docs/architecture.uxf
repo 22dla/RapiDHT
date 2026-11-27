@@ -150,18 +150,23 @@ bg=#FFFFFF</panel_attributes>
       <x>900</x>
       <y>290</y>
       <w>410</w>
-      <h>230</h>
+      <h>330</h>
     </coordinates>
-    <panel_attributes>*EvenKernelConvolution&lt;T&gt;*
-«convolution.h — kernel even along every axis»
+    <panel_attributes>*EvenKernelConvolution&lt;T&gt;*, *EvenKernelBank&lt;T&gt;*, *CircularConvolution&lt;T&gt;*
+«convolution.h — mode CPU or GPUFactored (R-6)»
 --
--width, height, depth, size
+-width, height, depth, size, mode
 -transform: HartleyTransform&lt;T&gt;
--spectrum: vector&lt;T&gt;  — S(g) × 1÷N
+-spectrum: vector&lt;T&gt;  — S(g) or H(g) × 1÷N (CPU)
+-deviceSpectrum: DeviceVolume&lt;T&gt;  — the same (GPUFactored)
 --
-+EvenKernelConvolution(w, h, d, mode = CPU)
-+SetKernel(kernel, tol = 1e-6)  — checks evenness
-+Apply(data: T*)  — f ← S( S(f) · S(g) ÷ N )
++SetKernel(kernel)  — Even: checks evenness
++Apply(data: T*), Apply(DeviceVolume&lt;T&gt;&amp;)
+  Even: f ← S( S(f) · S(g) ÷ N )
+  Circular (any kernel): f ← H( F·E + F(−k)·O ), E, O of H(g) ÷ N
+  GPUFactored: z, y, fused x (transform, product,
+  transform), y, z — HartleyTransform::FactoredConvolve
+  via internal::DeviceAccess; Bank shares z, y
 --
 «free function»
 +IsEvenPerAxis(kernel, w, h, d, tol): bool
@@ -398,6 +403,8 @@ R-4 (device code in factored_kernels.cuh):
     R-5: ...From read uint8/16, WideFrom — z 512 u16
   FactoredLastAxisBracewellKernel[InPlace] —
     last x pass with Bracewell folded in
+  FactoredConvolveXKernel — R-6: x pass of a convolution
+    (transform, [B,] product, transform, [B])
   BracewellInPlace2D/3D
 bg=#FFFFFF</panel_attributes>
     <additional_attributes/>
@@ -412,7 +419,7 @@ bg=#FFFFFF</panel_attributes>
     </coordinates>
     <panel_attributes>«sources» other
 --
-convolution.cpp — EvenKernelConvolution
+convolution.cpp — EvenKernelConvolution, EvenKernelBank, CircularConvolution
 device_volume.cpp — DeviceVolume, IsGpuAvailable
 utilities.cpp — ParseDims
 bg=#FFFFFF</panel_attributes>

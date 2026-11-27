@@ -431,6 +431,29 @@ private:
     template <typename U>
     void InverseToIntegersOnHost(const T* in, U* out, const IntegerOffset& offset, size_t* saturated);
 
+    /**
+     * R-6 step 1.2: circular convolution on the device, in place on `data`,
+     * with `spectrum` = H(g) / N (same extent). `pair`: any kernel; otherwise
+     * g is even along every axis. The passes z, y, then the fused x pass
+     * (transform, product, transform), then y, z -- five over the volume.
+     * With `prepared`, `data` is first set to a copy of *prepared, which
+     * FactoredConvolvePrepare has already taken through z and y (a bank of
+     * kernels shares those two passes). Where the fused pass does not apply
+     * (double, short x) the forward transform is completed, the product
+     * taken over the whole spectrum, and the transform run again.
+     * Modes::GPUFactored only; reached through internal::DeviceAccess.
+     */
+    void FactoredConvolve(DeviceVolume<T>& data, const DeviceVolume<T>& spectrum, bool pair,
+        const DeviceVolume<T>* prepared);
+
+    /// R-6 step 1.2: the z and y passes of FactoredConvolve, in place.
+    void FactoredConvolvePrepare(DeviceVolume<T>& data);
+
+    /// The passes of FactoredConvolve on raw device pointers (`prepared` may
+    /// be null); with `prepareOnly`, only the z and y passes. Defined in
+    /// backend_cuda.cpp.
+    void FactoredConvolvePasses(T* data, const T* spectrum, bool pair, const T* prepared, bool prepareOnly);
+
     friend struct internal::DeviceAccess;
 
     /**

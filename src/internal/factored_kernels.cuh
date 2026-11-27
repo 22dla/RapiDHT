@@ -1514,6 +1514,184 @@ __global__ void __launch_bounds__(256, kMinBlocks) FactoredLastAxisBracewellKern
         data, t, H, D, groupsY, groups, lanes, batches, workStride, io);
 }
 
+/*
+ * R-6 step 1.1: the x pass of a convolution -- transform, product with the
+ * kernel's spectrum, transform again -- in one pass over the volume.
+ *
+ * Call it after the z and y passes of the separable transform and follow it
+ * with the y and z passes again: five passes in all, where forward, product
+ * and inverse took seven. With S = Sz Sy Sx the separable transform and B the
+ * Bracewell combination (the true transform is H = B S):
+ *
+ *   kPair == false, a kernel even along every axis: f * g = S(S f . S g) / N.
+ *       The pass is Sx, product, Sx.
+ *   kPair == true, any kernel: H(f * g)(k) = F(k) E(k) + F(-k) O(k), F = H f,
+ *       E and O the even and odd parts of H g; f * g = H(Z) / N = B S(Z) / N.
+ *       B commutes with every one-dimensional transform (it is a sum of
+ *       reflections, and the DHT of a reflected line is the reflected DHT), so
+ *       the pass is Sx, B, pair product, Sx, B.
+ *
+ * `spectrum` is H(g) / N (for an even kernel that is S(g) / N as well), so the
+ * 1/N of the round trip costs nothing. The block holds the four mirror lines
+ * (y, z), (-y, z), (y, -z), (-y, -z) of the fused last pass, which are every
+ * point B and the pair (k, -k) need: -k of line m at i is line m^3 at n - i.
+ *
+ * Built on FusedLastBody's path through a work buffer (kItems = 0): after
+ * the first transform the recombined rows sit in `work`, so the products can
+ * go straight back into the tile, in the layout PipelineFill gives it, and the
+ * second transform runs on them as on freshly loaded lines.
+ */
+template <typename T, int kMaxQuads, bool kFold, bool kPair, int kN = 0, int kLanes = 0>
+__global__ void FactoredConvolveXKernel(T* data, const T* spectrum, FactoredAxisTables<T> t, int H, int D,
+    int groupsY, int groups, int lanes, int batches, int workStride)
+{
+    extern __shared__ __align__(16) unsigned char sharedPipe[];
+    FactoredSpecialize<T, kN, kLanes>(t, lanes, workStride);
+    const int n = t.n;
+    const int n1 = t.n1;
+    const int n2 = t.n2;
+    T* tile = reinterpret_cast<T*>(sharedPipe);
+    T* work = tile + n * lanes;
+    T* c1s = work + n1 * workStride;
+    T* c2s = c1s + n1 * n1;
+    T* chT = c2s + n2 * n2;
+
+    for (int i = threadIdx.x; i < n1 * n1; i += blockDim.x) {
+        c1s[i] = kFold ? t.c1[(i / n1) * n1 + FactoredStep1Order(i % n1, n1)] : t.c1[i];
+    }
+    for (int i = threadIdx.x; i < n2 * n2; i += blockDim.x) {
+        c2s[i] = t.c2[i];
+        chT[(i % n2) * n2 + i / n2] = t.cHalf[i];
+    }
+
+    const Pow2 lanesP = MakePow2(lanes);
+    const Pow2 n1P = MakePow2(n1);
+    const Pow2 n2P = MakePow2(n2);
+    const Pow2 nP = MakePow2(n);
+    const Pow2 quadsPerRow = MakePow2(lanes / 4); // = groups per batch
+    const int quads = n << quadsPerRow.shift;
+    const int pairQuads = (n / 2 + 1) << quadsPerRow.shift; // rows 0..n/2 own the pairs (i, n - i)
+    const T half = static_cast<T>(0.5);
+
+    // Both transforms of the pass: steps 1-2 into the tile, then the
+    // recombined rows into work, row k at work + k * lanes. Ends with a barrier.
+    auto transformTile = [&]() {
+        FactoredComputeTileWork<T, kFold>(tile, work, c1s, c2s, chT, t, lanes, lanesP, n1P, n2P, quadsPerRow, workStride);
+        for (int q = threadIdx.x; q < quads; q += blockDim.x) {
+            const int k = q >> quadsPerRow.shift;
+            const int line = (q & quadsPerRow.mask) * 4;
+            T out[4];
+            FactoredRecombineQuad(tile, k, line, lanes, n1, n2, n1P, n2P, out);
+            Store4(work + k * lanes + line, out);
+        }
+        __syncthreads();
+    };
+
+    T reg[kMaxQuads][4];
+    int batch = static_cast<int>(blockIdx.x);
+    if (batch < batches) {
+        GroupLoad(data, batch, reg, quads, quadsPerRow, n, H, D, groupsY, groups);
+    }
+    for (; batch < batches; batch += static_cast<int>(gridDim.x)) {
+        __syncthreads(); // the previous batch's store has finished reading work
+        PipelineFill(tile, reg, quads);
+        __syncthreads();
+
+        const int next = batch + static_cast<int>(gridDim.x);
+        if (next < batches) {
+            GroupLoad(data, next, reg, quads, quadsPerRow, n, H, D, groupsY, groups);
+        }
+
+        transformTile();
+
+        const bool fixedGroup = GroupFixedPerThread(quadsPerRow);
+        size_t ownLine[4] = {};
+        if (fixedGroup) {
+            GroupLinesOfThread(ownLine, batch, quadsPerRow, n, H, D, groupsY, groups);
+        }
+
+        // The product, a pair of rows (i, n - i) at a time, from work into the
+        // tile: the tile is free once the recombination has read it.
+        for (int q = threadIdx.x; q < pairQuads; q += blockDim.x) {
+            const int i = q >> quadsPerRow.shift;
+            const int lg = q & quadsPerRow.mask;
+            const int mi = (n - i) & nP.mask;
+            const int g = min((batch << quadsPerRow.shift) + lg, groups - 1);
+            size_t line[4];
+            RAPIDHT_UNROLL
+            for (int m = 0; m < 4; ++m) {
+                line[m] = fixedGroup ? ownLine[m] : GroupLine(g, m, n, H, D, groupsY);
+            }
+            T s[4];
+            T sm[4];
+            Load4(work + i * lanes + lg * 4, s);
+            Load4(work + mi * lanes + lg * 4, sm);
+            T zi[4];
+            T zm[4];
+            if constexpr (kPair) {
+                // The true transform at (m, i) and (m, n - i), then for each
+                // pair (m, i), (m^3, n - i) of mirror points both products.
+                T h[4];
+                T hm[4];
+                RAPIDHT_UNROLL
+                for (int m = 0; m < 4; ++m) {
+                    h[m] = half * (sm[m] + s[m ^ 1] + s[m ^ 2] - sm[m ^ 3]);
+                    hm[m] = half * (s[m] + sm[m ^ 1] + sm[m ^ 2] - s[m ^ 3]);
+                }
+                RAPIDHT_UNROLL
+                for (int m = 0; m < 4; ++m) {
+                    const T gk = spectrum[line[m] + static_cast<size_t>(i)];
+                    const T gm = spectrum[line[m ^ 3] + static_cast<size_t>(mi)];
+                    const T even = half * (gk + gm);
+                    const T odd = half * (gk - gm);
+                    zi[m] = h[m] * even + hm[m ^ 3] * odd;
+                    zm[m ^ 3] = hm[m ^ 3] * even - h[m] * odd;
+                }
+            } else {
+                RAPIDHT_UNROLL
+                for (int m = 0; m < 4; ++m) {
+                    zi[m] = s[m] * spectrum[line[m] + static_cast<size_t>(i)];
+                    zm[m] = sm[m] * spectrum[line[m] + static_cast<size_t>(mi)];
+                }
+            }
+            Store4(tile + i * lanes + lg * 4, zi);
+            Store4(tile + mi * lanes + lg * 4, zm);
+        }
+        __syncthreads();
+
+        transformTile();
+
+        // The store, with B for any kernel.
+        for (int q = threadIdx.x; q < quads; q += blockDim.x) {
+            const int i = q >> quadsPerRow.shift;
+            const int lg = q & quadsPerRow.mask;
+            const int g = min((batch << quadsPerRow.shift) + lg, groups - 1);
+            T s[4];
+            Load4(work + i * lanes + lg * 4, s);
+            T out[4];
+            if constexpr (kPair) {
+                const int mi = (n - i) & nP.mask;
+                T sm[4];
+                Load4(work + mi * lanes + lg * 4, sm);
+                RAPIDHT_UNROLL
+                for (int m = 0; m < 4; ++m) {
+                    out[m] = half * (sm[m] + s[m ^ 1] + s[m ^ 2] - sm[m ^ 3]);
+                }
+            } else {
+                RAPIDHT_UNROLL
+                for (int m = 0; m < 4; ++m) {
+                    out[m] = s[m];
+                }
+            }
+            RAPIDHT_UNROLL
+            for (int m = 0; m < 4; ++m) {
+                const size_t line = fixedGroup ? ownLine[m] : GroupLine(g, m, n, H, D, groupsY);
+                data[line + static_cast<size_t>(i)] = out[m];
+            }
+        }
+    }
+}
+
 /// Mirror of an index along an axis of length n: (n - i) mod n.
 __device__ __forceinline__ int MirrorIndex(int i, int n)
 {

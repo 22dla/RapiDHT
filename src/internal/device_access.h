@@ -44,6 +44,22 @@ struct DeviceAccess {
         transform.FactoredToIntegers(spectrum, deviceOut, offset, saturated, separable);
     }
 
+    /// R-6 step 1.2: circular convolution on the device
+    /// (HartleyTransform::FactoredConvolve), for the convolution classes.
+    template <typename T>
+    static void Convolve(HartleyTransform<T>& transform, DeviceVolume<T>& data, const DeviceVolume<T>& spectrum,
+        bool pair, const DeviceVolume<T>* prepared = nullptr)
+    {
+        transform.FactoredConvolve(data, spectrum, pair, prepared);
+    }
+
+    /// R-6 step 1.2: the z and y passes a bank of convolutions shares.
+    template <typename T>
+    static void ConvolvePrepare(HartleyTransform<T>& transform, DeviceVolume<T>& data)
+    {
+        transform.FactoredConvolvePrepare(data);
+    }
+
     /// The same with a known integer `offset` (IntegerOffset::Of).
     template <typename T, typename TIn>
     static void ForwardFromIntegers(

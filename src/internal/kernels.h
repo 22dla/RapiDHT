@@ -159,6 +159,26 @@ void MeanFromFirst(const T* data, double n, T* offset);
 template <typename T>
 bool FactoredLastAxisBracewell(T* data, const FactoredAxisTables<T>& tables, size_t H, size_t D);
 
+/**
+ * R-6 step 1.1: the x pass of a circular convolution, fused -- transform,
+ * product with `spectrum` (H(g) / N, same layout as data), transform -- to be
+ * called between the z, y passes of the separable transform and the y, z
+ * passes again (FactoredConvolveXKernel in factored_kernels.cuh). `pair`: any
+ * kernel (Bracewell and the pair product inside the pass); otherwise the
+ * kernel is even along every axis and the product is pointwise. Returns false,
+ * launching nothing, where it does not apply (double, width < 16, shared
+ * memory); the caller then takes ConvolutionProduct between two whole
+ * transforms.
+ */
+template <typename T>
+bool FactoredConvolveX(T* data, const T* spectrum, const FactoredAxisTables<T>& tables, size_t H, size_t D, bool pair);
+
+/// R-6: the product of the convolution theorem over a whole spectrum, in
+/// place -- the pair product Z(k) = F(k) E(k) + F(-k) O(k) of the true
+/// transform (`pair`), or the pointwise product of an even kernel's.
+template <typename T>
+void ConvolutionProduct(T* data, const T* spectrum, size_t W, size_t H, size_t D, bool pair);
+
 /// The Bracewell correction in place, one thread per orbit of mirror images
 /// (the CPU backend's scheme), so no second buffer is needed.
 template <typename T>

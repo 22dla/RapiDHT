@@ -1,8 +1,9 @@
 /*
  * Project: RapiDHT
  * File: tests/test_convolution.cpp
- * Brief: The separable transform and convolution with even kernels, checked
- *        against direct evaluation of their definitions.
+ * Brief: The separable transform and the convolutions (even kernels, any
+ *        kernel; CPU and device), checked against direct evaluation of their
+ *        definitions.
  */
 
 #include <rapidht/convolution.h>
@@ -76,31 +77,7 @@ std::vector<double> ReferenceSeparableDht(std::vector<double> data, const Dims& 
     return data;
 }
 
-/// Direct circular convolution: (f*g)(x) = sum_y f(y) g(x - y).
-std::vector<double> ReferenceCircularConvolution(const std::vector<double>& f, const std::vector<double>& g,
-    const Dims& d)
-{
-    std::vector<double> out(f.size(), 0.0);
-    for (size_t k = 0; k < d.depth; ++k) {
-        for (size_t j = 0; j < d.height; ++j) {
-            for (size_t i = 0; i < d.width; ++i) {
-                double sum = 0.0;
-                for (size_t c = 0; c < d.depth; ++c) {
-                    for (size_t b = 0; b < d.height; ++b) {
-                        for (size_t a = 0; a < d.width; ++a) {
-                            const size_t gi = (i + d.width - a) % d.width;
-                            const size_t gj = (j + d.height - b) % d.height;
-                            const size_t gk = (k + d.depth - c) % d.depth;
-                            sum += f[d.Index(a, b, c)] * g[d.Index(gi, gj, gk)];
-                        }
-                    }
-                }
-                out[d.Index(i, j, k)] = sum;
-            }
-        }
-    }
-    return out;
-}
+// ReferenceCircularConvolution (the definition) is in test_support.h.
 
 /// An anisotropic Gaussian in the wrapped layout: even along every axis.
 std::vector<double> MakeEvenKernel(const Dims& d)
@@ -361,9 +338,12 @@ TEST(EvenConvolution, ApplyWithoutKernelThrows)
     EXPECT_THROW(conv.Apply(data.data()), std::logic_error);
 }
 
-TEST(EvenConvolution, RejectsGpuModeForNow)
+TEST(EvenConvolution, RejectsMatrixGpuMode)
 {
+    // The device convolutions run on the factored transform only.
     EXPECT_THROW(EvenKernelConvolution<double>(8, 8, 8, Modes::GPU), std::exception);
+    EXPECT_THROW(EvenKernelBank<double>(8, 8, 8, Modes::GPU), std::exception);
+    EXPECT_THROW(CircularConvolution<double>(8, 8, 8, Modes::GPU), std::exception);
 }
 
 // ---------------------------------------------------------------------------
@@ -413,4 +393,185 @@ TEST(EvenKernelBank, RejectsNonPowerOfTwoExtentUpFront)
     // Would otherwise throw inside an OpenMP region and terminate the process.
     EXPECT_THROW(EvenKernelBank<double>(12, 16, 16), std::invalid_argument);
     EXPECT_THROW(EvenKernelConvolution<double>(16, 6, 0), std::invalid_argument);
+}
+
+// ---------------------------------------------------------------------------
+// Convolution with any kernel (R-6)
+// ---------------------------------------------------------------------------
+
+TEST(CircularConvolution, MatchesDirectConvolution)
+{
+    for (const auto& e : kExtents) {
+        SCOPED_TRACE(Describe(e));
+        const Dims d = Dims::Of(e.width, e.height, e.depth);
+        const auto f = MakeSignal(d.Total());
+        const auto g = MakeConvolutionKernel(d, false);
+
+        std::vector<double> actual = f;
+        CircularConvolution<double> conv(e.width, e.height, e.depth);
+        conv.SetKernel(g.data());
+        conv.Apply(actual.data());
+
+        ExpectClose(actual, ReferenceCircularConvolution(f, g, d), 1e-12);
+    }
+}
+
+TEST(CircularConvolution, ApplyWithoutKernelThrows)
+{
+    std::vector<double> data(16, 1.0);
+    CircularConvolution<double> conv(16, 0, 0);
+    EXPECT_THROW(conv.Apply(data.data()), std::logic_error);
+    EXPECT_THROW(conv.SetKernel(nullptr), std::invalid_argument);
+}
+
+// ---------------------------------------------------------------------------
+// The convolutions on the device (R-6 step 1.2)
+// ---------------------------------------------------------------------------
+
+namespace {
+
+// Where the fused x pass runs (float, x >= 16: 3D, 2D, 1D, a degenerate y)
+// and where the device path falls back to transform, product, transform
+// (x < 16 in float; double always).
+const Extent kDeviceExtents[] = {
+    { 32, 16, 8 },
+    { 16, 8, 4 },
+    { 16, 2, 16 },
+    { 64, 32, 0 },
+    { 32, 0, 0 },
+    { 8, 4, 2 },
+};
+
+/// One device convolution of `f` with `g` through the host pointer and
+/// through a DeviceVolume; both must agree with the definition.
+template <typename T, typename Conv>
+void ExpectDeviceConvolution(Conv& conv, const std::vector<double>& f, const std::vector<double>& expected,
+    double tolerance)
+{
+    std::vector<T> host(f.begin(), f.end());
+    conv.Apply(host.data());
+    ExpectClose(std::vector<double>(host.begin(), host.end()), expected, tolerance);
+
+    std::vector<T> resident(f.begin(), f.end());
+    DeviceVolume<T> volume(resident.size());
+    volume.Upload(resident.data());
+    conv.Apply(volume);
+    volume.Download(resident.data());
+    ExpectClose(std::vector<double>(resident.begin(), resident.end()), expected, tolerance);
+}
+
+template <typename T>
+void ExpectDeviceConvolutionsMatchDefinition(double tolerance)
+{
+    for (const auto& e : kDeviceExtents) {
+        SCOPED_TRACE(Describe(e));
+        const Dims d = Dims::Of(e.width, e.height, e.depth);
+        const auto f = MakeSignal(d.Total());
+        {
+            SCOPED_TRACE("any kernel");
+            const auto g = MakeConvolutionKernel(d, false);
+            const std::vector<T> kernel(g.begin(), g.end());
+            CircularConvolution<T> conv(e.width, e.height, e.depth, Modes::GPUFactored);
+            conv.SetKernel(kernel.data());
+            ExpectDeviceConvolution<T>(conv, f, ReferenceCircularConvolution(f, g, d), tolerance);
+        }
+        {
+            SCOPED_TRACE("even kernel");
+            const auto g = MakeRoughEvenKernel(d);
+            const std::vector<T> kernel(g.begin(), g.end());
+            EvenKernelConvolution<T> conv(e.width, e.height, e.depth, Modes::GPUFactored);
+            conv.SetKernel(kernel.data());
+            ExpectDeviceConvolution<T>(conv, f, ReferenceCircularConvolution(f, g, d), tolerance);
+        }
+    }
+}
+
+} // namespace
+
+TEST(DeviceConvolution, MatchesDefinition_Float_GPU)
+{
+    SKIP_IF_NO_GPU();
+    ExpectDeviceConvolutionsMatchDefinition<float>(2e-5);
+}
+
+TEST(DeviceConvolution, MatchesDefinition_Double_GPU)
+{
+    SKIP_IF_NO_GPU();
+    ExpectDeviceConvolutionsMatchDefinition<double>(1e-11);
+}
+
+// A volume of many batches in every pass, against the CPU convolutions in
+// double (fast transforms, not the O(N^2) definition).
+TEST(DeviceConvolution, AgreesWithCpuOnLargerVolume_GPU)
+{
+    SKIP_IF_NO_GPU();
+    const size_t W = 128, H = 64, D = 32;
+    const Dims d = Dims::Of(W, H, D);
+    const auto f = MakeSignal(d.Total());
+    for (const bool even : { false, true }) {
+        SCOPED_TRACE(even ? "even kernel" : "any kernel");
+        const auto g = MakeConvolutionKernel(d, even);
+        std::vector<double> expected = f;
+        std::vector<float> actual(f.begin(), f.end());
+        const std::vector<float> kernel(g.begin(), g.end());
+        if (even) {
+            EvenKernelConvolution<double> cpu(W, H, D);
+            cpu.SetKernel(g.data());
+            cpu.Apply(expected.data());
+            EvenKernelConvolution<float> gpu(W, H, D, Modes::GPUFactored);
+            gpu.SetKernel(kernel.data());
+            gpu.Apply(actual.data());
+        } else {
+            CircularConvolution<double> cpu(W, H, D);
+            cpu.SetKernel(g.data());
+            cpu.Apply(expected.data());
+            CircularConvolution<float> gpu(W, H, D, Modes::GPUFactored);
+            gpu.SetKernel(kernel.data());
+            gpu.Apply(actual.data());
+        }
+        ExpectClose(std::vector<double>(actual.begin(), actual.end()), expected, 2e-5);
+    }
+}
+
+TEST(DeviceConvolution, BankMatchesDefinition_GPU)
+{
+    SKIP_IF_NO_GPU();
+    for (const auto& e : kDeviceExtents) {
+        SCOPED_TRACE(Describe(e));
+        const Dims d = Dims::Of(e.width, e.height, e.depth);
+        const auto f = MakeSignal(d.Total());
+        std::vector<double> delta(d.Total(), 0.0);
+        delta[0] = 1.0;
+        const std::vector<std::vector<double>> kernels = { MakeEvenKernel(d), MakeRoughEvenKernel(d), delta };
+
+        EvenKernelBank<float> bank(e.width, e.height, e.depth, Modes::GPUFactored);
+        for (const auto& k : kernels) {
+            const std::vector<float> kf(k.begin(), k.end());
+            bank.AddKernel(kf.data());
+        }
+        EXPECT_EQ(bank.KernelCount(), kernels.size());
+        const std::vector<float> field(f.begin(), f.end());
+        std::vector<float> out(kernels.size() * d.Total());
+        bank.Apply(field.data(), out.data());
+        for (size_t k = 0; k < kernels.size(); ++k) {
+            const std::vector<double> got(out.begin() + k * d.Total(), out.begin() + (k + 1) * d.Total());
+            ExpectClose(got, ReferenceCircularConvolution(f, kernels[k], d), 2e-5);
+        }
+    }
+}
+
+TEST(DeviceConvolution, ResidentApplyNeedsDeviceModeAndKernel_GPU)
+{
+    SKIP_IF_NO_GPU();
+    DeviceVolume<float> volume(16 * 8 * 4);
+    EvenKernelConvolution<float> cpu(16, 8, 4);
+    EXPECT_THROW(cpu.Apply(volume), std::invalid_argument);
+    CircularConvolution<float> gpu(16, 8, 4, Modes::GPUFactored);
+    EXPECT_THROW(gpu.Apply(volume), std::logic_error);
+    const Dims d = Dims::Of(16, 8, 4);
+    const auto g = MakeConvolutionKernel(d, false);
+    const std::vector<float> kernel(g.begin(), g.end());
+    gpu.SetKernel(kernel.data());
+    DeviceVolume<float> wrong(16 * 8 * 2);
+    EXPECT_THROW(gpu.Apply(wrong), std::invalid_argument);
 }

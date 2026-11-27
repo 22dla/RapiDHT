@@ -413,6 +413,45 @@ void HartleyTransform<T>::FactoredToIntegers(DeviceVolume<T>& spectrum, TOut* de
 #endif
 }
 
+template <typename T>
+void HartleyTransform<T>::FactoredConvolve(
+    DeviceVolume<T>& data, const DeviceVolume<T>& spectrum, bool pair, const DeviceVolume<T>* prepared)
+{
+    PROFILE_FUNCTION();
+
+    CheckResidentVolume(data);
+    CheckResidentVolume(spectrum);
+    if (prepared != nullptr) {
+        CheckResidentVolume(*prepared);
+    }
+    if (_mode != Modes::GPUFactored) {
+        throw std::invalid_argument("A convolution on the device needs Modes::GPUFactored.");
+    }
+#ifdef RAPIDHT_WITH_CUDA
+    FactoredConvolvePasses(static_cast<T*>(data.DeviceData()), static_cast<const T*>(spectrum.DeviceData()), pair,
+        prepared != nullptr ? static_cast<const T*>(prepared->DeviceData()) : nullptr, false);
+#else
+    (void)pair;
+    ThrowGpuUnavailable();
+#endif
+}
+
+template <typename T>
+void HartleyTransform<T>::FactoredConvolvePrepare(DeviceVolume<T>& data)
+{
+    PROFILE_FUNCTION();
+
+    CheckResidentVolume(data);
+    if (_mode != Modes::GPUFactored) {
+        throw std::invalid_argument("A convolution on the device needs Modes::GPUFactored.");
+    }
+#ifdef RAPIDHT_WITH_CUDA
+    FactoredConvolvePasses(static_cast<T*>(data.DeviceData()), nullptr, false, nullptr, true);
+#else
+    ThrowGpuUnavailable();
+#endif
+}
+
 /* ------------------------- Integer voxels (R-5) -------------------------- */
 
 template <typename T>

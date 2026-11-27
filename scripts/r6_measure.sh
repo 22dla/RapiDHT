@@ -134,6 +134,7 @@ fi
 
 echo "== 5/5 benchmark: R-4 rows, convolutions, integer transform, 7 repetitions (clock not locked)"
 #   Conv{Hartley,HartleyEven,Cufft,CufftEven}  convolution, any kernel / even kernel (R-4 step 5.3)
+#   ConvHartley{,Even}Seven                    the same in seven passes, as before R-6 step 1.3
 #   IntFactoredEvery64 / cuFFTIntLto           the integer transform and its strongest opponent (R-5)
 sizes='(128x128x128|256x256x256|512x512x512)'
 r4_rows="(cuFFT|cuFFT_R2C|FactoredResident|FactoredResidentSeparable)/f32/3D/$sizes"
@@ -145,7 +146,7 @@ if [[ ${R6_LARGE:-0} == 1 ]]; then
     int_sizes=$conv_sizes
     echo "   (large sizes: R6_LARGE=1)"
 fi
-conv_rows="(ConvHartley|ConvHartleyEven|ConvCufft|ConvCufftEven)/f32/3D/$conv_sizes"
+conv_rows="(ConvHartley|ConvHartleyEven|ConvHartleySeven|ConvHartleyEvenSeven|ConvCufft|ConvCufftEven)/f32/3D/$conv_sizes"
 int_rows="(IntFactoredEvery64|cuFFTIntLto)/(u8|u16)/3D/$int_sizes"
 filter="^($r4_rows|$conv_rows|$int_rows)\$"
 env "$@" "$bench" \

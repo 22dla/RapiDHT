@@ -784,3 +784,92 @@ TEST(FactoredKernels, N1OfFollowsSplitLength)
         EXPECT_EQ(static_cast<size_t>(FactoredN1Of(static_cast<int>(n))), internal::SplitLength(n).n1) << "n " << n;
     }
 }
+
+// R-6 step 1.1: the x pass of a convolution (FactoredConvolveXKernel). The z and
+// y passes of the separable transform by the generic kernel, the fused pass,
+// then y and z again: the whole circular convolution, against its definition.
+// Any kernel (the pair product with B inside the pass) and an even one (the
+// plain product); the shapes of the fused last pass, degenerate groups
+// included, and every batch width.
+template <typename T>
+std::vector<double> RunConvolution(const std::vector<double>& f, const std::vector<double>& g, size_t W, size_t H,
+    size_t D, size_t lanes, bool pair, bool fold)
+{
+    const Dims dims = Dims::Of(W, H, D == 1 ? 0 : D);
+    std::vector<double> spectrum = ReferenceDht(g, dims);
+    for (double& v : spectrum) {
+        v /= static_cast<double>(dims.Total());
+    }
+    const std::vector<T> s(spectrum.begin(), spectrum.end());
+    std::vector<T> v(f.begin(), f.end());
+    const auto tx = MakeAxisTables<T>(W);
+    const auto ty = MakeAxisTables<T>(H);
+    const auto tz = MakeAxisTables<T>(D);
+    RunAxis(v.data(), tz.view, W * H, 1, W, W, H, Kernel::Generic, 16);
+    RunAxis(v.data(), ty.view, W, 1, W, W * H, D, Kernel::Generic, 16);
+
+    const size_t groupsY = H / 2 + 1;
+    const size_t groupsZ = D / 2 + 1;
+    const size_t groups = groupsY * groupsZ;
+    const size_t perBatch = lanes / 4;
+    const size_t batches = (groups + perBatch - 1) / perBatch;
+    const size_t grid = batches < kHostGrid ? batches : kHostGrid;
+    blockDim = { 1, 1, 1 };
+    threadIdx = { 0, 0, 0 };
+    gridDim = { static_cast<unsigned>(grid), 1, 1 };
+    for (size_t b = 0; b < grid; ++b) {
+        blockIdx = { static_cast<unsigned>(b), 0, 0 };
+        const int ws = static_cast<int>(FactoredWorkStride<T>(static_cast<size_t>(tx.view.n2), lanes));
+        const int Hi = static_cast<int>(H);
+        const int Di = static_cast<int>(D);
+        const int gy = static_cast<int>(groupsY);
+        const int gs = static_cast<int>(groups);
+        const int li = static_cast<int>(lanes);
+        const int bi = static_cast<int>(batches);
+        if (pair && fold) {
+            FactoredConvolveXKernel<T, kHostMaxQuads, true, true>(v.data(), s.data(), tx.view, Hi, Di, gy, gs, li, bi, ws);
+        } else if (pair) {
+            FactoredConvolveXKernel<T, kHostMaxQuads, false, true>(v.data(), s.data(), tx.view, Hi, Di, gy, gs, li, bi, ws);
+        } else if (fold) {
+            FactoredConvolveXKernel<T, kHostMaxQuads, true, false>(v.data(), s.data(), tx.view, Hi, Di, gy, gs, li, bi, ws);
+        } else {
+            FactoredConvolveXKernel<T, kHostMaxQuads, false, false>(v.data(), s.data(), tx.view, Hi, Di, gy, gs, li, bi, ws);
+        }
+    }
+
+    RunAxis(v.data(), ty.view, W, 1, W, W * H, D, Kernel::Generic, 16);
+    RunAxis(v.data(), tz.view, W * H, 1, W, W, H, Kernel::Generic, 16);
+    return std::vector<double>(v.begin(), v.end());
+}
+
+template <typename T>
+void ExpectConvolutionPassMatchesDefinition(double tolerance)
+{
+    const Shape shapes[] = { { 16, 8, 32 }, { 32, 4, 8 }, { 16, 2, 16 }, { 16, 16, 2 }, { 32, 16, 1 }, { 16, 2, 1 } };
+    for (const Shape& sh : shapes) {
+        const Dims dims = Dims::Of(sh.width, sh.height, sh.depth == 1 ? 0 : sh.depth);
+        const auto f = MakeSignal(dims.Total());
+        for (const bool pair : { true, false }) {
+            const auto g = MakeConvolutionKernel(dims, !pair);
+            const auto expected = ReferenceCircularConvolution(f, g, dims);
+            for (const size_t lanes : { size_t { 4 }, size_t { 8 }, size_t { 16 }, size_t { 32 } }) {
+                for (const bool fold : { false, true }) {
+                    SCOPED_TRACE(Describe(sh) + ", " + std::to_string(lanes) + " lines"
+                                 + (pair ? ", any kernel" : ", even kernel") + (fold ? ", twiddle in step 1" : ""));
+                    ExpectClose(RunConvolution<T>(f, g, sh.width, sh.height, sh.depth, lanes, pair, fold), expected,
+                        tolerance);
+                }
+            }
+        }
+    }
+}
+
+TEST(FactoredKernels, ConvolutionPassMatchesDefinition_Float)
+{
+    ExpectConvolutionPassMatchesDefinition<float>(2e-5);
+}
+
+TEST(FactoredKernels, ConvolutionPassMatchesDefinition_Double)
+{
+    ExpectConvolutionPassMatchesDefinition<double>(1e-11);
+}
