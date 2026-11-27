@@ -20,6 +20,11 @@
  * and clamped to the type -- rint(fma(x, 1/N, 0)), the conversion of this
  * library's integer inverse with no offset -- and written to dataOut, the
  * integer volume passed to cufftExecC2R in place of a float one.
+ *
+ * R-5 step 5.1: the same with an offset, for the Gaussian filter of task T2,
+ * which subtracts the offset on reading and adds it back on writing.
+ * callerInfo points to two floats, { 1/N, offset }: rint(fma(x, 1/N, offset)),
+ * clamped. The load callback of that plan gets a pointer to the second.
  */
 
 #include <cufftXt.h>
@@ -58,4 +63,21 @@ __device__ cufftReal rapidht_load_u16_lto(
 {
     return static_cast<float>(static_cast<const std::uint16_t*>(dataIn)[offset])
          - *static_cast<const float*>(callerInfo);
+}
+
+__device__ void rapidht_store_u8_offset_lto(
+    void* dataOut, unsigned long long offset, cufftReal element, void* callerInfo, void* /*sharedPointer*/)
+{
+    const float* p = static_cast<const float*>(callerInfo);
+    const float r = rintf(fmaf(element, p[0], p[1]));
+    static_cast<std::uint8_t*>(dataOut)[offset] = static_cast<std::uint8_t>(r >= 0.0f ? (r <= 255.0f ? r : 255.0f) : 0.0f);
+}
+
+__device__ void rapidht_store_u16_offset_lto(
+    void* dataOut, unsigned long long offset, cufftReal element, void* callerInfo, void* /*sharedPointer*/)
+{
+    const float* p = static_cast<const float*>(callerInfo);
+    const float r = rintf(fmaf(element, p[0], p[1]));
+    static_cast<std::uint16_t*>(dataOut)[offset]
+        = static_cast<std::uint16_t>(r >= 0.0f ? (r <= 65535.0f ? r : 65535.0f) : 0.0f);
 }

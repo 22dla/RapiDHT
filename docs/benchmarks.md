@@ -935,6 +935,113 @@ a conversion.
 
 ---
 
+## Integer volumes: end-to-end tasks (R-5 step 5.1, 2026-11-27)
+
+A transform is a means. This section measures what it is used for, starting
+from a uint8 / uint16 volume as a tomograph writes it. The data comes from
+`benchmarks/results/2026-11-27_evgeny_r5_s51.json` (`R5_TASKS=1 bash
+scripts/r5_measure.sh s51`). The rows are `Task<N>/<implementation>/…` of
+`bench_transform`, and the device code is in `benchmarks/tasks_gpu.{h,cu}`.
+The input is white integer noise over the full range. Each implementation is
+checked against the CPU in double before it is timed.
+
+- **T1 spectrum:** integers → Hartley spectrum in float, left on the device.
+  Implementations: ours from the integers (default offset policy); ours as it
+  is today, with a float volume sent from the host (converted there, untimed);
+  cuFFT R2C with the LTO load callback plus the Hartley pass.
+- **T2 Gaussian filter:** integers → integers, σ = 1, 2, 4 voxels, 6σ + 1 taps,
+  circular. Ours: forward from the integers, product, inverse into the
+  integers. The spectrum of the kernel is three 1D tables on both sides, not a
+  volume. cuFFT: LTO load, R2C, product, C2R, LTO store, with the same
+  sampled-mean offset. For σ ≤ 2 the table also has the same filter computed
+  in space (three passes, register window).
+- **T3 radial power spectrum:** integers → P(|k|) in 128 bins on the host.
+  Ours: H² summed per bin. cuFFT: |F|² over the half spectrum, with weight 2
+  outside the planes kx = 0 and W/2.
+- **Where the data starts:** `device` means the input is already on the
+  device. `pageable` / `pinned` add the copy from ordinary or page-locked host
+  memory; T2 also copies its output back.
+
+Time in ms, u16 unless marked. The best Hartley variant is in bold. The ratio
+is ours divided by cuFFT on the same row. pin is pinned host memory.
+
+| | ours, device | cuFFT, device | ratio | ours, pin | cuFFT, pin | ratio | float from host today, pin |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| T1 256³ | **1.19** | 1.27 | 0.94 | 3.91 | 4.00 | 0.98 | 6.59 |
+| T1 512³ | **9.66** | 10.03 | 0.96 | 31.2 | 31.8 | 0.98 | 52.8 |
+| T1 512³ u8 | **10.22** | 9.72 | 1.05 | 21.0 | 20.6 | 1.02 | 52.9 |
+| T1 1024 × 1024 × 512 | **51.7** | 41.6 | 1.24 | 138.3 | 128.8 | 1.07 | 224.1 |
+| T2 256³ | **2.73** (true) | 2.28 | 1.20 | 8.25 | 7.74 | 1.07 | |
+| T2 512³ | **21.9** (true) | 17.4 | 1.25 | 65.2 | 61.0 | 1.07 | |
+| T2 512³ u8 | **22.5** (true) | 16.8 | 1.34 | 44.1 | 38.7 | 1.14 | |
+| T2 1024 × 1024 × 512 | **108.1** (separable) | 73.7 | 1.47 | 282.0 | 247.5 | 1.14 | |
+| T3 256³ | **1.77** (true) | 1.40 | 1.26 | 4.51 | 4.12 | 1.09 | |
+| T3 512³ | **12.7** (separable) | 10.0 | 1.28 | 34.4 | 31.7 | 1.09 | |
+| T3 512³ u8 | **13.4** (separable) | 9.7 | 1.39 | 24.2 | 20.5 | 1.18 | |
+| T3 1024 × 1024 × 512 | **57.3** (separable) | 40.2 | 1.43 | 143.7 | 127.3 | 1.13 | |
+
+The filter time does not depend on σ (within 0.3 %). The spatial filter takes
+0.87 / 6.5 / 26.0 ms on the device (256³, 512³, 1024 × 1024 × 512). That is
+2.6–2.8 times less than cuFFT for σ = 1 and 2. From pinned memory it takes
+50.1 ms against 61.0 ms for cuFFT at 512³ u16.
+
+Peak device memory, MiB, u16. T1 is the only task where the library holds
+less than cuFFT:
+
+| | T1 ours / cuFFT | T2 ours / cuFFT / spatial | T3 ours / cuFFT |
+| --- | ---: | ---: | ---: |
+| 512³ | 800 / 1 284 | 1 058 / 1 028 / 1 024 | 802 / 772 |
+| 1024 × 1024 × 512 | 3 104 / 5 126 | 4 130 / 4 102 / 4 096 | 3 106 / 3 078 |
+
+The cuFFT side of T2 and T3 never writes a Hartley spectrum. Its half
+spectrum is the same size as our float volume. Our advantage in memory comes
+only from keeping the spectrum, as T1 does.
+
+Accuracy:
+
+- **T1:** the largest error is 0.022–0.032 LSB for ours and 0.031–0.050 for
+  cuFFT. The float path from the host has no offset, and its error is
+  13–29 LSB.
+- **T2:** 99.82–99.85 % of the voxels equal the rounded filter in double,
+  for ours and for cuFFT alike, against a floor of 99.85 %. The floor is the
+  share for the exact filter rounded to float first: near 32 768 a float step
+  is 1/256 LSB. The spatial filter reaches 99.70–99.79 %. No voxel is off by
+  more than 1. For u8, 100 % on every implementation.
+- **T3:** the largest relative error of a bin is 6–8·10⁻⁸ for ours and
+  2.6–3.9·10⁻⁷ for cuFFT.
+
+What it says:
+
+1. **Integers across the bus are what pays.** T1 from the host with the
+   integer entry point takes 0.56–0.62 of today's float path (u8: 0.37–0.40).
+   It is level with cuFFT at 256³ and 512³ (0.98–1.02, the bus dominates) and
+   1.07 at 1024 × 1024 × 512, where the transform itself is 1.24.
+2. **The tasks that do not keep the spectrum are cuFFT's.** On the device,
+   the filter is 1.20–1.47 of cuFFT and the power spectrum 1.26–1.43: R2C/C2R
+   need no Hartley pass, and our path has no half-size spectrum. From the host
+   the gap narrows to 1.05–1.18. For σ ≤ 2 neither spectral path makes sense:
+   the spatial filter is 2.6–2.8 times faster on the device than cuFFT
+   and 3.2–4.2 times faster than ours.
+3. **The true transform can stand in for the separable one, and the reverse.**
+   - For a kernel that is even along every axis, the product is the same with
+     the true transform, because the odd part is zero. The fused last pass of
+     the integer inverse (step 4.2) then makes the true variant 6–11 % faster
+     at 256³–512³. At 1024 × 1024 × 512 the separable variant is 3 % faster.
+   - For the radial profile, the separable spectrum gives the same bin sums.
+     A bin is closed under negating one axis, and over that orbit the cross
+     terms of cos and sin cancel. The check confirms it (relErr 7·10⁻⁸).
+     The separable variant saves the Bracewell work, which is 10 % at
+     1024 × 1024 × 512.
+4. **The binning costs more on our side by construction.** It is the same
+   kernel for both, and it is compute-bound on the integer bin search:
+   T3 − T1 is 3.2 ms for us at 512³ against about 2 ms of binning for cuFFT
+   over half as many coefficients. Pairing k with −k would halve our count.
+   This is an opening for after R-5, not changed here.
+
+![R-5 tasks at 512^3, uint16](images/r5-tasks.svg)
+
+*Drawn by `tools/r5_figures.py tasks …_r5_s51.json`.*
+
 ## FFTW, for reference
 
 `FFTW_DHT` in double takes 15 871 / 144 146 / 1 500 455 µs on the same volumes

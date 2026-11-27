@@ -84,6 +84,13 @@ OPPONENTS: dict[str, tuple[tuple[str, ...], ...]] = {
     # Step 4.3: the inverse into integers.
     "IntInverse": (("cuFFTIntInv", "cuFFTIntInvLto"), ("IntInverseConvert",)),
     "IntInverseConvert": (("cuFFTIntInv", "cuFFTIntInvLto"),),
+    # Step 5.1: the end-to-end tasks. Their family is the first two parts of the
+    # name (Task<N>/<implementation>), the case the rest (type, sigma, from, extent).
+    "Task1/IntFactored": (("Task1/cuFFTLto",), ("Task1/FloatFactored",)),
+    "Task2/Hartley": (("Task2/cuFFTLto",), ("Task2/Spatial",)),
+    "Task2/HartleySeparable": (("Task2/cuFFTLto",), ("Task2/Hartley",)),
+    "Task3/Hartley": (("Task3/cuFFTLto",),),
+    "Task3/HartleySeparable": (("Task3/cuFFTLto",), ("Task3/Hartley",)),
 }
 OPPONENT_LABEL = {
     "cuFFT": "cuFFT + преобразование в Хартли",
@@ -98,14 +105,30 @@ OPPONENT_LABEL = {
     "cuFFTIntInv": "cuFFT C2R + перевод в целые",
     "cuFFTIntInvLto": "cuFFT C2R с колбэком сохранения LTO",
     "IntInverseConvert": "наш float-обратный + перевод в целые",
+    "Task1/cuFFTLto": "cuFFT с колбэком LTO + Хартли",
+    "Task1/FloatFactored": "наш путь на float с хоста (как сегодня)",
+    "Task2/cuFFTLto": "фильтр cuFFT: LTO-загрузка, R2C, произведение, C2R, LTO-запись",
+    "Task2/Spatial": "пространственный фильтр, три прохода",
+    "Task2/Hartley": "наш фильтр на истинном преобразовании",
+    "Task3/cuFFTLto": "спектр мощности cuFFT: LTO-загрузка, R2C, |F|²",
+    "Task3/Hartley": "наш спектр мощности на истинном преобразовании",
 }
+
+
+def split_family(name: str) -> tuple[str, str]:
+    """'IntFactored/u16/3D/…' -> ('IntFactored', 'u16/3D/…'); 'Task1/IntFactored/u16/…' -> ('Task1/IntFactored', 'u16/…')."""
+    family, _, case = name.partition("/")
+    if family.startswith("Task"):
+        implementation, _, case = case.partition("/")
+        family = f"{family}/{implementation}"
+    return family, case
 
 
 def against_cufft(rows: dict[str, dict[str, float]], reference: dict[str, dict[str, float]]) -> None:
     known = {**reference, **rows}  # the new file wins where both have the case
     lines = []
     for name, row in rows.items():
-        family, _, case = name.partition("/")
+        family, case = split_family(name)
         for group in OPPONENTS.get(family, ()):
             present = [opponent for opponent in group if f"{opponent}/{case}" in known]
             if not present:

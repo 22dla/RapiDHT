@@ -1,6 +1,7 @@
 """Figures of the R-5 track (docs/R5_PLAN.md).
 
     python3 tools/r5_figures.py [RUN.json ...]      # writes docs/images/r5-budget.svg
+    python3 tools/r5_figures.py tasks RUN.json      # writes docs/images/r5-tasks.svg (step 5.1)
 
 r5-budget: time of "uint16 -> Hartley spectrum" at 512^3, on the device and
 from the host, from r5_measure.sh runs. Every number is a median of one
@@ -15,6 +16,11 @@ measured totals:
   cuFFT with the LTO callback  cuFFTIntLto - (Hartley pass)
 The only hatched segment is the target of R-5 (section 4 of the plan), which
 is an estimate until stage 2 measures it.
+
+r5-tasks (step 5.1): the end-to-end tasks T1-T3 at 512^3 uint16 from one
+R5_TASKS=1 run, on the device and from pinned host memory: this library (the
+faster of its variants), cuFFT the strongest way (LTO callbacks) and, for the
+filter at sigma 1 and 2, the spatial filter. Every bar is a measured median.
 """
 
 from __future__ import annotations
@@ -125,5 +131,66 @@ def main() -> None:
     print(f"  pinned memory, for reference: u16 {b[bus_names[2]]:.1f} ms, f32 {b[bus_names[3]]:.1f} ms")
 
 
+def tasks(path: pathlib.Path) -> None:
+    rows = medians(path)
+    size = "3D/512x512x512"
+    # (label, {implementation: [candidate families]}, middle of the name)
+    tasks_ = [
+        ("Т1 спектр", "", {"ours": ["Task1/IntFactored"], "cufft": ["Task1/cuFFTLto"]}),
+        ("Т2 фильтр, σ = 1", "/s1", {"ours": ["Task2/Hartley", "Task2/HartleySeparable"], "cufft": ["Task2/cuFFTLto"],
+                                    "spatial": ["Task2/Spatial"]}),
+        ("Т2 фильтр, σ = 2", "/s2", {"ours": ["Task2/Hartley", "Task2/HartleySeparable"], "cufft": ["Task2/cuFFTLto"],
+                                    "spatial": ["Task2/Spatial"]}),
+        ("Т2 фильтр, σ = 4", "/s4", {"ours": ["Task2/Hartley", "Task2/HartleySeparable"], "cufft": ["Task2/cuFFTLto"]}),
+        ("Т3 спектр мощности", "", {"ours": ["Task3/Hartley", "Task3/HartleySeparable"], "cufft": ["Task3/cuFFTLto"]}),
+    ]
+    impls = [("ours", "RapiDHT (быстрейший вариант)", "#00b894"), ("cufft", "cuFFT, колбэки LTO", "#257de0"),
+             ("spatial", "пространственный фильтр", "#f2a600")]
+
+    def best(families: list[str], middle: str, where: str) -> float | None:
+        found = [rows[n] for f in families if (n := f"{f}/u16{middle}/{where}/{size}") in rows]
+        return min(found) if found else None
+
+    plt.rcParams.update({"font.family": "DejaVu Sans", "font.size": 10, "svg.fonttype": "none"})
+    txt, txt2, grid = "#191919", "#666666", "#e6e6e6"
+    fig, axes = plt.subplots(1, 2, figsize=(10.5, 4.8), sharey=True)
+    height = 0.26
+    for ax, where, title in [(axes[0], "device", "Объём uint16 на устройстве, мс"),
+                             (axes[1], "pinned", "С хоста, закреплённая память (Т2 — и обратно), мс")]:
+        limit = 0.0
+        for i, (label, middle, families) in enumerate(tasks_):
+            y0 = len(tasks_) - 1 - i
+            present = [(key, name, colour) for key, name, colour in impls if key in families]
+            for j, (key, _, colour) in enumerate(present):
+                ms = best(families[key], middle, where)
+                if ms is None:
+                    continue
+                y = y0 + (len(present) - 1) / 2 * height - j * height
+                ax.barh(y, ms, height=height * 0.92, color=colour, edgecolor="white", linewidth=1)
+                ax.text(ms, y, f" {ms:.1f}".replace(".", ","), va="center", color=txt, fontsize=8.5)
+                limit = max(limit, ms)
+            if where == "device":
+                ax.text(-0.01, y0, label, transform=ax.get_yaxis_transform(), ha="right", va="center", color=txt,
+                        fontsize=9.5)
+        ax.set_xlim(0, limit * 1.15)
+        ax.set_yticks([])
+        ax.set_title(title, loc="left", color=txt, fontsize=10.5)
+        ax.xaxis.grid(True, color=grid, linewidth=0.8)
+        ax.set_axisbelow(True)
+        for side in ("top", "right", "left"):
+            ax.spines[side].set_visible(False)
+        ax.spines["bottom"].set_color(txt2)
+        ax.tick_params(colors=txt2)
+    handles = [Patch(facecolor=colour, label=name) for _, name, colour in impls]
+    fig.legend(handles=handles, loc="lower center", ncol=3, frameon=False, fontsize=9)
+    fig.tight_layout(rect=(0.14, 0.07, 1, 1))
+    out = ROOT / "docs" / "images" / "r5-tasks.svg"
+    fig.savefig(out, metadata={"Date": None})
+    print(f"wrote {out}\n  rows: {path.name}")
+
+
 if __name__ == "__main__":
-    main()
+    if len(sys.argv) == 3 and sys.argv[1] == "tasks":
+        tasks(pathlib.Path(sys.argv[2]))
+    else:
+        main()

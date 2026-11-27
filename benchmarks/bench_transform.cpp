@@ -67,6 +67,7 @@
 #include "internal/device_access.h"
 #include "convolution_gpu.h"
 #include "cufft_baseline.h"
+#include "tasks_gpu.h"
 #endif
 
 using RapiDHT::HartleyTransform;
@@ -1349,6 +1350,610 @@ void RegisterIntegerInverse(const Extent* extents, size_t n)
 }
 #endif
 
+#ifdef RAPIDHT_WITH_CUDA
+/*
+ * R-5 step 5.1: the end-to-end tasks on an integer tomogram (docs/R5_PLAN.md,
+ * stage 5; the device side is benchmarks/tasks_gpu.h). Rows are named
+ *
+ *     Task<N>/<implementation>/<type>[/s<sigma>]/<from>/3D/<extent>
+ *
+ * and <from> says where the task starts and ends:
+ *   device    the input already on the device; T1 leaves the spectrum there,
+ *             T2 the filtered integers, T3 brings its 128 bins to the host;
+ *   pageable  the input copied from ordinary host memory inside the timing,
+ *             and T2's output copied back into it;
+ *   pinned    the same from and to page-locked memory (cudaMallocHost).
+ *
+ *   T1 "spectrum"   IntFactored    the library from the integers (default offset policy)
+ *                   FloatFactored  the library as it is today: a float volume
+ *                                  from the host (converted there, untimed)
+ *                   cuFFTLto       R2C with the LTO load callback + Hartley pass
+ *                                  (offset half the range: free, step 0.2)
+ *   T2 "filter"     HartleySeparable  integers -> separable forward -> product with
+ *                                  the separable Gaussian -> separable inverse -> integers
+ *                   Hartley        the same with the true transform: for a kernel
+ *                                  even along every axis its spectrum is the same
+ *                                  table and the product the same (the odd part is
+ *                                  0), and the last pass of the true inverse writes
+ *                                  the integers itself (step 4.2), where the
+ *                                  separable one needs a conversion pass
+ *                   cuFFTLto       LTO load, R2C, product, C2R, LTO store
+ *                   Spatial        three passes in space (sigma 1 and 2 only)
+ *   T3 "power"      Hartley        true forward, H^2 into 128 radial bins
+ *                   HartleySeparable  separable forward, S^2 into the same bins
+ *                                  (equal sums: a bin is closed under sign flips)
+ *                   cuFFTLto       LTO load, R2C, |F|^2 of the half spectrum
+ *
+ * The input is white integer noise over the full range, as in the other R-5
+ * rows. Each row is checked once against the CPU in double before it is timed:
+ * T1 by the largest error in LSB of the input (errLSB, as IntFactored/), T2 by
+ * the share of voxels equal to the rounded filter of the definition (matchPct;
+ * maxDiff the largest difference, in LSB; floorPct the same share for the exact
+ * filter rounded to float first -- what any float output can reach), T3 by the largest relative error of
+ * a bin (relErr). A result that is plainly wrong -- T1 over 0.5 LSB (32 for the
+ * float path, which has no offset), T2 under 99 % equal, T3 over 1e-3 -- is
+ * skipped with the error instead of timed. peakMiB is what the device holds
+ * once the row has run, by cudaMemGetInfo, as in the other R-5 rows.
+ */
+enum class TaskFrom { Device,
+    Pageable,
+    Pinned };
+
+const char* TaskFromName(TaskFrom from)
+{
+    return from == TaskFrom::Device ? "device" : (from == TaskFrom::Pageable ? "pageable" : "pinned");
+}
+
+/// count elements of device memory; throws when they do not fit.
+template <typename T>
+class DeviceBuffer {
+public:
+    explicit DeviceBuffer(size_t count)
+    {
+        if (cudaMalloc(&_data, count * sizeof(T)) != cudaSuccess) {
+            cudaGetLastError();
+            _data = nullptr;
+            throw std::runtime_error("cudaMalloc failed: " + std::to_string(count * sizeof(T) >> 20) + " MiB");
+        }
+    }
+    ~DeviceBuffer() { cudaFree(_data); }
+    DeviceBuffer(const DeviceBuffer&) = delete;
+    DeviceBuffer& operator=(const DeviceBuffer&) = delete;
+    T* Data() const { return _data; }
+
+private:
+    T* _data = nullptr;
+};
+
+/// Host memory of a task: an ordinary vector, or page-locked.
+template <typename T>
+class HostBuffer {
+public:
+    HostBuffer(size_t count, bool pinned):
+        _pinned(pinned)
+    {
+        if (pinned) {
+            if (cudaMallocHost(&_data, count * sizeof(T)) != cudaSuccess) {
+                cudaGetLastError();
+                _data = nullptr;
+                throw std::runtime_error("cudaMallocHost failed");
+            }
+            std::memset(_data, 0, count * sizeof(T)); // touch every page before timing
+        } else {
+            _vector.assign(count, T {});
+            _data = _vector.data();
+        }
+    }
+    ~HostBuffer()
+    {
+        if (_pinned && _data != nullptr) {
+            cudaFreeHost(_data);
+        }
+    }
+    HostBuffer(const HostBuffer&) = delete;
+    HostBuffer& operator=(const HostBuffer&) = delete;
+    T* Data() const { return _data; }
+
+private:
+    bool _pinned;
+    std::vector<T> _vector;
+    T* _data = nullptr;
+};
+
+template <typename TIn>
+rapidht_bench::IntInput IntTypeOf()
+{
+    return sizeof(TIn) == 1 ? rapidht_bench::IntInput::U8 : rapidht_bench::IntInput::U16;
+}
+
+/// Runs a task row: once untimed (lazy allocations; the peak), then the loop.
+/// `check` runs once per row name and returns the error to skip with, if any.
+void RunTask(benchmark::State& state, size_t count, double usedStart, const std::function<void()>& task,
+    const std::function<std::string()>& check)
+{
+    static std::set<std::string> checked;
+    task();
+    state.counters["peakMiB"] = DeviceUsedMiB() - usedStart;
+    if (checked.find(state.name()) == checked.end()) {
+        if (const std::string error = check(); !error.empty()) {
+            throw std::runtime_error(error);
+        }
+        checked.insert(state.name());
+    }
+    for (auto _ : state) {
+        task();
+    }
+    state.SetItemsProcessed(static_cast<int64_t>(state.iterations() * count));
+    state.counters["N"] = static_cast<double>(count);
+}
+
+/// The last row's accuracy counters, kept for the repetitions that skip the check.
+std::map<std::string, std::map<std::string, double>>& TaskAccuracy()
+{
+    static std::map<std::string, std::map<std::string, double>> accuracy;
+    return accuracy;
+}
+
+void ReportTaskAccuracy(benchmark::State& state)
+{
+    for (const auto& [name, value] : TaskAccuracy()[state.name()]) {
+        state.counters[name] = value;
+    }
+}
+
+enum class Task1Impl { IntFactored,
+    FloatFactored,
+    CufftLto };
+
+template <typename TIn>
+void BM_Task1(benchmark::State& state, Extent e, Task1Impl impl, TaskFrom from)
+{
+    const size_t count = ElementCount(e.width, e.height, e.depth);
+    const std::vector<TIn> host = MakeIntegerNoise<TIn>(count);
+    const double usedStart = DeviceUsedMiB();
+    try {
+        RapiDHT::DeviceVolume<float> volume(count); // the spectrum; FloatFactored's input too
+        float* out = DevicePeek::Data(volume);
+        std::unique_ptr<DeviceBuffer<TIn>> in;
+        std::unique_ptr<HostBuffer<TIn>> stagedInt;
+        std::unique_ptr<HostBuffer<float>> stagedFloat;
+        std::unique_ptr<HartleyTransform<float>> transform;
+        std::unique_ptr<rapidht_bench::CufftIntHartley> cufft;
+        std::function<void()> upload = [] { };
+        if (impl == Task1Impl::FloatFactored) {
+            stagedFloat = std::make_unique<HostBuffer<float>>(count, from == TaskFrom::Pinned);
+            std::copy(host.begin(), host.end(), stagedFloat->Data());
+            upload = [&] { cudaMemcpy(out, stagedFloat->Data(), count * sizeof(float), cudaMemcpyHostToDevice); };
+        } else {
+            in = std::make_unique<DeviceBuffer<TIn>>(count);
+            cudaMemcpy(in->Data(), host.data(), count * sizeof(TIn), cudaMemcpyHostToDevice);
+            if (from != TaskFrom::Device) {
+                stagedInt = std::make_unique<HostBuffer<TIn>>(count, from == TaskFrom::Pinned);
+                std::copy(host.begin(), host.end(), stagedInt->Data());
+                upload = [&] {
+                    cudaMemcpy(in->Data(), stagedInt->Data(), count * sizeof(TIn), cudaMemcpyHostToDevice);
+                };
+            }
+        }
+        std::function<void()> compute;
+        if (impl == Task1Impl::CufftLto) {
+            cufft = rapidht_bench::MakeCufftIntHartley(static_cast<int>(e.width), static_cast<int>(e.height),
+                static_cast<int>(e.depth), IntTypeOf<TIn>(), rapidht_bench::IntLoad::LtoCallback,
+                std::ldexp(1.0, 8 * static_cast<int>(sizeof(TIn)) - 1));
+            compute = [&] { cufft->Forward(in->Data(), out); };
+        } else {
+            transform = std::make_unique<HartleyTransform<float>>(e.width, e.height, e.depth, Modes::GPUFactored);
+            if (impl == Task1Impl::IntFactored) {
+                compute = [&] {
+                    RapiDHT::internal::DeviceAccess::ForwardFromIntegers(
+                        *transform, in->Data(), volume, RapiDHT::internal::IntegerOffset::Default());
+                };
+            } else {
+                compute = [&] { transform->ForwardTransform(volume); };
+            }
+        }
+        RunTask(
+            state, count, usedStart,
+            [&] {
+                upload();
+                compute();
+                cudaDeviceSynchronize();
+            },
+            [&]() -> std::string {
+                std::vector<float> got(count);
+                volume.Download(got.data());
+                const double error = IntegerErrorLsb(got, IntegerReference(host, e));
+                TaskAccuracy()[state.name()]["errLSB"] = error;
+                if (error < 0.0) {
+                    return "zero frequency disagrees with the CPU in double";
+                }
+                if (error > (impl == Task1Impl::FloatFactored ? 32.0 : 0.5)) {
+                    return "disagrees with the CPU in double: " + std::to_string(error) + " LSB";
+                }
+                return {};
+            });
+        ReportTaskAccuracy(state);
+    } catch (const std::exception& error) {
+        cudaGetLastError();
+        state.SkipWithError(error.what());
+    }
+}
+
+/*
+ * The filter of T2 by its definition, in double: the three circular passes of
+ * the 6 sigma + 1 taps, then rounded and clamped. Kept for the last (type,
+ * extent, sigma): the rows of one sigma run one after another.
+ */
+template <typename TIn>
+struct FilterTruth {
+    std::vector<TIn> rounded; ///< the filter in double, rounded and clamped
+    double floorShare = 0.0; ///< share of voxels where rounding through float first gives the same
+};
+
+template <typename TIn>
+const FilterTruth<TIn>& FilterReference(const std::vector<TIn>& input, const Extent& e, double sigma)
+{
+    static std::string key;
+    static FilterTruth<TIn> reference;
+    const std::string wanted = std::to_string(sizeof(TIn)) + "/" + Describe(e) + "/" + std::to_string(sigma);
+    if (key == wanted) {
+        return reference;
+    }
+    key.clear();
+    const std::vector<double> taps = rapidht_bench::GaussianTaps(sigma);
+    const long long r = static_cast<long long>(taps.size()) - 1;
+    const long long W = static_cast<long long>(e.width), H = static_cast<long long>(e.height),
+                    D = static_cast<long long>(e.depth);
+    std::vector<double> a(input.begin(), input.end());
+    // One pass along an axis of length n, `step` apart, for `outer` groups of
+    // `rows` contiguous runs of W (a group: a line along x, or a slab).
+    auto pass = [&](long long outer, long long groupStride, long long step, long long n, long long rows) {
+#pragma omp parallel for
+        for (long long o = 0; o < outer; ++o) {
+            std::vector<double> slab(static_cast<size_t>(n * rows));
+            const long long base = o * groupStride;
+            for (long long i = 0; i < n; ++i) {
+                for (long long x = 0; x < rows; ++x) {
+                    slab[static_cast<size_t>(i * rows + x)] = a[static_cast<size_t>(base + i * step + x)];
+                }
+            }
+            for (long long i = 0; i < n; ++i) {
+                for (long long x = 0; x < rows; ++x) {
+                    double s = taps[0] * slab[static_cast<size_t>(i * rows + x)];
+                    for (long long d = 1; d <= r; ++d) {
+                        s += taps[static_cast<size_t>(d)]
+                           * (slab[static_cast<size_t>(((i - d + n) % n) * rows + x)]
+                               + slab[static_cast<size_t>(((i + d) % n) * rows + x)]);
+                    }
+                    a[static_cast<size_t>(base + i * step + x)] = s;
+                }
+            }
+        }
+    };
+    pass(H * D, W, 1, W, 1); // x: each line, elements 1 apart
+    pass(D, W * H, W, H, W); // y: each z slab, rows of x
+    pass(H, W, W * H, D, W); // z: each y, rows of x
+    const double top = rapidht_bench::IntInput::U8 == IntTypeOf<TIn>() ? 255.0 : 65535.0;
+    // The floor of a float output: the exact value rounded to float, then to
+    // an integer. Near 32768 a float step is 1/256 LSB, so a voxel within that
+    // of a half rounds the other way -- about 0.2 % of uniform values.
+    auto toInteger = [top](double v) { return static_cast<TIn>(std::min(std::max(std::rint(v), 0.0), top)); };
+    reference.rounded.resize(a.size());
+    size_t same = 0;
+    for (size_t i = 0; i < a.size(); ++i) {
+        reference.rounded[i] = toInteger(a[i]);
+        same += toInteger(static_cast<float>(a[i])) == reference.rounded[i] ? 1 : 0;
+    }
+    reference.floorShare = static_cast<double>(same) / static_cast<double>(a.size());
+    key = wanted;
+    return reference;
+}
+
+enum class Task2Impl { Hartley,
+    HartleySeparable,
+    CufftLto,
+    Spatial };
+
+template <typename TIn>
+void BM_Task2(benchmark::State& state, Extent e, Task2Impl impl, double sigma, TaskFrom from)
+{
+    const size_t count = ElementCount(e.width, e.height, e.depth);
+    const int W = static_cast<int>(e.width), H = static_cast<int>(e.height), D = static_cast<int>(e.depth);
+    const std::vector<TIn> host = MakeIntegerNoise<TIn>(count);
+    const std::vector<double> taps = rapidht_bench::GaussianTaps(sigma);
+    const std::vector<float> sx = rapidht_bench::GaussianAxisSpectrum(taps, e.width);
+    const std::vector<float> sy = rapidht_bench::GaussianAxisSpectrum(taps, e.height);
+    const std::vector<float> sz = rapidht_bench::GaussianAxisSpectrum(taps, e.depth);
+    const double usedStart = DeviceUsedMiB();
+    try {
+        DeviceBuffer<TIn> in(count);
+        DeviceBuffer<TIn> out(count);
+        cudaMemcpy(in.Data(), host.data(), count * sizeof(TIn), cudaMemcpyHostToDevice);
+        std::unique_ptr<HostBuffer<TIn>> stagedIn, stagedOut;
+        if (from != TaskFrom::Device) {
+            stagedIn = std::make_unique<HostBuffer<TIn>>(count, from == TaskFrom::Pinned);
+            stagedOut = std::make_unique<HostBuffer<TIn>>(count, from == TaskFrom::Pinned);
+            std::copy(host.begin(), host.end(), stagedIn->Data());
+        }
+        std::unique_ptr<HartleyTransform<float>> transform;
+        std::unique_ptr<RapiDHT::DeviceVolume<float>> volume;
+        std::unique_ptr<DeviceBuffer<float>> tx, ty, tz;
+        std::unique_ptr<rapidht_bench::CufftGaussianFilter> cufft;
+        std::unique_ptr<rapidht_bench::SpatialGaussian> spatial;
+        std::function<void()> compute;
+        if (impl == Task2Impl::Hartley || impl == Task2Impl::HartleySeparable) {
+            const bool separable = impl == Task2Impl::HartleySeparable;
+            transform = std::make_unique<HartleyTransform<float>>(e.width, e.height, e.depth, Modes::GPUFactored);
+            volume = std::make_unique<RapiDHT::DeviceVolume<float>>(count);
+            tx = std::make_unique<DeviceBuffer<float>>(sx.size());
+            ty = std::make_unique<DeviceBuffer<float>>(sy.size());
+            tz = std::make_unique<DeviceBuffer<float>>(sz.size());
+            cudaMemcpy(tx->Data(), sx.data(), sx.size() * sizeof(float), cudaMemcpyHostToDevice);
+            cudaMemcpy(ty->Data(), sy.data(), sy.size() * sizeof(float), cudaMemcpyHostToDevice);
+            cudaMemcpy(tz->Data(), sz.data(), sz.size() * sizeof(float), cudaMemcpyHostToDevice);
+            compute = [&, separable] {
+                using RapiDHT::internal::DeviceAccess;
+                using RapiDHT::internal::IntegerOffset;
+                DeviceAccess::ForwardFromIntegers(
+                    *transform, in.Data(), *volume, IntegerOffset::Default(), separable);
+                rapidht_bench::MultiplySeparable(
+                    DevicePeek::Data(*volume), tx->Data(), ty->Data(), tz->Data(), W, H, D);
+                // The kernel sums to 1, so the rounded mean of the output is
+                // read off its H(0), as the integer inverse of step 4.3 does.
+                DeviceAccess::InverseToIntegers(
+                    *transform, *volume, out.Data(), IntegerOffset::MeanOfAll(), nullptr, separable);
+            };
+        } else if (impl == Task2Impl::CufftLto) {
+            cufft = std::make_unique<rapidht_bench::CufftGaussianFilter>(W, H, D, IntTypeOf<TIn>(), sx, sy, sz);
+            compute = [&] { cufft->Apply(in.Data(), out.Data()); };
+        } else {
+            spatial = std::make_unique<rapidht_bench::SpatialGaussian>(W, H, D, IntTypeOf<TIn>(), taps);
+            compute = [&] { spatial->Apply(in.Data(), out.Data()); };
+        }
+        RunTask(
+            state, count, usedStart,
+            [&] {
+                if (from != TaskFrom::Device) {
+                    cudaMemcpy(in.Data(), stagedIn->Data(), count * sizeof(TIn), cudaMemcpyHostToDevice);
+                }
+                compute();
+                if (from != TaskFrom::Device) {
+                    cudaMemcpy(stagedOut->Data(), out.Data(), count * sizeof(TIn), cudaMemcpyDeviceToHost);
+                }
+                cudaDeviceSynchronize();
+            },
+            [&]() -> std::string {
+                std::vector<TIn> got(count);
+                cudaMemcpy(got.data(), out.Data(), count * sizeof(TIn), cudaMemcpyDeviceToHost);
+                const FilterTruth<TIn>& truth = FilterReference(host, e, sigma);
+                const std::vector<TIn>& reference = truth.rounded;
+                size_t equal = 0;
+                int worst = 0;
+                for (size_t i = 0; i < count; ++i) {
+                    const int diff = std::abs(static_cast<int>(got[i]) - static_cast<int>(reference[i]));
+                    equal += diff == 0 ? 1 : 0;
+                    worst = std::max(worst, diff);
+                }
+                const double share = static_cast<double>(equal) / static_cast<double>(count);
+                TaskAccuracy()[state.name()]["matchPct"] = 100.0 * share;
+                TaskAccuracy()[state.name()]["maxDiff"] = worst;
+                TaskAccuracy()[state.name()]["floorPct"] = 100.0 * truth.floorShare;
+                if (share < 0.99) {
+                    return "only " + std::to_string(100.0 * share) + " % of the voxels agree with the definition";
+                }
+                return {};
+            });
+        ReportTaskAccuracy(state);
+    } catch (const std::exception& error) {
+        cudaGetLastError();
+        state.SkipWithError(error.what());
+    }
+}
+
+/// T3 by the definition: the bin sums of H^2 of the CPU transform in double,
+/// and the number of frequencies in each bin. Kept for the last (type, extent).
+struct PowerProfile {
+    std::vector<double> mean; ///< sum / count; 0 for an empty bin
+    std::vector<double> count;
+};
+
+template <typename TIn>
+const PowerProfile& PowerReference(const std::vector<TIn>& input, const Extent& e)
+{
+    static std::string key;
+    static PowerProfile profile;
+    const std::string wanted = std::to_string(sizeof(TIn)) + "/" + Describe(e);
+    if (key == wanted) {
+        return profile;
+    }
+    key.clear();
+    const std::vector<double>& spectrum = IntegerReference(input, e);
+    const long long W = static_cast<long long>(e.width), H = static_cast<long long>(e.height),
+                    D = static_cast<long long>(e.depth);
+    const long long longest = std::max({ W, H, D });
+    constexpr int kBins = rapidht_bench::kRadialBins;
+    std::vector<double> sum(kBins, 0.0), number(kBins, 0.0);
+#pragma omp parallel
+    {
+        std::vector<double> s(kBins, 0.0), c(kBins, 0.0);
+#pragma omp for
+        for (long long z = 0; z < D; ++z) {
+            const long long kz = rapidht_bench::ScaledFrequency(z, D, longest);
+            for (long long y = 0; y < H; ++y) {
+                const long long ky = rapidht_bench::ScaledFrequency(y, H, longest);
+                for (long long x = 0; x < W; ++x) {
+                    const long long kx = rapidht_bench::ScaledFrequency(x, W, longest);
+                    const int b = rapidht_bench::RadialBin(kx * kx + ky * ky + kz * kz, longest);
+                    const double h = spectrum[static_cast<size_t>(x + W * (y + H * z))];
+                    s[static_cast<size_t>(b)] += h * h;
+                    c[static_cast<size_t>(b)] += 1.0;
+                }
+            }
+        }
+#pragma omp critical
+        for (int b = 0; b < kBins; ++b) {
+            sum[static_cast<size_t>(b)] += s[static_cast<size_t>(b)];
+            number[static_cast<size_t>(b)] += c[static_cast<size_t>(b)];
+        }
+    }
+    profile.count = number;
+    profile.mean.assign(kBins, 0.0);
+    for (int b = 0; b < kBins; ++b) {
+        if (number[static_cast<size_t>(b)] > 0.0) {
+            profile.mean[static_cast<size_t>(b)] = sum[static_cast<size_t>(b)] / number[static_cast<size_t>(b)];
+        }
+    }
+    key = wanted;
+    return profile;
+}
+
+enum class Task3Impl { Hartley,
+    HartleySeparable,
+    CufftLto };
+
+template <typename TIn>
+void BM_Task3(benchmark::State& state, Extent e, Task3Impl impl, TaskFrom from)
+{
+    const size_t count = ElementCount(e.width, e.height, e.depth);
+    const int W = static_cast<int>(e.width), H = static_cast<int>(e.height), D = static_cast<int>(e.depth);
+    constexpr int kBins = rapidht_bench::kRadialBins;
+    const std::vector<TIn> host = MakeIntegerNoise<TIn>(count);
+    // The counts are a property of the extent, not of the data: a plan.
+    const std::vector<double> counts = PowerReference(host, e).count;
+    const double usedStart = DeviceUsedMiB();
+    try {
+        DeviceBuffer<TIn> in(count);
+        cudaMemcpy(in.Data(), host.data(), count * sizeof(TIn), cudaMemcpyHostToDevice);
+        std::unique_ptr<HostBuffer<TIn>> staged;
+        if (from != TaskFrom::Device) {
+            staged = std::make_unique<HostBuffer<TIn>>(count, from == TaskFrom::Pinned);
+            std::copy(host.begin(), host.end(), staged->Data());
+        }
+        std::vector<double> bins(kBins, 0.0), profile(kBins, 0.0);
+        std::unique_ptr<HartleyTransform<float>> transform;
+        std::unique_ptr<RapiDHT::DeviceVolume<float>> volume;
+        std::unique_ptr<DeviceBuffer<double>> deviceBins;
+        std::unique_ptr<rapidht_bench::CufftPowerProfile> cufft;
+        std::function<void()> compute;
+        if (impl == Task3Impl::CufftLto) {
+            cufft = std::make_unique<rapidht_bench::CufftPowerProfile>(W, H, D, IntTypeOf<TIn>());
+            compute = [&] { cufft->Apply(in.Data(), bins.data()); };
+        } else {
+            transform = std::make_unique<HartleyTransform<float>>(e.width, e.height, e.depth, Modes::GPUFactored);
+            volume = std::make_unique<RapiDHT::DeviceVolume<float>>(count);
+            deviceBins = std::make_unique<DeviceBuffer<double>>(kBins);
+            const bool separable = impl == Task3Impl::HartleySeparable;
+            compute = [&, separable] {
+                RapiDHT::internal::DeviceAccess::ForwardFromIntegers(
+                    *transform, in.Data(), *volume, RapiDHT::internal::IntegerOffset::Default(), separable);
+                rapidht_bench::RadialPowerHartley(DevicePeek::Data(*volume), W, H, D, deviceBins->Data(), bins.data());
+            };
+        }
+        RunTask(
+            state, count, usedStart,
+            [&] {
+                if (from != TaskFrom::Device) {
+                    cudaMemcpy(in.Data(), staged->Data(), count * sizeof(TIn), cudaMemcpyHostToDevice);
+                }
+                compute(); // ends with the bins on the host
+                for (int b = 0; b < kBins; ++b) {
+                    const double c = counts[static_cast<size_t>(b)];
+                    profile[static_cast<size_t>(b)] = c > 0.0 ? bins[static_cast<size_t>(b)] / c : 0.0;
+                }
+            },
+            [&]() -> std::string {
+                const PowerProfile& reference = PowerReference(host, e);
+                double worst = 0.0;
+                for (int b = 0; b < kBins; ++b) {
+                    const double want = reference.mean[static_cast<size_t>(b)];
+                    if (reference.count[static_cast<size_t>(b)] > 0.0) {
+                        worst = std::max(worst, std::fabs(profile[static_cast<size_t>(b)] - want) / want);
+                    }
+                }
+                TaskAccuracy()[state.name()]["relErr"] = worst;
+                if (!(worst <= 1e-3)) {
+                    return "the profile disagrees with the CPU in double: relative error " + std::to_string(worst);
+                }
+                return {};
+            });
+        ReportTaskAccuracy(state);
+    } catch (const std::exception& error) {
+        cudaGetLastError();
+        state.SkipWithError(error.what());
+    }
+}
+
+/*
+ * The rows of stage 5. For each extent and type: T1, then T3 (both check
+ * against the same CPU spectrum, kept between rows), then T2 by sigma (its
+ * reference is the filter, kept per sigma).
+ */
+template <typename TIn>
+void RegisterTasksFor(const Extent& e, const char* type)
+{
+    const TaskFrom all[] = { TaskFrom::Device, TaskFrom::Pageable, TaskFrom::Pinned };
+    const std::string tail = std::string("/3D/") + Describe(e);
+    auto name = [&](const char* family, const std::string& middle, TaskFrom from) {
+        return std::string(family) + "/" + type + middle + "/" + TaskFromName(from) + tail;
+    };
+    const std::pair<const char*, Task1Impl> t1[] = { { "Task1/IntFactored", Task1Impl::IntFactored },
+        { "Task1/FloatFactored", Task1Impl::FloatFactored }, { "Task1/cuFFTLto", Task1Impl::CufftLto } };
+    for (const auto& [family, impl] : t1) {
+        for (const TaskFrom from : all) {
+            if (impl == Task1Impl::FloatFactored && from == TaskFrom::Device) {
+                continue; // on the device it is FactoredResident/, not a task from integers
+            }
+            benchmark::RegisterBenchmark(name(family, "", from).c_str(),
+                [e, impl = impl, from](benchmark::State& s) { BM_Task1<TIn>(s, e, impl, from); })
+                ->Unit(benchmark::kMillisecond);
+        }
+    }
+    const std::pair<const char*, Task3Impl> t3[] = { { "Task3/Hartley", Task3Impl::Hartley },
+        { "Task3/HartleySeparable", Task3Impl::HartleySeparable }, { "Task3/cuFFTLto", Task3Impl::CufftLto } };
+    for (const auto& [family, impl] : t3) {
+        for (const TaskFrom from : all) {
+            benchmark::RegisterBenchmark(name(family, "", from).c_str(),
+                [e, impl = impl, from](benchmark::State& s) { BM_Task3<TIn>(s, e, impl, from); })
+                ->Unit(benchmark::kMillisecond);
+        }
+    }
+    const std::pair<const char*, Task2Impl> t2[] = { { "Task2/Hartley", Task2Impl::Hartley },
+        { "Task2/HartleySeparable", Task2Impl::HartleySeparable }, { "Task2/cuFFTLto", Task2Impl::CufftLto },
+        { "Task2/Spatial", Task2Impl::Spatial } };
+    for (const int sigma : { 1, 2, 4 }) {
+        for (const auto& [family, impl] : t2) {
+            if (impl == Task2Impl::Spatial && sigma > 2) {
+                continue;
+            }
+            for (const TaskFrom from : all) {
+                benchmark::RegisterBenchmark(name(family, "/s" + std::to_string(sigma), from).c_str(),
+                    [e, impl = impl, sigma, from](benchmark::State& s) {
+                        BM_Task2<TIn>(s, e, impl, static_cast<double>(sigma), from);
+                    })
+                    ->Unit(benchmark::kMillisecond);
+            }
+        }
+    }
+}
+
+// R-5 step 5.1: 256^3, 512^3 and the largest slab of a Korneev column that is
+// a power of two, 1024 x 1024 x 512; uint16, and uint8 at 512^3.
+const Extent kExtentsTasks[] = { { 256, 256, 256 }, { 512, 512, 512 }, { 1024, 1024, 512 } };
+
+void RegisterTasks()
+{
+    if (!RapiDHT::IsGpuAvailable()) {
+        return;
+    }
+    for (const Extent& e : kExtentsTasks) {
+        RegisterTasksFor<uint16_t>(e, "u16");
+        if (e.width == 512) {
+            RegisterTasksFor<uint8_t>(e, "u8");
+        }
+    }
+}
+#endif
+
 /// R-5 step 1.2: the mean offset, exact and sampled.
 void RegisterIntOffset(const Extent* extents, size_t n)
 {
@@ -1540,6 +2145,7 @@ int main(int argc, char** argv)
 #ifdef RAPIDHT_WITH_CUDA
     RegisterIntegerInverse(kExtents3D, CountOf(kExtents3D)); // R-5 step 4.3
     RegisterIntegerInverse(kExtentsR5Large3D, CountOf(kExtentsR5Large3D));
+    RegisterTasks(); // R-5 step 5.1
 #endif
     RegisterIntOffset(kExtents3D + 2, 1); // 512^3
     RegisterIntOffset(kExtentsR5Large3D + 1, 1); // 1024^3

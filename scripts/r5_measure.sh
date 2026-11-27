@@ -175,6 +175,9 @@ echo "== 5/5 benchmark: R-4 rows and the R-5 families, 7 repetitions (clock not 
 #                conversion kernel; cuFFTIntInv / cuFFTIntInvLto -- C2R and a kernel /
 #                an LTO store callback (step 4.3)
 #   IntOffset    the mean offset on the device: exact, every 64th / 512th line (step 1.2)
+#   Task<N>/<implementation>/...  the end-to-end tasks of stage 5, with R5_TASKS=1 only
+#                (benchmarks/tasks_gpu.h; the names and checks are described above
+#                BM_Task1 in bench_transform.cpp)
 sizes='(128x128x128|256x256x256|512x512x512)'
 r4_rows="(cuFFT|cuFFT_R2C|FactoredResident|FactoredResidentSeparable)/f32/3D/$sizes"
 r5_sizes=$sizes
