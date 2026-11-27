@@ -1,0 +1,40 @@
+tag: s63t
+date: 2026-11-27T12:36:58+04:00
+settings: (none)
+table: tasks
+cuda: 13.2 (13.2.51)
+commit: 77f3380cf29df7fd9e7181df84cbe873077c19a6
+uncommitted:
+   M tools/r5_figures.py
+  ?? benchmarks/results/2026-11-27_evgeny_r5_s63.json
+  ?? benchmarks/results/2026-11-27_evgeny_r5_s63.meta.txt
+  ?? benchmarks/results/2026-11-27_evgeny_r5_s63_accuracy.txt
+  ?? benchmarks/results/2026-11-27_evgeny_r5_s63_accuracy_table.txt
+  ?? benchmarks/results/2026-11-27_evgeny_r5_s63_trace.txt
+  ?? benchmarks/results/2026-11-27_evgeny_r5_s63t.meta.txt
+  ?? docs/images/r5-scaling.svg
+sources:
+  c15c953224fd048442ff390c7b296e92264104bb8dbc0950befa76e58a4cd668  src/internal/factored_kernels.cuh
+  44568b0360b4b6ba499f985884048de51de0e02566d0aa35183d4deaed894ebd  src/kernels.cu
+  855c06a238a60241120d33e55ac33121898d34c6c5d437a06893754721bafefa  src/backend_cuda.cpp
+  c001a7b5e3a70fa39bb6fa104a0b6bfe41e1160a0635499bb579db8e4e720d68  src/internal/kernels.h
+  8282bfc584061a612d762dc45e73d2e9614a9c6893569357cf526e1ddf8a9b69  benchmarks/bench_transform.cpp
+  9bd980a1fcf25f7d0d1e277684fb5bf04b8f35652b4d20f2235650a403d00b2a  benchmarks/cufft_baseline.h
+  9c7ebf15d28e241d327451c0a9ea831e7d8bce7debb2194e951426e0e46c3441  benchmarks/cufft_baseline.cu
+  8b76c86b7fd6ffedf3df94a3ec7205a3c49d91cb5be7c3eb160aa7c993540c43  benchmarks/cufft_common.cuh
+  ccb27ab79a4f706dd91354e2c4767600f947060f0f958c6f5ccd8aa1fa1eed59  benchmarks/cufft_int_callback.cu
+  40a383524503938aa8cd85a98240255e1e94bf2dd8aebd290f6b67e0d6c266dd  benchmarks/cufft_int_lto_callback.cu
+  4e263426940fedfd65c17a7018d215e80d362d1e8b8386a88cd1c4080e2429ac  benchmarks/accuracy_integer.cpp
+  320336bd0c13e43409cdcc49403fef6f3bfd6639d03814d83698c82dbd85b2d9  benchmarks/tasks_gpu.h
+  a5528ecc22eb6ac163058b01694a04e2862b6a20daec96f585d4d5a20681a250  benchmarks/tasks_gpu.cu
+data:
+  (none: generated inputs only)
+binaries:
+  -rwxrwxr-x 1 evgeny evgeny 5196832 2026-11-27 11:54 build-bench/benchmarks/accuracy_integer
+  -rwxrwxr-x 1 evgeny evgeny 6369912 2026-11-27 11:55 build-bench/benchmarks/bench_transform
+  -rwxrwxr-x 1 evgeny evgeny 5056120 2026-11-27 11:54 build-bench/benchmarks/profile_gpu3d
+gpu:
+  NVIDIA GeForce RTX 3060 Ti, 595.99.02, 37, 6.02 W, 671 MiB
+other processes on the gpu (they add noise; close what you can):
+  21706, /usr/libexec/gnome-remote-desktop-daemon, 233 MiB
+  21373, /usr/libexec/gnome-remote-desktop-daemon, 134 MiB

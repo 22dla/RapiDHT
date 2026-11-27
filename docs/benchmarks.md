@@ -732,6 +732,9 @@ input -- the type of the input matters more there than any kernel
 
 ![R-5 budget at 512^3, uint16](images/r5-budget.svg)
 
+*Redrawn from `…_r5_s63.json` at step 6.3; the last bar is the measured
+integer path with the default policy (`tools/r5_figures.py …_r5_s63.json`).*
+
 ## Integer volumes: the cuFFT baseline (R-5 step 0.2, 2026-11-25)
 
 cuFFT has no integer input type. Three ways to give it a uint8 / uint16 volume
@@ -1040,7 +1043,8 @@ What it says:
 
 ![R-5 tasks at 512^3, uint16](images/r5-tasks.svg)
 
-*Drawn by `tools/r5_figures.py tasks …_r5_s51.json`.*
+*Drawn by `tools/r5_figures.py tasks …_r5_s63v.json` (the repeat of step 6.3;
+the numbers of the table are s51's, which s63v confirms).*
 
 ### Verdict by task (R-5 step 5.2, 2026-11-27)
 
@@ -1086,6 +1090,168 @@ takes 7.8.
 
 None of this is fixed in R-5. The openings it ranks feed section 10 of
 `docs/R5_PLAN.md`.
+
+---
+
+## Integer volumes: the full table (R-5 step 6.3, 2026-11-27)
+
+The closing measurement of R-5, taken with the code as released (public
+integer API of step 6.1). Everything in this section comes from two runs on
+the desktop (RTX 3060 Ti, CUDA 13.2, float, input on the device unless
+stated):
+
+- `benchmarks/results/2026-11-27_evgeny_r5_s63.json`
+  (`R5_LARGE=1 R5_BUS=1 R5_ACC=1 bash scripts/r5_measure.sh s63`): the
+  transforms, the bus and the accuracy report (`…_s63_accuracy.txt`,
+  verdict in `…_s63_accuracy_table.txt`);
+- `…_r5_s63v.json` (`R5_TASKS=1`): the end-to-end tasks. The first tasks run,
+  `s63t`, is kept but not used: another application took the GPU halfway
+  through it (cv up to 16 % at 512³).
+
+The R-4 rows of s63 are within noise of `s43` (largest change 0.3 %), and the
+accuracy table is identical to s43's digit for digit: the float path did not
+move while R-5 was built.
+
+### Forward: integers → Hartley spectrum in float
+
+ms; "ours" is the integer first pass with the default offset policy (mean of
+every 64th line, `IntFactoredEvery64`); the baselines are cuFFT R2C plus the
+Hartley pass, fed by a conversion kernel, a legacy load callback or an LTO
+load callback; "convert" is a conversion kernel plus our float path. Peak
+memory is that of the whole task, input included, MiB.
+
+| | cuFFT, convert | cuFFT, callback | cuFFT, LTO callback | ours, convert | **ours** | / LTO | / ours, convert | memory, ours / LTO |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| u16 128³ | 0.208 | 0.383 | 0.170 | 0.186 | **0.162** | 0.95 | 0.87 | 36 / 24 |
+| u16 256³ | 1.580 | 2.827 | 1.276 | 1.395 | **1.208** | 0.95 | 0.87 | 128 / 164 |
+| u16 512³ | 12.62 | 15.44 | 10.03 | 11.33 | **9.71** | 0.97 | 0.86 | 800 / 1 284 |
+| u16 1024 × 1024 × 512 | 52.0 | -- | 41.7 | 58.2 | **51.7** | 1.24 | 0.89 | 3 104 / 5 126 |
+| u16 1024³ | does not fit | does not fit | does not fit | 157.2 | **126.4** | -- | 0.80 | 6 176 / -- |
+| u8 128³ | 0.203 | 0.393 | 0.169 | 0.181 | **0.152** | 0.90 | 0.84 | 34 / 22 |
+| u8 256³ | 1.541 | 2.387 | 1.291 | 1.355 | **1.188** | 0.92 | 0.88 | 112 / 148 |
+| u8 512³ | 12.31 | 15.17 | 9.72 | 11.03 | **10.31** | 1.06 | 0.93 | 672 / 1 156 |
+| u8 1024 × 1024 × 512 | 50.9 | 92.4 | 41.1 | 56.9 | **54.2** | 1.32 | 0.95 | 2 592 / 4 614 |
+| u8 1024³ | does not fit | does not fit | does not fit | 155.2 | **120.9** | -- | 0.78 | 5 152 / -- |
+
+The legacy callback of u16 at 1024 × 1024 × 512 is not in the harness (it
+does not fit next to the reference). The offset policies cost, at 512³ u16:
+none 9.68, every 512th line 9.68, every 64th 9.71, exact mean 10.37 ms; the
+reduction alone takes 0.018 ms for every 64th line and 0.70 ms for the exact
+mean (u8: 0.012 and 0.44).
+
+![Scaling of the integer paths, uint16](images/r5-scaling.svg)
+
+*Drawn by `tools/r5_figures.py scaling …_r5_s63.json`: time per voxel, so a
+flat line is linear scaling.*
+
+### Inverse: Hartley spectrum → integers
+
+ms; ours writes the integers in its last pass, with the offset rint(H(0)/N)
+(the mean policy of the inverse, free); the baselines are our float inverse
+plus a conversion kernel, cuFFT C2R plus a conversion kernel, and cuFFT C2R
+with an LTO store callback.
+
+| | ours, float + convert | cuFFT C2R + convert | cuFFT C2R, LTO callback | **ours** | / LTO | / ours, float + convert | memory, ours / LTO |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| u16 128³ | 0.230 | 0.166 | 0.128 | **0.147** | 1.15 | 0.64 | 36 / 26 |
+| u16 256³ | 1.756 | 1.252 | 0.997 | **1.191** | 1.19 | 0.68 | 192 / 166 |
+| u16 512³ | 13.88 | 10.06 | 7.41 | **9.78** | 1.32 | 0.70 | 1 312 / 1 286 |
+| u16 1024 × 1024 × 512 | 68.8 | does not fit the harness | -- | **49.3** | -- | 0.72 | 5 152 / -- |
+| u8 128³ | 0.226 | 0.162 | 0.127 | **0.152** | 1.20 | 0.67 | 34 / 24 |
+| u8 256³ | 1.707 | 1.214 | 0.994 | **1.176** | 1.18 | 0.69 | 176 / 150 |
+| u8 512³ | 13.57 | 9.73 | 7.09 | **9.75** | 1.38 | 0.72 | 1 184 / 1 158 |
+| u8 1024 × 1024 × 512 | 67.7 | does not fit the harness | -- | **47.2** | -- | 0.70 | 4 640 / -- |
+
+The harness keeps the spectrum to restore it before every iteration, which
+is part of both peaks; the inverse itself needs no buffer beyond input and
+output.
+
+### Images
+
+2D, ms, ours with the default policy against the LTO callback and against our
+path with a conversion; the float row is R-4's `FactoredResident` against
+cuFFT + Hartley:
+
+| | ours, u16 | ours, u8 | cuFFT LTO, u16 | / LTO (u16, u8) | / ours, convert (u16, u8) | float: ours / cuFFT |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| 512² | 0.032 | 0.032 | 0.018 | 1.78, 1.79 | 0.90, 0.90 | 0.028 / 0.018 |
+| 1024² | 0.134 | 0.133 | 0.072 | 1.86, 1.90 | 0.94, 0.95 | 0.118 / 0.071 |
+| 2048² | 0.742 | 0.733 | 0.273 | 2.72, 2.71 | 1.00, 1.01 | 0.662 / 0.284 |
+
+Images stay cuFFT's, as in R-4: the integer entry point saves the conversion
+and nothing more.
+
+### The bus
+
+512³, one direction, ms (GiB/s): u8 15.2 (8.2) from pageable and 10.9 (11.5)
+from pinned memory; u16 30.3 / 21.8; float 60.6 / 43.6. The rate does not
+depend on the type, so the integers cost what their bytes cost: a uint16
+volume crosses in half the time of the float volume the library took before
+R-5, a uint8 volume in a quarter.
+
+### Accuracy
+
+Largest error of the forward transform in LSB of the input with the default
+policy, and as a share of cuFFT's with the same offset (in brackets);
+`…_s63_accuracy_table.txt`:
+
+| input | ours | / cuFFT | RMS, LSB |
+| --- | ---: | ---: | ---: |
+| white noise u8 0…255, 512³ | 1.1·10⁻⁴ | 0.61 | 1.7·10⁻⁵ |
+| white noise u16 0…65535, 512³ | 0.032 | 0.72 | 4.4·10⁻³ |
+| u16 band 30000 ± 2000, 512³ | 0.0017 | 0.66 | 2.7·10⁻⁴ |
+| synthetic cylinder u16, 512³ | 6.66 | 1.10 | 2.3·10⁻³ |
+| synthetic cylinder u8, 512³ | 0.020 | 0.84 | 8.0·10⁻⁶ |
+| C6197A, centre 512³ | 0.53 | 0.65 | 1.0·10⁻³ |
+| C6203A, centre 512³ | 0.94 | 0.73 | 1.6·10⁻³ |
+| C6197A, whole 1024 × 1024 × 512 | 7.74 | 0.47 | 2.3·10⁻³ |
+| C6203A, whole 1024 × 1024 × 512 | 30.0 | **1.53** | 3.1·10⁻³ |
+
+- **C3** (RMS ≤ 0.01 LSB, largest ≤ 1.5 of cuFFT on the synthetic and real
+  inputs, 12 of them with the 128³ crops) holds on 11 and fails on one: the
+  whole C6203A slice, 1.53. The RMS is 3·10⁻³ LSB everywhere. The rows of
+  the large inputs are in LSB, but their floor (the exact spectrum rounded to
+  float) is 4–5 LSB: 30 is 7.6 floors, inside the policy rule of 10.
+- Without an offset the largest error is 10.6–23.6 LSB on every uint16 input; the
+  default policy is the cheapest that passes the rule on all of them.
+- **C4:** all 126 round trips through the integer inverse on the device (two
+  types, 128³–1024 × 1024 × 512, noise, synthetic and real, every policy)
+  restore every voxel, none clamped; 378 round trips in all, both libraries,
+  none lose a voxel.
+
+### End-to-end tasks
+
+`…_r5_s63v.json` repeats the task set of step 5.1 with the released code:
+207 of its 212 rows are within noise of `s51`, every row with the input on
+the device among them. The five others are T2 from host memory (medians
++0.3 to +6 %, cv up to 12 %: the host side of the copies). The table and the
+verdict of the end-to-end section stand as they are. The task figure there
+is redrawn from s63v.
+
+T1 from the host against cuFFT with the LTO callback, the criterion C5 reads
+on: u16 256³ 0.98 (pinned) / 0.98 (pageable), u16 512³ 0.98 / 0.99,
+u8 512³ 1.02 / 1.02, u16 1024 × 1024 × 512 1.07 / 1.06. Today's float path
+from the host takes 1.6–1.8 times as long as the integer entry point
+(u8: 2.5–2.8).
+
+### What R-5 leaves
+
+- **Memory and size.** The integer forward transform holds 0.6 of cuFFT's
+  peak (800 against 1 284 MiB at 512³ u16), and 1024³ in uint16 (6 176 MiB)
+  and uint8 (5 152 MiB) is transformed on the 8 GB card only by this library.
+- **Time.** Against the strongest cuFFT variant (R2C with an LTO load callback
+  and the Hartley pass) the integer forward is 0.90–0.97 at 128³–512³ and
+  1.06 for u8 at 512³; 1.24–1.32 at 1024 × 1024 × 512, where the length-1024
+  passes are slow already in float. Against the path with a conversion
+  kernel it takes 0.78–0.95 of the time. The inverse into integers takes
+  0.64–0.72 of ours with a conversion, but cuFFT's C2R with a store callback
+  is faster (1.15–1.38).
+- **Accuracy.** With the default offset ours is the more accurate of the two
+  on every input but the synthetic cylinder in uint16 (1.10–1.33) and the
+  whole C6203A slice (1.53); the round trip is lossless everywhere.
+- **Across the bus** the integer input matters more than any kernel: from
+  host memory the integer path takes 0.56–0.62 of what the library needed
+  before R-5 for a uint16 volume.
 
 ## FFTW, for reference
 

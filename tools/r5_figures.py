@@ -2,6 +2,7 @@
 
     python3 tools/r5_figures.py [RUN.json ...]      # writes docs/images/r5-budget.svg
     python3 tools/r5_figures.py tasks RUN.json      # writes docs/images/r5-tasks.svg (step 5.1)
+    python3 tools/r5_figures.py scaling RUN.json    # writes docs/images/r5-scaling.svg (step 6.3)
 
 r5-budget: time of "uint16 -> Hartley spectrum" at 512^3, on the device and
 from the host, from r5_measure.sh runs. Every number is a median of one
@@ -14,13 +15,19 @@ measured totals:
   conversion uint16 -> float   cuFFTInt - cuFFT, IntConvertFactored - FactoredResident
   Hartley pass of cuFFT        cuFFT - cuFFT_R2C
   cuFFT with the LTO callback  cuFFTIntLto - (Hartley pass)
-The only hatched segment is the target of R-5 (section 4 of the plan), which
-is an estimate until stage 2 measures it.
+The last bar is the library as shipped since step 6.1: the first pass reads
+uint16 itself, default offset policy (IntFactoredEvery64). Until step 6.3 it
+was the hatched target estimate of section 4 of the plan.
 
 r5-tasks (step 5.1): the end-to-end tasks T1-T3 at 512^3 uint16 from one
 R5_TASKS=1 run, on the device and from pinned host memory: this library (the
 faster of its variants), cuFFT the strongest way (LTO callbacks) and, for the
 filter at sigma 1 and 2, the spatial filter. Every bar is a measured median.
+
+r5-scaling (step 6.3): time per voxel of uint16 -> spectrum and spectrum ->
+uint16 from 128^3 to 1024^3, from one R5_LARGE=1 run: this library (integer
+passes, and with a conversion kernel) against cuFFT (LTO callbacks, and with
+a conversion kernel). A missing point is a variant that does not fit.
 """
 
 from __future__ import annotations
@@ -37,7 +44,6 @@ from matplotlib.patches import Patch
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 SIZE = "3D/512x512x512"
-TARGET_MS = 8.8  # R-5 target, section 4 of docs/R5_PLAN.md: 8.6-9.0 ms
 
 
 def medians(path: pathlib.Path) -> dict[str, float]:
@@ -62,7 +68,8 @@ def collect(files: list[pathlib.Path], names: list[str]) -> tuple[dict[str, floa
 def main() -> None:
     files = [pathlib.Path(a) for a in sys.argv[1:]] or sorted((ROOT / "benchmarks" / "results").glob("*_r5_*.json"))
     dev_names = [f"cuFFT/f32/{SIZE}", f"cuFFT_R2C/f32/{SIZE}", f"FactoredResident/f32/{SIZE}",
-                 f"cuFFTInt/u16/{SIZE}", f"cuFFTIntLto/u16/{SIZE}", f"IntConvertFactored/u16/{SIZE}"]
+                 f"cuFFTInt/u16/{SIZE}", f"cuFFTIntLto/u16/{SIZE}", f"IntConvertFactored/u16/{SIZE}",
+                 f"IntFactoredEvery64/u16/{SIZE}"]
     bus_names = [f"H2D/u16/pageable/{SIZE}", f"H2D/f32/pageable/{SIZE}",
                  f"H2D/u16/pinned/{SIZE}", f"H2D/f32/pinned/{SIZE}"]
     d, dev_file = collect(files, dev_names)
@@ -77,13 +84,13 @@ def main() -> None:
     dev = [
         ("cuFFT: перевод в float + R2C\n+ перевод в Хартли", [("conv", conv_cufft, True), ("core", r2c, True), ("hart", hart, True)]),
         ("cuFFT: R2C с колбэком LTO\n+ перевод в Хартли", [("core", lto_core, True), ("hart", hart, True)]),
-        ("RapiDHT сейчас: перевод в float\n+ факторизованный путь", [("conv", conv_ours, True), ("core", ours, True)]),
-        ("RapiDHT, цель R-5: первый проход\nчитает uint16 (оценка)", [("core", TARGET_MS, False)]),
+        ("RapiDHT: перевод в float\n+ факторизованный путь", [("conv", conv_ours, True), ("core", ours, True)]),
+        ("RapiDHT: первый проход\nчитает uint16", [("core", d[dev_names[6]], True)]),
     ]
-    short = ["cuFFT: перевод + R2C + Хартли", "cuFFT: колбэк LTO + Хартли", "RapiDHT сейчас: перевод + путь",
-             "RapiDHT, цель R-5 (оценка)"]
+    short = ["cuFFT: перевод + R2C + Хартли", "cuFFT: колбэк LTO + Хартли", "RapiDHT: перевод + путь",
+             "RapiDHT: проход читает uint16"]
     pageable_u16, pageable_f32 = b[bus_names[0]], b[bus_names[1]]
-    host = [("RapiDHT сейчас: вход float с хоста", [("bus", pageable_f32, True), ("core", ours, True)])] + [
+    host = [("RapiDHT: вход float с хоста", [("bus", pageable_f32, True), ("core", ours, True)])] + [
         (short[i], [("bus", pageable_u16, True)] + segs) for i, (_, segs) in enumerate(dev)
     ]
 
@@ -121,8 +128,7 @@ def main() -> None:
     handles = [Patch(facecolor=colours["bus"], label="перенос с хоста, обычная память"),
                Patch(facecolor=colours["conv"], label="перевод uint16 → float"),
                Patch(facecolor=colours["core"], label="преобразование (cuFFT R2C или проходы RapiDHT)"),
-               Patch(facecolor=colours["hart"], label="перевод спектра в Хартли"),
-               Patch(facecolor="white", edgecolor=txt2, hatch="///", label="оценка, не замер")]
+               Patch(facecolor=colours["hart"], label="перевод спектра в Хартли")]
     fig.legend(handles=handles, loc="lower center", ncol=3, frameon=False, fontsize=9)
     fig.tight_layout(rect=(0.27, 0.08, 1, 1))
     out = ROOT / "docs" / "images" / "r5-budget.svg"
@@ -156,7 +162,7 @@ def tasks(path: pathlib.Path) -> None:
     fig, axes = plt.subplots(1, 2, figsize=(10.5, 4.8), sharey=True)
     height = 0.26
     for ax, where, title in [(axes[0], "device", "Объём uint16 на устройстве, мс"),
-                             (axes[1], "pinned", "С хоста, закреплённая память (Т2 — и обратно), мс")]:
+                             (axes[1], "pinned", "С хоста, закреплённая память, мс\n(Т2 — и обратно)")]:
         limit = 0.0
         for i, (label, middle, families) in enumerate(tasks_):
             y0 = len(tasks_) - 1 - i
@@ -189,8 +195,56 @@ def tasks(path: pathlib.Path) -> None:
     print(f"wrote {out}\n  rows: {path.name}")
 
 
+def scaling(path: pathlib.Path) -> None:
+    rows = medians(path)
+    sizes = [("128³", "128x128x128", 128**3), ("256³", "256x256x256", 256**3), ("512³", "512x512x512", 512**3),
+             ("1024²×512", "1024x1024x512", 1024 * 1024 * 512), ("1024³", "1024x1024x1024", 1024**3)]
+    panels = [
+        ("uint16 → спектр Хартли (float)", [
+            ("IntFactoredEvery64", "RapiDHT: проход читает uint16", "#00b894", "-"),
+            ("IntConvertFactored", "RapiDHT: ядро перевода + путь", "#00b894", "--"),
+            ("cuFFTIntLto", "cuFFT: колбэк загрузки LTO", "#257de0", "-"),
+            ("cuFFTInt", "cuFFT: ядро перевода", "#257de0", "--")]),
+        ("спектр → uint16 (обратное)", [
+            ("IntInverse", "RapiDHT: проход пишет uint16", "#00b894", "-"),
+            ("IntInverseConvert", "RapiDHT: путь + ядро перевода", "#00b894", "--"),
+            ("cuFFTIntInvLto", "cuFFT: колбэк сохранения LTO", "#257de0", "-"),
+            ("cuFFTIntInv", "cuFFT: ядро перевода", "#257de0", "--")]),
+    ]
+    plt.rcParams.update({"font.family": "DejaVu Sans", "font.size": 10, "svg.fonttype": "none"})
+    txt, txt2, grid = "#191919", "#666666", "#e6e6e6"
+    fig, axes = plt.subplots(1, 2, figsize=(10.5, 4.4), sharey=True)
+    for ax, (title, lines) in zip(axes, panels):
+        for family, label, colour, style in lines:
+            xs, ys = [], []
+            for i, (_, name, count) in enumerate(sizes):
+                ms = rows.get(f"{family}/u16/3D/{name}")
+                if ms is not None:
+                    xs.append(i)
+                    ys.append(ms * 1e6 / count)  # ns per voxel
+            ax.plot(xs, ys, style, color=colour, marker="o", markersize=4, linewidth=1.8, label=label)
+        ax.set_xticks(range(len(sizes)), [s[0] for s in sizes])
+        ax.set_title(title, loc="left", color=txt, fontsize=10.5)
+        ax.yaxis.grid(True, color=grid, linewidth=0.8)
+        ax.set_axisbelow(True)
+        for side in ("top", "right"):
+            ax.spines[side].set_visible(False)
+        for side in ("bottom", "left"):
+            ax.spines[side].set_color(txt2)
+        ax.tick_params(colors=txt2)
+        ax.legend(frameon=False, fontsize=8.5, loc="upper left")
+    axes[0].set_ylabel("нс на воксель (меньше — лучше)", color=txt2)
+    axes[0].set_ylim(bottom=0)
+    fig.tight_layout()
+    out = ROOT / "docs" / "images" / "r5-scaling.svg"
+    fig.savefig(out, metadata={"Date": None})
+    print(f"wrote {out}\n  rows: {path.name}")
+
+
 if __name__ == "__main__":
     if len(sys.argv) == 3 and sys.argv[1] == "tasks":
         tasks(pathlib.Path(sys.argv[2]))
+    elif len(sys.argv) == 3 and sys.argv[1] == "scaling":
+        scaling(pathlib.Path(sys.argv[2]))
     else:
         main()
