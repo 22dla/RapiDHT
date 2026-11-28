@@ -150,7 +150,7 @@ bg=#FFFFFF</panel_attributes>
       <x>900</x>
       <y>290</y>
       <w>410</w>
-      <h>410</h>
+      <h>480</h>
     </coordinates>
     <panel_attributes>*EvenKernelConvolution&lt;T&gt;*, *EvenKernelBank&lt;T&gt;*, *CircularConvolution&lt;T&gt;*
 «convolution.h — mode CPU or GPUFactored (R-6)»
@@ -173,6 +173,11 @@ bg=#FFFFFF</panel_attributes>
   holds EvenKernelConvolution (symmetric kernel) or
   CircularConvolution; Edges::Zero or Edges::Normalized
   (÷ c * g); Apply(data, out), Apply(data, certainty, out)
+--
+«filters.h» (B-104) — physical units, Spacing {x, y, z}
++GaussianKernel, BallKernel → CompactKernel&lt;T&gt; (odd, centred)
++ButterworthKernel(w, h, d, cutoff, order) — wrapped, spectrum = B(f)
++WrapKernel(compact, w, h, d) — centre to index 0
 --
 «free function»
 +IsEvenPerAxis(kernel, w, h, d, tol): bool
@@ -426,6 +431,7 @@ bg=#FFFFFF</panel_attributes>
     <panel_attributes>«sources» other
 --
 convolution.cpp — EvenKernelConvolution, EvenKernelBank, CircularConvolution, LinearConvolution
+filters.cpp — GaussianKernel, BallKernel, ButterworthKernel, WrapKernel
 device_volume.cpp — DeviceVolume, IsGpuAvailable
 utilities.cpp — ParseDims
 bg=#FFFFFF</panel_attributes>
@@ -713,7 +719,7 @@ bg=#FFFFFF</panel_attributes>
     <id>UMLClass</id>
     <coordinates>
       <x>900</x>
-      <y>720</y>
+      <y>780</y>
       <w>410</w>
       <h>140</h>
     </coordinates>
