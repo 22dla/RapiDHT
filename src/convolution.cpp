@@ -1,8 +1,8 @@
 /*
  * Project: RapiDHT
  * File: src/convolution.cpp
- * Brief: EvenKernelConvolution, EvenKernelBank, CircularConvolution and
- *        IsEvenPerAxis.
+ * Brief: EvenKernelConvolution, EvenKernelBank, CircularConvolution,
+ *        LinearConvolution and IsEvenPerAxis.
  */
 
 #include <rapidht/convolution.h>
@@ -13,6 +13,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <limits>
 #include <stdexcept>
 #include <string>
 #include <utility>
@@ -368,6 +369,225 @@ void CircularConvolution<T>::Apply(DeviceVolume<T>& volume)
     internal::DeviceAccess::Convolve(_transform, volume, *_deviceSpectrum, true);
 }
 
+namespace {
+
+size_t NextPowerOfTwo(size_t n)
+{
+    size_t p = 1;
+    while (p < n) {
+        p <<= 1;
+    }
+    return p;
+}
+
+} // namespace
+
+template <typename T>
+LinearConvolution<T>::LinearConvolution(size_t width, size_t height, size_t depth, size_t kernelWidth,
+    size_t kernelHeight, size_t kernelDepth, Edges edges, Modes mode):
+    _extent { width, Extent(height), Extent(depth) },
+    _radius { 0, 0, 0 },
+    _padded { 0, 0, 0 },
+    _size(width * Extent(height) * Extent(depth)),
+    _kernelSize(Extent(kernelWidth) * Extent(kernelHeight) * Extent(kernelDepth)),
+    _paddedSize(0),
+    _edges(edges),
+    _mode(mode)
+{
+    CheckConvolutionMode(mode, "LinearConvolution");
+    if (width == 0) {
+        throw std::invalid_argument("LinearConvolution: the width must not be zero.");
+    }
+    if (height == 0 && depth != 0) {
+        throw std::invalid_argument("LinearConvolution: a depth needs a height (height == 0 means 1D).");
+    }
+    const bool present[3] = { true, height != 0, depth != 0 };
+    const size_t kernel[3] = { kernelWidth, kernelHeight, kernelDepth };
+    _paddedSize = 1;
+    for (int axis = 0; axis < 3; ++axis) {
+        if (!present[axis]) {
+            if (kernel[axis] > 1) {
+                throw std::invalid_argument("LinearConvolution: the kernel has an extent of "
+                                            + std::to_string(kernel[axis]) + " along an axis the volume lacks.");
+            }
+            continue;
+        }
+        if (kernel[axis] % 2 == 0) {
+            throw std::invalid_argument("LinearConvolution: every kernel extent must be odd (centre in the middle), got "
+                                        + std::to_string(kernel[axis]) + ".");
+        }
+        _radius[axis] = kernel[axis] / 2;
+        // N + r keeps the wrap-around inside the padding; 2r + 1 keeps the
+        // kernel's taps from landing on one another in the wrapped layout.
+        _padded[axis] = NextPowerOfTwo(std::max(_extent[axis] + _radius[axis], 2 * _radius[axis] + 1));
+        _paddedSize *= _padded[axis];
+    }
+    _buffer.assign(_paddedSize, T(0));
+}
+
+template <typename T>
+void LinearConvolution<T>::SetKernel(const T* kernel)
+{
+    PROFILE_FUNCTION();
+
+    if (kernel == nullptr) {
+        throw std::invalid_argument("LinearConvolution::SetKernel: the pointer to kernel is null.");
+    }
+    const size_t PW = _padded[0];
+    const size_t PH = Extent(_padded[1]);
+    const size_t PD = Extent(_padded[2]);
+    const size_t KW = 2 * _radius[0] + 1;
+    const size_t KH = 2 * _radius[1] + 1;
+    const size_t KD = 2 * _radius[2] + 1;
+
+    // Tap t = a - r goes to index t mod P: the wrapped layout, centre at 0.
+    std::vector<T> wrapped(_paddedSize, T(0));
+    double absSum = 0.0;
+    for (size_t c = 0; c < KD; ++c) {
+        const size_t k = (c + PD - _radius[2]) % PD;
+        for (size_t b = 0; b < KH; ++b) {
+            const size_t j = (b + PH - _radius[1]) % PH;
+            for (size_t a = 0; a < KW; ++a) {
+                const size_t i = (a + PW - _radius[0]) % PW;
+                const T v = kernel[a + KW * (b + KH * c)];
+                wrapped[i + PW * (j + PH * k)] = v;
+                absSum += std::fabs(static_cast<double>(v));
+            }
+        }
+    }
+
+    _even.reset();
+    _general.reset();
+    if (IsEvenPerAxis(wrapped.data(), _padded[0], _padded[1], _padded[2], 0.0)) {
+        _even = std::make_unique<EvenKernelConvolution<T>>(_padded[0], _padded[1], _padded[2], _mode);
+        _even->SetKernel(wrapped.data(), 0.0);
+    } else {
+        _general = std::make_unique<CircularConvolution<T>>(_padded[0], _padded[1], _padded[2], _mode);
+        _general->SetKernel(wrapped.data());
+    }
+
+    _floor = static_cast<T>(std::sqrt(static_cast<double>(std::numeric_limits<T>::epsilon())) * absSum);
+    if (_edges == Edges::Normalized) {
+        // c * g with c = 1 on the volume: the kernel's weight inside it.
+        const std::vector<T> ones(_size, T(1));
+        _weight.resize(_size);
+        Pad(ones.data(), nullptr);
+        ConvolvePadded();
+        Crop(_weight.data());
+    }
+}
+
+template <typename T>
+void LinearConvolution<T>::Apply(const T* data, T* out)
+{
+    PROFILE_FUNCTION();
+
+    if (data == nullptr || out == nullptr) {
+        throw std::invalid_argument("LinearConvolution::Apply: null pointer.");
+    }
+    if (!_even && !_general) {
+        throw std::logic_error("LinearConvolution::Apply: call SetKernel first.");
+    }
+    Pad(data, nullptr);
+    ConvolvePadded();
+    Crop(out);
+    if (_edges == Edges::Normalized) {
+        Divide(out, _weight.data());
+    }
+}
+
+template <typename T>
+void LinearConvolution<T>::Apply(const T* data, const T* certainty, T* out)
+{
+    PROFILE_FUNCTION();
+
+    if (data == nullptr || certainty == nullptr || out == nullptr) {
+        throw std::invalid_argument("LinearConvolution::Apply: null pointer.");
+    }
+    if (_edges != Edges::Normalized) {
+        throw std::logic_error("LinearConvolution::Apply: a certainty needs Edges::Normalized.");
+    }
+    if (!_even && !_general) {
+        throw std::logic_error("LinearConvolution::Apply: call SetKernel first.");
+    }
+    _scratch.resize(_size);
+    Pad(certainty, nullptr);
+    ConvolvePadded();
+    Crop(_scratch.data());
+
+    Pad(data, certainty);
+    ConvolvePadded();
+    Crop(out);
+    Divide(out, _scratch.data());
+}
+
+template <typename T>
+void LinearConvolution<T>::Pad(const T* data, const T* weight)
+{
+    const size_t W = _extent[0];
+    const size_t H = _extent[1];
+    const size_t PW = _padded[0];
+    const size_t PH = Extent(_padded[1]);
+    std::fill(_buffer.begin(), _buffer.end(), T(0));
+    T* buffer = _buffer.data();
+    const long long depthCount = static_cast<long long>(_extent[2]);
+#pragma omp parallel for
+    for (long long kk = 0; kk < depthCount; ++kk) {
+        const size_t k = static_cast<size_t>(kk);
+        for (size_t j = 0; j < H; ++j) {
+            const size_t from = W * (j + H * k);
+            T* row = buffer + PW * (j + PH * k);
+            if (weight == nullptr) {
+                std::copy(data + from, data + from + W, row);
+            } else {
+                for (size_t i = 0; i < W; ++i) {
+                    row[i] = data[from + i] * weight[from + i];
+                }
+            }
+        }
+    }
+}
+
+template <typename T>
+void LinearConvolution<T>::Crop(T* out) const
+{
+    const size_t W = _extent[0];
+    const size_t H = _extent[1];
+    const size_t PW = _padded[0];
+    const size_t PH = Extent(_padded[1]);
+    const T* buffer = _buffer.data();
+    const long long depthCount = static_cast<long long>(_extent[2]);
+#pragma omp parallel for
+    for (long long kk = 0; kk < depthCount; ++kk) {
+        const size_t k = static_cast<size_t>(kk);
+        for (size_t j = 0; j < H; ++j) {
+            const T* row = buffer + PW * (j + PH * k);
+            std::copy(row, row + W, out + W * (j + H * k));
+        }
+    }
+}
+
+template <typename T>
+void LinearConvolution<T>::ConvolvePadded()
+{
+    if (_even) {
+        _even->Apply(_buffer.data());
+    } else {
+        _general->Apply(_buffer.data());
+    }
+}
+
+template <typename T>
+void LinearConvolution<T>::Divide(T* out, const T* denominator) const
+{
+    const long long count = static_cast<long long>(_size);
+    const T floor = _floor;
+#pragma omp parallel for
+    for (long long n = 0; n < count; ++n) {
+        out[n] = denominator[n] > floor ? out[n] / denominator[n] : T(0);
+    }
+}
+
 template bool IsEvenPerAxis<float>(const float*, size_t, size_t, size_t, double);
 template bool IsEvenPerAxis<double>(const double*, size_t, size_t, size_t, double);
 
@@ -377,5 +597,7 @@ template class EvenKernelBank<float>;
 template class EvenKernelBank<double>;
 template class CircularConvolution<float>;
 template class CircularConvolution<double>;
+template class LinearConvolution<float>;
+template class LinearConvolution<double>;
 
 } // namespace RapiDHT

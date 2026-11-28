@@ -3,7 +3,8 @@
  * File: include/rapidht/convolution.h
  * Brief: Circular convolution through the Hartley transform: kernels even
  *        along every axis (separable transform, plain product) and any kernel
- *        (true transform, pair product), on the CPU and on the device.
+ *        (true transform, pair product), on the CPU and on the device; linear
+ *        convolution of any extent by padding, with zero or normalised edges.
  * Author: Volkov Evgeny Aleksandrovich, volkov22dla@yandex.ru
  */
 
@@ -216,6 +217,124 @@ private:
     std::vector<T> _spectrum; ///< H(g) / N (CPU).
     std::unique_ptr<DeviceVolume<T>> _deviceSpectrum; ///< the same on the device (GPUFactored)
     std::unique_ptr<DeviceVolume<T>> _staging; ///< the host-pointer Apply's device copy
+};
+
+/// @brief What LinearConvolution assumes outside the volume.
+enum class Edges {
+    /// Zeros: the plain linear convolution, so a smoothing kernel darkens the
+    /// border, where part of its weight falls outside.
+    Zero,
+    /// Normalised convolution (Knutsson & Westin): divide by the kernel's
+    /// weight that falls inside the volume (or on the certainty, see Apply),
+    ///
+    ///     out = ((c f) * g) / (c * g),
+    ///
+    /// so a constant stays constant up to the border. Meant for non-negative
+    /// smoothing kernels; where the denominator is too small to divide by,
+    /// the output is 0.
+    Normalized,
+};
+
+/**
+ * @brief Linear (non-circular) convolution of a volume of any size with a
+ *        small kernel, through zero padding and a circular convolution.
+ *
+ *     out(x) = sum_t f(x - t) g(t),   t = -r..r per axis,
+ *
+ * the output having the volume's extent and origin ("same" size, as
+ * scipy.ndimage.convolve with mode="constant"). Each present axis of extent N
+ * and kernel radius r is padded to the power of two P >= max(N + r, 2r + 1):
+ * then the wrap-around of the circular convolution only ever reads padding,
+ * so the result is exact. The volume itself need not be a power of two.
+ *
+ * The kernel is given compactly, with its centre in the middle: an odd extent
+ * 2r + 1 along every present axis, element (r_x, r_y, r_z) the centre. A
+ * kernel symmetric about its centre along every axis goes through
+ * EvenKernelConvolution, any other through CircularConvolution. One Apply is
+ * two transforms of the padded extent; Edges::Normalized with a certainty adds
+ * two more (the denominator), without one the denominator is computed once,
+ * in SetKernel.
+ *
+ * On Modes::GPUFactored the padded circular convolution runs on the device
+ * (upload, five passes, download); padding and cropping stay on the host.
+ *
+ * Usage:
+ * @code
+ *   LinearConvolution<float> smooth(300, 300, 200, 9, 9, 9, Edges::Normalized);
+ *   smooth.SetKernel(gauss9.data());        // 9*9*9, centre at (4, 4, 4)
+ *   smooth.Apply(volume.data(), out.data());
+ * @endcode
+ *
+ * @tparam T float or double.
+ */
+template <typename T>
+class LinearConvolution {
+public:
+    /**
+     * @param width, height, depth The volume's extent, any size; as for
+     *        HartleyTransform, height == 0 means 1D and depth == 0 means 2D.
+     * @param kernelWidth, kernelHeight, kernelDepth The kernel's extent: odd
+     *        along every present axis, 0 or 1 along an absent one.
+     * @param edges Zeros outside, or normalised convolution.
+     * @param mode Modes::CPU or Modes::GPUFactored.
+     * @throws std::invalid_argument On a zero width, a missing height with a
+     *         depth, an even or missing kernel extent, or another mode.
+     */
+    LinearConvolution(size_t width, size_t height, size_t depth, size_t kernelWidth, size_t kernelHeight,
+        size_t kernelDepth, Edges edges = Edges::Zero, Modes mode = Modes::CPU);
+
+    /// @brief Sets the kernel (KernelSize() elements, centre in the middle).
+    void SetKernel(const T* kernel);
+
+    /**
+     * @brief out <- data * kernel (linear), Size() elements each.
+     * @param out May be the same pointer as data.
+     */
+    void Apply(const T* data, T* out);
+
+    /**
+     * @brief Normalised convolution with a certainty: out <- ((c f) * g) / (c * g).
+     *
+     * The certainty c (Size() elements, usually 0 or 1, any non-negative
+     * weight) marks which voxels to trust -- say, 0 outside the cylinder of a
+     * core sample -- so the untrusted ones do not leak into their neighbours.
+     * Where c * g is too small (the kernel covers no trusted voxel) the
+     * output is 0.
+     * @throws std::logic_error Unless the edges are Edges::Normalized.
+     */
+    void Apply(const T* data, const T* certainty, T* out);
+
+    size_t Size() const noexcept { return _size; }
+    size_t KernelSize() const noexcept { return _kernelSize; }
+    /// @brief The padded extent of the circular convolution (0 for an absent axis).
+    size_t PaddedWidth() const noexcept { return _padded[0]; }
+    size_t PaddedHeight() const noexcept { return _padded[1]; }
+    size_t PaddedDepth() const noexcept { return _padded[2]; }
+
+private:
+    /// The volume into the zero-padded buffer, scaled voxel by voxel by `weight` if given.
+    void Pad(const T* data, const T* weight);
+    /// The padded buffer's volume part out to `out`.
+    void Crop(T* out) const;
+    /// The circular convolution of the padded buffer, in place.
+    void ConvolvePadded();
+    /// out /= denominator, 0 where the denominator is below the floor.
+    void Divide(T* out, const T* denominator) const;
+
+    size_t _extent[3]; ///< W, H, D of the volume (1 for an absent axis)
+    size_t _radius[3]; ///< kernel radius per axis
+    size_t _padded[3]; ///< padded extent as passed to the transform (0 for an absent axis)
+    size_t _size;
+    size_t _kernelSize;
+    size_t _paddedSize;
+    Edges _edges;
+    Modes _mode;
+    std::unique_ptr<EvenKernelConvolution<T>> _even; ///< for a kernel symmetric along every axis
+    std::unique_ptr<CircularConvolution<T>> _general; ///< for any other
+    std::vector<T> _buffer; ///< the padded volume
+    std::vector<T> _weight; ///< c * g with c = 1 on the volume (Edges::Normalized)
+    std::vector<T> _scratch; ///< the numerator, while the buffer holds c * g (certainty)
+    T _floor = T(0); ///< denominators at or below it give 0
 };
 
 } // namespace RapiDHT

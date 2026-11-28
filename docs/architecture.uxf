@@ -6,7 +6,7 @@
     <id>UMLPackage</id>
     <coordinates>
       <x>20</x>
-      <y>1260</y>
+      <y>1460</y>
       <w>1320</w>
       <h>490</h>
     </coordinates>
@@ -18,7 +18,7 @@ bg=#EAF6EA</panel_attributes>
     <id>UMLPackage</id>
     <coordinates>
       <x>20</x>
-      <y>770</y>
+      <y>970</y>
       <w>1320</w>
       <h>430</h>
     </coordinates>
@@ -32,7 +32,7 @@ bg=#FDF3E1</panel_attributes>
       <x>20</x>
       <y>20</y>
       <w>1320</w>
-      <h>720</h>
+      <h>920</h>
     </coordinates>
     <panel_attributes>include/rapidht — public API, namespace RapiDHT
 bg=#E8F1FB</panel_attributes>
@@ -150,7 +150,7 @@ bg=#FFFFFF</panel_attributes>
       <x>900</x>
       <y>290</y>
       <w>410</w>
-      <h>330</h>
+      <h>410</h>
     </coordinates>
     <panel_attributes>*EvenKernelConvolution&lt;T&gt;*, *EvenKernelBank&lt;T&gt;*, *CircularConvolution&lt;T&gt;*
 «convolution.h — mode CPU or GPUFactored (R-6)»
@@ -167,6 +167,12 @@ bg=#FFFFFF</panel_attributes>
   GPUFactored: z, y, fused x (transform, product,
   transform), y, z — HartleyTransform::FactoredConvolve
   via internal::DeviceAccess; Bank shares z, y
+--
+*LinearConvolution&lt;T&gt;* (B-103) — any extent, compact odd kernel
+  pads each axis to a power of two ≥ max(N + r, 2r + 1),
+  holds EvenKernelConvolution (symmetric kernel) or
+  CircularConvolution; Edges::Zero or Edges::Normalized
+  (÷ c * g); Apply(data, out), Apply(data, certainty, out)
 --
 «free function»
 +IsEvenPerAxis(kernel, w, h, d, tol): bool
@@ -215,7 +221,7 @@ bg=#FFFFFF</panel_attributes>
     <id>UMLClass</id>
     <coordinates>
       <x>40</x>
-      <y>820</y>
+      <y>1020</y>
       <w>380</w>
       <h>205</h>
     </coordinates>
@@ -237,7 +243,7 @@ bg=#FFFFFF</panel_attributes>
     <id>UMLClass</id>
     <coordinates>
       <x>40</x>
-      <y>1030</y>
+      <y>1230</y>
       <w>380</w>
       <h>210</h>
     </coordinates>
@@ -260,7 +266,7 @@ bg=#FFFFFF</panel_attributes>
     <id>UMLClass</id>
     <coordinates>
       <x>500</x>
-      <y>820</y>
+      <y>1020</y>
       <w>360</w>
       <h>170</h>
     </coordinates>
@@ -281,7 +287,7 @@ bg=#FFFFFF</panel_attributes>
     <id>UMLClass</id>
     <coordinates>
       <x>500</x>
-      <y>1030</y>
+      <y>1230</y>
       <w>360</w>
       <h>110</h>
     </coordinates>
@@ -297,7 +303,7 @@ bg=#FFFFFF</panel_attributes>
     <id>UMLClass</id>
     <coordinates>
       <x>900</x>
-      <y>820</y>
+      <y>1020</y>
       <w>390</w>
       <h>90</h>
     </coordinates>
@@ -312,7 +318,7 @@ bg=#FFFFFF</panel_attributes>
     <id>UMLClass</id>
     <coordinates>
       <x>900</x>
-      <y>950</y>
+      <y>1150</y>
       <w>390</w>
       <h>140</h>
     </coordinates>
@@ -330,7 +336,7 @@ bg=#FFFFFF</panel_attributes>
     <id>UMLClass</id>
     <coordinates>
       <x>40</x>
-      <y>1310</y>
+      <y>1510</y>
       <w>410</w>
       <h>140</h>
     </coordinates>
@@ -348,7 +354,7 @@ bg=#FFFFFF</panel_attributes>
     <id>UMLClass</id>
     <coordinates>
       <x>40</x>
-      <y>1480</y>
+      <y>1680</y>
       <w>410</w>
       <h>140</h>
     </coordinates>
@@ -367,7 +373,7 @@ bg=#FFFFFF</panel_attributes>
     <id>UMLClass</id>
     <coordinates>
       <x>510</x>
-      <y>1310</y>
+      <y>1510</y>
       <w>370</w>
       <h>180</h>
     </coordinates>
@@ -387,7 +393,7 @@ bg=#FFFFFF</panel_attributes>
     <id>UMLClass</id>
     <coordinates>
       <x>510</x>
-      <y>1520</y>
+      <y>1720</y>
       <w>370</w>
       <h>230</h>
     </coordinates>
@@ -413,13 +419,13 @@ bg=#FFFFFF</panel_attributes>
     <id>UMLClass</id>
     <coordinates>
       <x>920</x>
-      <y>1630</y>
+      <y>1830</y>
       <w>400</w>
       <h>110</h>
     </coordinates>
     <panel_attributes>«sources» other
 --
-convolution.cpp — EvenKernelConvolution, EvenKernelBank, CircularConvolution
+convolution.cpp — EvenKernelConvolution, EvenKernelBank, CircularConvolution, LinearConvolution
 device_volume.cpp — DeviceVolume, IsGpuAvailable
 utilities.cpp — ParseDims
 bg=#FFFFFF</panel_attributes>
@@ -543,11 +549,11 @@ resident overloads</panel_attributes>
       <x>162</x>
       <y>490</y>
       <w>20</w>
-      <h>340</h>
+      <h>540</h>
     </coordinates>
     <panel_attributes>lt=&lt;&lt;&lt;&lt;&lt;-
 pimpl</panel_attributes>
-    <additional_attributes>10.0;10.0;10.0;330.0</additional_attributes>
+    <additional_attributes>10.0;10.0;10.0;530.0</additional_attributes>
   </element>
   <element>
     <id>Relation</id>
@@ -555,17 +561,17 @@ pimpl</panel_attributes>
       <x>1280</x>
       <y>150</y>
       <w>62</w>
-      <h>725</h>
+      <h>925</h>
     </coordinates>
     <panel_attributes>lt=&lt;&lt;&lt;&lt;&lt;-
 pimpl</panel_attributes>
-    <additional_attributes>10.0;10.0;52.0;10.0;52.0;715.0;10.0;715.0</additional_attributes>
+    <additional_attributes>10.0;10.0;52.0;10.0;52.0;915.0;10.0;915.0</additional_attributes>
   </element>
   <element>
     <id>Relation</id>
     <coordinates>
       <x>410</x>
-      <y>858</y>
+      <y>1058</y>
       <w>100</w>
       <h>20</h>
     </coordinates>
@@ -577,7 +583,7 @@ m2=5</panel_attributes>
     <id>Relation</id>
     <coordinates>
       <x>850</x>
-      <y>855</y>
+      <y>1055</y>
       <w>60</w>
       <h>20</h>
     </coordinates>
@@ -588,7 +594,7 @@ m2=5</panel_attributes>
     <id>Relation</id>
     <coordinates>
       <x>410</x>
-      <y>946</y>
+      <y>1146</y>
       <w>100</w>
       <h>138</h>
     </coordinates>
@@ -599,7 +605,7 @@ m2=5</panel_attributes>
     <id>Relation</id>
     <coordinates>
       <x>334</x>
-      <y>1170</y>
+      <y>1370</y>
       <w>260</w>
       <h>150</h>
     </coordinates>
@@ -611,7 +617,7 @@ launches</panel_attributes>
     <id>Relation</id>
     <coordinates>
       <x>410</x>
-      <y>906</y>
+      <y>1106</y>
       <w>110</w>
       <h>441</h>
     </coordinates>
@@ -622,7 +628,7 @@ launches</panel_attributes>
     <id>Relation</id>
     <coordinates>
       <x>235</x>
-      <y>1010</y>
+      <y>1210</y>
       <w>675</w>
       <h>310</h>
     </coordinates>
@@ -633,7 +639,7 @@ launches</panel_attributes>
     <id>Relation</id>
     <coordinates>
       <x>18</x>
-      <y>1090</y>
+      <y>1290</y>
       <w>502</w>
       <h>555</h>
     </coordinates>
@@ -645,7 +651,7 @@ implements</panel_attributes>
     <id>UMLClass</id>
     <coordinates>
       <x>900</x>
-      <y>1120</y>
+      <y>1320</y>
       <w>390</w>
       <h>235</h>
     </coordinates>
@@ -672,7 +678,7 @@ bg=#FFFFFF</panel_attributes>
     <id>UMLClass</id>
     <coordinates>
       <x>900</x>
-      <y>1360</y>
+      <y>1560</y>
       <w>390</w>
       <h>130</h>
     </coordinates>
@@ -690,7 +696,7 @@ bg=#FFFFFF</panel_attributes>
     <id>UMLClass</id>
     <coordinates>
       <x>900</x>
-      <y>1500</y>
+      <y>1700</y>
       <w>390</w>
       <h>120</h>
     </coordinates>
@@ -707,7 +713,7 @@ bg=#FFFFFF</panel_attributes>
     <id>UMLClass</id>
     <coordinates>
       <x>900</x>
-      <y>540</y>
+      <y>720</y>
       <w>410</w>
       <h>140</h>
     </coordinates>
