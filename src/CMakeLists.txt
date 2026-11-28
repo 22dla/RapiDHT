@@ -7,6 +7,7 @@ set(RAPIDHT_SOURCES
     convolution.cpp
     filters.cpp
     minkowski.cpp
+    minkowski_tensor.cpp
     backend_cpu.cpp
     device_volume.cpp
     utilities.cpp

@@ -8,7 +8,7 @@
       <x>20</x>
       <y>1460</y>
       <w>1320</w>
-      <h>490</h>
+      <h>530</h>
     </coordinates>
     <panel_attributes>src — library target coreht
 bg=#EAF6EA</panel_attributes>
@@ -426,12 +426,13 @@ bg=#FFFFFF</panel_attributes>
       <x>920</x>
       <y>1830</y>
       <w>400</w>
-      <h>110</h>
+      <h>150</h>
     </coordinates>
     <panel_attributes>«sources» other
 --
-convolution.cpp — EvenKernelConvolution, EvenKernelBank, CircularConvolution, LinearConvolution
+convolution.cpp — Even/Circular/LinearConvolution, EvenKernelBank
 filters.cpp — GaussianKernel, BallKernel, ButterworthKernel, WrapKernel
+minkowski.cpp, minkowski_tensor.cpp — functionals, tensor
 device_volume.cpp — DeviceVolume, IsGpuAvailable
 utilities.cpp — ParseDims
 bg=#FFFFFF</panel_attributes>
@@ -734,4 +735,26 @@ bg=#FFFFFF</panel_attributes>
 bg=#FFFFFF</panel_attributes>
     <additional_attributes/>
   </element>
-  </diagram>
+    <element>
+    <id>UMLClass</id>
+    <coordinates>
+      <x>520</x>
+      <y>740</y>
+      <w>340</w>
+      <h>185</h>
+    </coordinates>
+    <panel_attributes>«header» minkowski.h — binary volumes, CPU
+--
++MinkowskiFunctionals, MinkowskiDensities
+  2×2×2 configurations, union of closed cubes
++MinkowskiFields&lt;T&gt; — densities × EvenKernelBank
++MakeWindow(Ball | Gaussian)
+--
+*SurfaceNormalTensor&lt;T&gt;* (B-205)
+  ∫ n⊗n dS = ∫ ∇ψ⊗∇ψ ÷ |∇ψ| dV, ψ = G_σ * 1_X
+  three CircularConvolution (∂G, physical σ)
++Compute → SurfaceTensor, Densities (6 planes)
+bg=#FFFFFF</panel_attributes>
+    <additional_attributes/>
+  </element>
+</diagram>

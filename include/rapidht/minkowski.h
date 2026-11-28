@@ -2,7 +2,8 @@
  * Project: RapiDHT
  * File: include/rapidht/minkowski.h
  * Brief: Minkowski functionals of 3D binary volumes and their local densities,
- *        from the 2x2x2 configurations around each lattice vertex.
+ *        from the 2x2x2 configurations around each lattice vertex; the surface
+ *        normal tensor from the gradient of the smoothed body.
  * Author: Volkov Evgeny Aleksandrovich, volkov22dla@yandex.ru
  */
 
@@ -10,6 +11,7 @@
 #define RAPIDHT_MINKOWSKI_H
 
 #include <rapidht/convolution.h>
+#include <rapidht/filters.h>
 
 #include <cstddef>
 #include <cstdint>
@@ -181,6 +183,82 @@ private:
     EvenKernelBank<T> _bank;
     std::vector<double> _windowWeights;
     std::vector<T> _densities;
+};
+
+/**
+ * @brief A symmetric 3x3 tensor: the surface normal tensor integral of n (x) n dS.
+ *
+ * Its trace is the surface area, and for an isotropic structure it is S/3 times the
+ * identity; the ratio of its smallest to its largest eigenvalue is the usual anisotropy
+ * index (1 for isotropic, 0 for a stack of plates). karambola's W1^{0,2} is a third of it.
+ */
+struct SurfaceTensor {
+    double xx = 0.0;
+    double yy = 0.0;
+    double zz = 0.0;
+    double xy = 0.0;
+    double xz = 0.0;
+    double yz = 0.0;
+
+    double Trace() const noexcept { return xx + yy + zz; }
+};
+
+/**
+ * @brief The surface normal tensor of a binary volume (B-205): integral of n (x) n dS,
+ *        globally and as a density field, periodic boundary.
+ *
+ * On the union of cubes every normal is an axis, so that tensor would be diagonal
+ * whatever the body's orientation; instead the body is smoothed, psi = G_sigma * 1_X,
+ * and the surface measure and normal are read off its gradient, |grad psi| dV -> dS and
+ * grad psi / |grad psi| -> n as sigma -> 0:
+ *
+ *     W = integral of grad psi (x) grad psi / |grad psi| dV.
+ *
+ * The gradient is the convolution with the derivative of a Gaussian (physical sigma,
+ * truncated at 4 sigma, scaled so that a linear ramp has exactly its slope), three
+ * CircularConvolution calls. For a flat interface W is exact: a slab with normal z gives
+ * 2 A on zz and 0 elsewhere; a digitised slab tilted to (1, 1, 0) comes out within 1e-4.
+ * On a sphere of radius R the estimate is low by about (sigma / R)^2 (R = 16 voxels,
+ * sigma = 1.5: 0.96 %); below a voxel the staircase shows (+1 % at sigma = 0.7), so
+ * sigma of 1 to 1.5 voxels is the sensible range. The trace is an estimate of the
+ * surface area without the 3/2 bias of MinkowskiFunctionals.
+ *
+ * Densities: six planes in the order xx, yy, zz, xy, xz, yz, each voxel holding its
+ * share of the integral (the integrand times the voxel's volume), so every plane sums
+ * to that component of Compute; convolve them with a window (EvenKernelBank) for local
+ * anisotropy fields.
+ *
+ * @tparam T float or double. 3D only; extents must be powers of two.
+ */
+template <typename T>
+class SurfaceNormalTensor {
+public:
+    /**
+     * @param sigma Smoothing in the unit of `spacing`; positive.
+     * @param spacing Voxel edge lengths (anisotropic voxels allowed).
+     * @param mode Modes::CPU or Modes::GPUFactored, for the convolutions.
+     * @throws std::invalid_argument on a 1D or 2D extent, a non-power of two, a bad
+     *         sigma or spacing, or another mode.
+     */
+    SurfaceNormalTensor(size_t width, size_t height, size_t depth, double sigma, Spacing spacing = {},
+        Modes mode = Modes::CPU);
+
+    /// @brief The integral of n (x) n dS of the body (nonzero = foreground), in units of spacing^2.
+    SurfaceTensor Compute(const uint8_t* volume);
+
+    /// @brief The six density planes (6 * Size() values, xx, yy, zz, xy, xz, yz).
+    void Densities(const uint8_t* volume, T* out);
+
+    size_t Size() const noexcept { return _size; }
+
+private:
+    size_t _size;
+    double _voxelVolume;
+    CircularConvolution<T> _dx;
+    CircularConvolution<T> _dy;
+    CircularConvolution<T> _dz;
+    std::vector<T> _gradient; ///< three planes: d/dx, d/dy, d/dz of psi
+    std::vector<T> _densities; ///< Compute's scratch
 };
 
 } // namespace RapiDHT

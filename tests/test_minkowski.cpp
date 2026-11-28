@@ -654,3 +654,134 @@ TEST(MinkowskiFields, RejectsBadSetup)
     EXPECT_THROW(MinkowskiFields<double>(16, 16, 16, WindowShape::Ball, { 8.0 }), std::invalid_argument);
     EXPECT_THROW(MinkowskiFields<double>(12, 16, 16, WindowShape::Ball, { 2.0 }), std::invalid_argument); // not a power of two
 }
+
+// ---------------------------------------------------------------------------
+// The surface normal tensor (B-205)
+// ---------------------------------------------------------------------------
+
+namespace {
+
+/// A W x H x D volume with voxel (i, j, k) set where `inside` says so.
+template <typename F>
+std::vector<uint8_t> Body(size_t W, size_t H, size_t D, F&& inside)
+{
+    std::vector<uint8_t> v(W * H * D);
+    for (size_t k = 0; k < D; ++k) {
+        for (size_t j = 0; j < H; ++j) {
+            for (size_t i = 0; i < W; ++i) {
+                v[i + W * (j + H * k)] = inside(i, j, k) ? 1 : 0;
+            }
+        }
+    }
+    return v;
+}
+
+std::array<double, 6> Components(const SurfaceTensor& t) { return { t.xx, t.yy, t.zz, t.xy, t.xz, t.yz }; }
+
+void ExpectTensorNear(const SurfaceTensor& actual, const std::array<double, 6>& expected, double tolerance)
+{
+    const auto a = Components(actual);
+    const char* names[6] = { "xx", "yy", "zz", "xy", "xz", "yz" };
+    for (int c = 0; c < 6; ++c) {
+        EXPECT_NEAR(a[c], expected[c], tolerance) << names[c];
+    }
+}
+
+} // namespace
+
+TEST(SurfaceNormalTensor, FlatSlabIsExactOnAnisotropicVoxels)
+{
+    // Two interfaces of area (W dx)(H dy) each, normal along one axis: the
+    // gradient of a step integrates to exactly its height.
+    const size_t W = 32, H = 16, D = 64;
+    const Spacing s { 1.0, 0.5, 2.0 };
+    const auto slabZ = Body(W, H, D, [](size_t, size_t, size_t k) { return k >= 20 && k < 40; });
+    const auto slabX = Body(W, H, D, [](size_t i, size_t, size_t) { return i >= 5 && i < 21; });
+    const double areaZ = 2.0 * (W * s.x) * (H * s.y);
+    const double areaX = 2.0 * (H * s.y) * (D * s.z);
+
+    SurfaceNormalTensor<double> exact(W, H, D, 1.5, s);
+    ExpectTensorNear(exact.Compute(slabZ.data()), { 0, 0, areaZ, 0, 0, 0 }, 1e-10 * areaZ);
+    ExpectTensorNear(exact.Compute(slabX.data()), { areaX, 0, 0, 0, 0, 0 }, 1e-10 * areaX);
+
+    SurfaceNormalTensor<float> single(W, H, D, 1.5, s);
+    ExpectTensorNear(single.Compute(slabZ.data()), { 0, 0, areaZ, 0, 0, 0 }, 1e-5 * areaZ);
+}
+
+TEST(SurfaceNormalTensor, TiltedSlabHasTheOffDiagonalComponent)
+{
+    // (i + j) mod 64 < 32: a periodic slab with normal (1, 1, 0) / sqrt(2). Each
+    // of its two interfaces crosses the cell along 64 sqrt(2) by 16, and
+    // n (x) n = [[1, 1, 0], [1, 1, 0], [0, 0, 0]] / 2.
+    const size_t W = 64, H = 64, D = 16;
+    const auto slab = Body(W, H, D, [](size_t i, size_t j, size_t) { return (i + j) % 64 < 32; });
+    const double half = 2.0 * 64.0 * std::sqrt(2.0) * 16.0 / 2.0;
+    SurfaceNormalTensor<double> t(W, H, D, 2.0);
+    ExpectTensorNear(t.Compute(slab.data()), { half, half, 0, half, 0, 0 }, 1e-3 * half); // the staircase averages out
+}
+
+TEST(SurfaceNormalTensor, BallIsIsotropicWithTheTrueArea)
+{
+    // integral of n (x) n dS over a sphere = (4 pi R^2 / 3) I; the trace is the
+    // area itself, without the 3/2 of the voxel surface.
+    const size_t N = 64;
+    const double R = 16.0;
+    const double c[3] = { 32.3, 31.7, 32.1 };
+    const auto ball = Body(N, N, N, [&](size_t i, size_t j, size_t k) {
+        const double x = static_cast<double>(i) - c[0], y = static_cast<double>(j) - c[1],
+                     z = static_cast<double>(k) - c[2];
+        return x * x + y * y + z * z <= R * R;
+    });
+    // Smoothing shrinks the estimate by about (sigma / R)^2 (0.88 % here; measured 0.96 %).
+    const double sigma = 1.5;
+    const double third = 4.0 * kPi * R * R / 3.0 * (1.0 - sigma * sigma / (R * R));
+    SurfaceNormalTensor<double> t(N, N, N, sigma);
+    const SurfaceTensor w = t.Compute(ball.data());
+    ExpectTensorNear(w, { third, third, third, 0, 0, 0 }, 0.005 * third);
+    EXPECT_NEAR(w.Trace(), 3.0 * third, 0.005 * 3.0 * third);
+}
+
+TEST(SurfaceNormalTensor, PermutingTheAxesPermutesTheTensor)
+{
+    // An asymmetric body and the same with x and z swapped (cubic extent).
+    const size_t N = 32;
+    auto inside = [](size_t i, size_t j, size_t k) {
+        const double x = static_cast<double>(i) - 15.2, y = static_cast<double>(j) - 16.6,
+                     z = static_cast<double>(k) - 14.1;
+        return x * x / 64.0 + (y + 0.4 * x) * (y + 0.4 * x) / 25.0 + (z - 0.3 * y) * (z - 0.3 * y) / 100.0 <= 1.0;
+    };
+    const auto body = Body(N, N, N, inside);
+    const auto swapped = Body(N, N, N, [&](size_t i, size_t j, size_t k) { return inside(k, j, i); });
+    SurfaceNormalTensor<double> t(N, N, N, 1.0);
+    const SurfaceTensor a = t.Compute(body.data());
+    const SurfaceTensor b = t.Compute(swapped.data());
+    const double tol = 1e-9 * a.Trace();
+    EXPECT_NEAR(b.xx, a.zz, tol);
+    EXPECT_NEAR(b.yy, a.yy, tol);
+    EXPECT_NEAR(b.zz, a.xx, tol);
+    EXPECT_NEAR(b.xy, a.yz, tol);
+    EXPECT_NEAR(b.xz, a.xz, tol);
+    EXPECT_NEAR(b.yz, a.xy, tol);
+    EXPECT_GT(std::fabs(a.xy), 0.05 * a.Trace()); // the test would be empty for a diagonal tensor
+}
+
+TEST(SurfaceNormalTensor, DensitiesSumToTheTensorAndArgumentsAreChecked)
+{
+    const size_t W = 16, H = 8, D = 32;
+    const auto body = Body(W, H, D, [](size_t i, size_t j, size_t k) { return (i * 3 + j * 5 + k * 7) % 11 < 5; });
+    SurfaceNormalTensor<float> t(W, H, D, 1.0, { 1.0, 2.0, 0.5 });
+    std::vector<float> d(6 * t.Size());
+    t.Densities(body.data(), d.data());
+    const auto expected = Components(t.Compute(body.data()));
+    for (size_t p = 0; p < 6; ++p) {
+        double sum = 0.0;
+        for (size_t n = 0; n < t.Size(); ++n) {
+            sum += d[p * t.Size() + n];
+        }
+        EXPECT_NEAR(sum, expected[p], 1e-6 * std::max(1.0, std::fabs(expected[p]))) << p;
+    }
+    EXPECT_THROW(SurfaceNormalTensor<float>(16, 16, 0, 1.0), std::invalid_argument);
+    EXPECT_THROW(SurfaceNormalTensor<float>(16, 12, 16, 1.0), std::invalid_argument);
+    EXPECT_THROW(SurfaceNormalTensor<float>(16, 16, 16, 0.0), std::invalid_argument);
+    EXPECT_THROW(SurfaceNormalTensor<float>(16, 16, 16, 1.0, {}, Modes::RFFT), std::invalid_argument);
+}

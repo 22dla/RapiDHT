@@ -68,9 +68,9 @@ transform, so this is not a micro-optimisation.
 | 🩻 **Integer tomograms** | `uint8` and `uint16` voxels in and out, read and written by the transform's own passes — no float copy of the input, two bytes a voxel across the bus |
 | 🧩 **Optional everything** | CUDA and MPI are off by default; the public headers name no CUDA type, so consuming the library needs no toolkit |
 | 🌀 **Convolution** | Circular, through the Hartley convolution theorem, for any kernel or (cheaper) one even along every axis, on the CPU and on the device; linear, for a volume of any size, by zero padding — with zero edges or normalised convolution, optionally weighted by a certainty mask (`<rapidht/convolution.h>`); Gaussian, ball and Butterworth kernels in physical units on anisotropic voxels (`<rapidht/filters.h>`) |
-| 🔷 **Minkowski functionals** | Volume, surface, mean curvature and Euler characteristic of binary volumes, their local densities, and their fields over a bank of ball or Gaussian windows (`<rapidht/minkowski.h>`), every scale for one forward transform per density |
+| 🔷 **Minkowski functionals** | Volume, surface, mean curvature and Euler characteristic of binary volumes, their local densities, and their fields over a bank of ball or Gaussian windows (`<rapidht/minkowski.h>`), every scale for one forward transform per density; the surface normal tensor ∫ n⊗n dS of anisotropy, from the gradient of the smoothed body, globally and as density fields |
 | 🎯 **Both precisions** | `float` and `double`; on consumer GPUs `float` is 26–38× faster |
-| ✅ **Verified, not asserted** | 152 tests, including comparison against an `O(N²)` reference and analytically known transform pairs |
+| ✅ **Verified, not asserted** | 157 tests, including comparison against an `O(N²)` reference and analytically known transform pairs |
 
 ---
 
