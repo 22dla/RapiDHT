@@ -234,9 +234,11 @@ question, answered by `RapiDHT::IsGpuAvailable()`.
 
 ### Python
 
-The Minkowski functional routines are also a Python package, CPU only for now,
-taking and returning numpy arrays. `pip` builds it through CMake
-(scikit-build-core and nanobind are fetched automatically):
+The library is also a Python package, CPU only for now, taking and returning
+numpy arrays: the transforms, the convolutions, the kernels in physical units,
+the Minkowski functionals and fields and the surface normal tensor. `pip`
+builds it through CMake (scikit-build-core and nanobind are fetched
+automatically):
 
 ```bash
 pip install .            # or, inside a uv project: uv pip install /path/to/RapiDHT
@@ -246,14 +248,23 @@ pip install ".[test]" && pytest
 ```python
 import numpy as np, rapidht
 
+x = np.random.rand(64, 32, 16).astype(np.float32)
+h = rapidht.dht(x)                          # true 3D DHT; rapidht.idht(h) gives x back
+g = rapidht.gaussian_kernel(3, sigma=2.0, spacing=(2.5, 1.0, 1.0))      # slices 2.5 thick
+smooth = rapidht.LinearConvolution(x.shape, g, edges="normalized")(x)   # any shape
+
 solid = np.random.rand(64, 64, 64) < 0.4
 rapidht.minkowski_functionals(solid)        # {'volume': ..., 'surface': ..., 'mean_curvature': ..., 'euler': ...}
 fields = rapidht.MinkowskiFields(solid.shape, radii=(2, 4, 8))(solid)   # (4, 3, 64, 64, 64)
+rapidht.surface_normal_tensor(solid, sigma=1.5)                         # 3 x 3, integral of n n dS
 ```
 
 A numpy array of shape `(n0, n1, n2)` is the C++ volume with width `n2`,
-height `n1`, depth `n0`. The Python tests check the bindings against oracles
-written in numpy alone (cell counting with array rolls, FFT convolution).
+height `n1`, depth `n0`, and spacings are given in the same numpy order.
+Results are numpy arrays, so `torch.from_numpy` shares their memory. The
+Python tests check the bindings against oracles written in numpy alone (cell
+counting with array rolls, `np.fft` for the transforms and convolutions,
+`np.fft.fftfreq` for the Butterworth response).
 
 ---
 

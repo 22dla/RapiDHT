@@ -73,7 +73,7 @@ def boolean_model(size: int, lam: float, radius: float, rng: np.random.Generator
     body = np.zeros((size, size, size), dtype=bool)
     count = rng.poisson(lam * size**3)
     germs = rng.uniform(0.0, size, size=(count, 3))
-    reach = int(math.ceil(radius)) + 1
+    reach = math.ceil(radius) + 1
     offsets = np.arange(-reach, reach + 1)
     for g in germs:
         # Voxel centres at integer + 1/2; the ones near the germ, wrapped.
