@@ -56,7 +56,10 @@ struct MinkowskiValues {
  *
  * On a digitised smooth surface S and M are biased: for isotropic orientations both
  * come out about 3/2 of the true value (the cubes' surface follows the staircase).
- * V and chi have no such bias.
+ * V has no such bias. chi is exact for the union of cubes, but that union's topology
+ * can differ from the continuum's where grains nearly touch: on a Boolean model of
+ * balls it is 0.4-0.65 per ball below Miles' formula at mid densities, at any
+ * resolution (B-204, tools/b204_miles.py; Ohser, Nagel & Schladitz 2003).
  *
  * @param configuration 0..255.
  * @throws std::out_of_range for a larger value.

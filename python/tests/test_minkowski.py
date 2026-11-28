@@ -159,3 +159,37 @@ def test_errors_are_python_exceptions():
         mf(np.zeros((8, 8, 16), bool))
     with pytest.raises(ValueError):
         rapidht.minkowski_densities(np.zeros((8, 8, 8), bool), dtype=np.int32)
+
+
+def boolean_model(size, lam, radius, rng):
+    """Union of balls of `radius` around Poisson germs on a periodic size^3 grid (B-204)."""
+    body = np.zeros((size,) * 3, dtype=bool)
+    reach = int(np.ceil(radius)) + 1
+    offsets = np.arange(-reach, reach + 1)
+    for g in rng.uniform(0.0, size, size=(rng.poisson(lam * size**3), 3)):
+        base = np.floor(g).astype(int)
+        idx = [(base[a] + offsets) % size for a in range(3)]
+        d = [base[a] + offsets + 0.5 - g[a] for a in range(3)]
+        inside = d[0][:, None, None] ** 2 + d[1][None, :, None] ** 2 + d[2][None, None, :] ** 2 <= radius**2
+        body[np.ix_(*idx)] |= inside
+    return body
+
+
+def test_boolean_model_matches_cell_count_and_miles_volume():
+    """Smooth surfaces, lenses and tunnels instead of noise; V against Miles' 1 - exp(-lam v).
+
+    Only V is compared with Miles: S and M of digitised surfaces are biased (about 3/2 for a
+    lone ball), and chi of a digitised Boolean model is biased at any resolution with 6- or
+    26-adjacency (B-204, tools/b204_miles.py).
+    """
+    rng = np.random.default_rng(3)
+    radius, size, phi = 4.0, 64, 0.4
+    lam = -np.log(1.0 - phi) / (4.0 / 3.0 * np.pi * radius**3)
+    fractions = []
+    for _ in range(6):
+        body = boolean_model(size, lam, radius, rng)
+        mf = rapidht.minkowski_functionals(body)
+        assert mf == pytest.approx(cell_count_functionals(body), abs=1e-6)
+        fractions.append(mf["volume"] / size**3)
+    se = np.std(fractions, ddof=1) / np.sqrt(len(fractions))
+    assert abs(np.mean(fractions) - phi) < 4.0 * se + 1e-3

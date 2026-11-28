@@ -40,7 +40,7 @@ cmake --preset windows-cpu; cmake --build --preset windows-cpu; ctest --preset w
 
 Python-пакет (`pyproject.toml`, scikit-build-core + nanobind; собирается в `build-python/`):
 ```bash
-pip install ".[test]" && pytest          # 23 теста; в окружении hno-porous: uv pip install ~/projects/RapiDHT
+pip install ".[test]" && pytest          # 24 теста; в окружении hno-porous: uv pip install ~/projects/RapiDHT
 ```
 После правок C++ пакет пересобрать той же командой.
 
