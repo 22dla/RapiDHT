@@ -74,16 +74,76 @@ MinkowskiValues Derive(unsigned configuration)
     return { c, -6.0 * c + 2.0 * f, kPi * (3.0 * c - 2.0 * f + e), -c + f - e + vertex };
 }
 
-const std::array<MinkowskiValues, 256>& Table()
+/*
+ * The Euler weight of a configuration under the Freudenthal (Kuhn) triangulation of the
+ * lattice of voxel centres (B-206). The simplices of one cell are the faces of its six
+ * tetrahedra 0 -> e_a -> e_a + e_b -> (1, 1, 1); the same triangulation in every cell
+ * makes it a triangulation of space, so a simplex lies in as many cells as there are
+ * translations keeping its vertices in {0, 1}^3: the product over the axes of 2 minus
+ * its extent along that axis. Each contributes (-1)^dimension over that count.
+ */
+double DeriveKuhnEuler(unsigned configuration)
 {
-    static const std::array<MinkowskiValues, 256> table = [] {
+    std::array<bool, 256> simplex {}; // indexed by the vertex set, as a mask of bits
+    const int order[6][3] = { { 0, 1, 2 }, { 0, 2, 1 }, { 1, 0, 2 }, { 1, 2, 0 }, { 2, 0, 1 }, { 2, 1, 0 } };
+    for (const auto& axes : order) {
+        int path[4] = { 0, 0, 0, 0 }; // the tetrahedron's vertices, as bits
+        for (int step = 0; step < 3; ++step) {
+            path[step + 1] = path[step] | (1 << axes[step]);
+        }
+        for (int subset = 1; subset < 16; ++subset) {
+            unsigned mask = 0;
+            for (int v = 0; v < 4; ++v) {
+                if ((subset >> v) & 1) {
+                    mask |= 1u << Bit(path[v] & 1, (path[v] >> 1) & 1, (path[v] >> 2) & 1);
+                }
+            }
+            simplex[mask] = true;
+        }
+    }
+    double euler = 0.0;
+    for (unsigned mask = 1; mask < 256; ++mask) {
+        if (!simplex[mask] || (configuration & mask) != mask) {
+            continue;
+        }
+        int vertices = 0;
+        int lo[3] = { 1, 1, 1 };
+        int hi[3] = { 0, 0, 0 };
+        for (int bit = 0; bit < 8; ++bit) {
+            if ((mask >> bit) & 1u) {
+                ++vertices;
+                for (int axis = 0; axis < 3; ++axis) {
+                    lo[axis] = std::min(lo[axis], Offset(bit, axis));
+                    hi[axis] = std::max(hi[axis], Offset(bit, axis));
+                }
+            }
+        }
+        int cells = 1;
+        for (int axis = 0; axis < 3; ++axis) {
+            cells *= 2 - (hi[axis] - lo[axis]);
+        }
+        euler += (vertices % 2 == 1 ? 1.0 : -1.0) / static_cast<double>(cells);
+    }
+    return euler;
+}
+
+const std::array<MinkowskiValues, 256>& Table(EulerAdjacency adjacency = EulerAdjacency::Cube26)
+{
+    static const std::array<MinkowskiValues, 256> cubes = [] {
         std::array<MinkowskiValues, 256> t {};
         for (unsigned n = 0; n < 256; ++n) {
             t[n] = Derive(n);
         }
         return t;
     }();
-    return table;
+    static const std::array<MinkowskiValues, 256> kuhn = [] {
+        std::array<MinkowskiValues, 256> t = cubes;
+        for (unsigned n = 0; n < 256; ++n) {
+            t[n].euler = DeriveKuhnEuler(n);
+        }
+        return t;
+    }();
+    return adjacency == EulerAdjacency::Kuhn14 ? kuhn : cubes;
 }
 
 void CheckExtents(const uint8_t* volume, size_t width, size_t height, size_t depth, size_t minimum,
@@ -114,20 +174,20 @@ unsigned PeriodicConfiguration(const uint8_t* vol, size_t W, size_t H, size_t D,
 
 } // namespace
 
-MinkowskiValues MinkowskiConfigurationWeights(unsigned configuration)
+MinkowskiValues MinkowskiConfigurationWeights(unsigned configuration, EulerAdjacency adjacency)
 {
     if (configuration > 255) {
         throw std::out_of_range("MinkowskiConfigurationWeights: the configuration index must be 0..255.");
     }
-    return Table()[configuration];
+    return Table(adjacency)[configuration];
 }
 
 MinkowskiValues MinkowskiFunctionals(const uint8_t* volume, size_t width, size_t height, size_t depth,
-    MinkowskiBoundary boundary)
+    MinkowskiBoundary boundary, EulerAdjacency adjacency)
 {
     PROFILE_FUNCTION();
 
-    const auto& table = Table();
+    const auto& table = Table(adjacency);
     const size_t W = width;
     const size_t H = height;
     const size_t D = depth;
@@ -179,7 +239,7 @@ MinkowskiValues MinkowskiFunctionals(const uint8_t* volume, size_t width, size_t
 
 template <typename T>
 void MinkowskiDensities(const uint8_t* volume, size_t width, size_t height, size_t depth, T* out,
-    DensityCentring centring)
+    DensityCentring centring, EulerAdjacency adjacency)
 {
     PROFILE_FUNCTION();
 
@@ -187,7 +247,7 @@ void MinkowskiDensities(const uint8_t* volume, size_t width, size_t height, size
     if (out == nullptr) {
         throw std::invalid_argument("MinkowskiDensities: the pointer to out is null.");
     }
-    const auto& table = Table();
+    const auto& table = Table(adjacency);
     const size_t W = width;
     const size_t H = height;
     const size_t D = depth;
@@ -241,8 +301,10 @@ void MinkowskiDensities(const uint8_t* volume, size_t width, size_t height, size
     }
 }
 
-template void MinkowskiDensities<float>(const uint8_t*, size_t, size_t, size_t, float*, DensityCentring);
-template void MinkowskiDensities<double>(const uint8_t*, size_t, size_t, size_t, double*, DensityCentring);
+template void MinkowskiDensities<float>(
+    const uint8_t*, size_t, size_t, size_t, float*, DensityCentring, EulerAdjacency);
+template void MinkowskiDensities<double>(
+    const uint8_t*, size_t, size_t, size_t, double*, DensityCentring, EulerAdjacency);
 
 namespace {
 
@@ -317,12 +379,13 @@ std::vector<T> MakeWindow(size_t width, size_t height, size_t depth, WindowShape
 
 template <typename T>
 MinkowskiFields<T>::MinkowskiFields(size_t width, size_t height, size_t depth, WindowShape shape,
-    const std::vector<double>& radii, WindowNormalisation normalisation):
+    const std::vector<double>& radii, WindowNormalisation normalisation, EulerAdjacency adjacency):
     _width(width),
     _height(height),
     _depth(depth),
     _size(width * height * depth),
     _normalisation(normalisation),
+    _adjacency(adjacency),
     _bank(width, height, depth, Modes::CPU)
 {
     if (radii.empty()) {
@@ -348,7 +411,7 @@ void MinkowskiFields<T>::Compute(const uint8_t* volume, T* out)
         throw std::invalid_argument("MinkowskiFields::Compute: the pointer to out is null.");
     }
     _densities.resize(4 * _size);
-    MinkowskiDensities(volume, _width, _height, _depth, _densities.data(), DensityCentring::Voxel);
+    MinkowskiDensities(volume, _width, _height, _depth, _densities.data(), DensityCentring::Voxel, _adjacency);
 
     const size_t K = ScaleCount();
     for (size_t f = 0; f < 4; ++f) {

@@ -36,6 +36,28 @@ struct MinkowskiValues {
 };
 
 /**
+ * @brief Which digital topology the Euler characteristic counts (B-206).
+ *
+ * The other three functionals are always those of the union of closed cubes.
+ */
+enum class EulerAdjacency {
+    /// The union of closed cubes: foreground 26-adjacent, background 6-adjacent.
+    Cube26,
+    /**
+     * The voxel centres as the vertices of the Freudenthal (Kuhn) triangulation of the
+     * lattice along the main diagonal (1, 1, 1): every 2x2x2 cell is split into the six
+     * tetrahedra 0 -> e_a -> e_a + e_b -> (1, 1, 1), and chi = vertices - edges +
+     * triangles - tetrahedra of the simplices whose vertices are all foreground. Foreground
+     * and background are then both 14-adjacent (neighbours along e_a, e_a + e_b and
+     * (1, 1, 1)), so chi of a body equals chi of its complement on the periodic lattice,
+     * which Cube26 does not give. It does not cure the bias on nearly touching grains
+     * (see MinkowskiConfigurationWeights; B-206): on Boolean models of balls it is as
+     * biased as Cube26. Not invariant under axis flips: the diagonal is fixed.
+     */
+    Kuhn14,
+};
+
+/**
  * @brief Contribution of one lattice vertex, given the 8 voxels around it.
  *
  * The foreground is the union of closed unit cubes, one per set voxel (Michielsen &
@@ -59,14 +81,23 @@ struct MinkowskiValues {
  * On a digitised smooth surface S and M are biased: for isotropic orientations both
  * come out about 3/2 of the true value (the cubes' surface follows the staircase).
  * V has no such bias. chi is exact for the union of cubes, but that union's topology
- * can differ from the continuum's where grains nearly touch: on a Boolean model of
- * balls it is 0.4-0.65 per ball below Miles' formula at mid densities, at any
- * resolution (B-204, tools/b204_miles.py; Ohser, Nagel & Schladitz 2003).
+ * differs from the continuum's where grains nearly touch: two balls closer than about
+ * 1.5 voxels touch through edges and corners in many places along the gap, each place
+ * after the first a spurious tunnel (chi down to -12 instead of 2 for one such pair of
+ * radius 16). Such pairs get rarer as the resolution grows and the tunnels per pair
+ * more numerous, so the bias stays: on Boolean models of balls chi is 0.23-0.39 per
+ * ball below the exact value at volume fractions 0.2-0.5 for R = 4 to 16 voxels,
+ * 0.08-0.15 with the foreground 6-adjacent (chi of the complement), 0.25-0.46 with
+ * EulerAdjacency::Kuhn14 (B-204, B-206, tools/b204_miles.py).
+ *
+ * With EulerAdjacency::Kuhn14 only the Euler weight differs: the simplices of the cell
+ * with all vertices set, each weighted (-1)^dimension over the number of cells sharing
+ * it (a vertex 8, an axis edge 4, a face diagonal and a face triangle 2, the rest 1).
  *
  * @param configuration 0..255.
  * @throws std::out_of_range for a larger value.
  */
-MinkowskiValues MinkowskiConfigurationWeights(unsigned configuration);
+MinkowskiValues MinkowskiConfigurationWeights(unsigned configuration, EulerAdjacency adjacency = EulerAdjacency::Cube26);
 
 /// @brief What lies outside the volume.
 enum class MinkowskiBoundary {
@@ -82,7 +113,7 @@ enum class MinkowskiBoundary {
  * @param width, height, depth Extents; all must be at least 2 for Periodic, 1 for Empty.
  */
 MinkowskiValues MinkowskiFunctionals(const uint8_t* volume, size_t width, size_t height, size_t depth,
-    MinkowskiBoundary boundary = MinkowskiBoundary::Periodic);
+    MinkowskiBoundary boundary = MinkowskiBoundary::Periodic, EulerAdjacency adjacency = EulerAdjacency::Cube26);
 
 /// @brief Where the density fields are sampled.
 enum class DensityCentring {
@@ -109,7 +140,7 @@ enum class DensityCentring {
  */
 template <typename T>
 void MinkowskiDensities(const uint8_t* volume, size_t width, size_t height, size_t depth, T* out,
-    DensityCentring centring = DensityCentring::Voxel);
+    DensityCentring centring = DensityCentring::Voxel, EulerAdjacency adjacency = EulerAdjacency::Cube26);
 
 /// @brief Shape of the window over which the local functionals are taken.
 enum class WindowShape {
@@ -162,7 +193,8 @@ template <typename T>
 class MinkowskiFields {
 public:
     MinkowskiFields(size_t width, size_t height, size_t depth, WindowShape shape, const std::vector<double>& radii,
-        WindowNormalisation normalisation = WindowNormalisation::Mean);
+        WindowNormalisation normalisation = WindowNormalisation::Mean,
+        EulerAdjacency adjacency = EulerAdjacency::Cube26);
 
     /// @brief Fills out with FieldCount() fields of the binary volume (nonzero = foreground).
     void Compute(const uint8_t* volume, T* out);
@@ -180,6 +212,7 @@ private:
     size_t _depth;
     size_t _size;
     WindowNormalisation _normalisation;
+    EulerAdjacency _adjacency;
     EvenKernelBank<T> _bank;
     std::vector<double> _windowWeights;
     std::vector<T> _densities;

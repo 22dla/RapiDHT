@@ -36,11 +36,11 @@ cmake --preset cpu && cmake --build --preset cpu -j && ctest --preset cpu
 # ноутбук (Windows)
 cmake --preset windows-cpu; cmake --build --preset windows-cpu; ctest --preset windows-cpu
 ```
-Ожидается 157 тестов; без GPU 36 из них пропускается (`SKIP_IF_NO_GPU()`, в том числе шесть GPU-тестов R-5 в `test_factored`, три — целых перегрузок в `test_correctness` и шесть — свёрток на устройстве в `test_convolution`; в сборке без CUDA шести тестов `test_factored` нет вовсе — 151), на десктопе (CUDA) пропускаются только 2 — `DeviceVolumeIsRejectedWithoutCuda` и `GpuModeIsRejectedWhenNotCompiledIn`, они для сборки без CUDA.
+Ожидается 161 тест; без GPU 36 из них пропускается (`SKIP_IF_NO_GPU()`, в том числе шесть GPU-тестов R-5 в `test_factored`, три — целых перегрузок в `test_correctness` и шесть — свёрток на устройстве в `test_convolution`; в сборке без CUDA шести тестов `test_factored` нет вовсе — 155), на десктопе (CUDA) пропускаются только 2 — `DeviceVolumeIsRejectedWithoutCuda` и `GpuModeIsRejectedWhenNotCompiledIn`, они для сборки без CUDA.
 
 Python-пакет (`pyproject.toml`, scikit-build-core + nanobind; собирается в `build-python/`):
 ```bash
-pip install ".[test]" && pytest          # 54 теста (без torch один пропускается); в окружении hno-porous: uv pip install ~/projects/RapiDHT
+pip install ".[test]" && pytest          # 57 тестов (без torch один пропускается); в окружении hno-porous: uv pip install ~/projects/RapiDHT
 ```
 После правок C++ пакет пересобрать той же командой.
 

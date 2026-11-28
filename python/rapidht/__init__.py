@@ -22,7 +22,11 @@ Conventions (see include/rapidht/minkowski.h for the derivations):
 
 - Foreground = nonzero voxels = closed unit cubes, so the foreground is 26-connected and
   the background 6-connected. For a pore space checked for percolation with 6-connectivity,
-  pass the solid.
+  pass the solid. adjacency="kuhn14" counts the Euler characteristic with both 14-adjacent
+  instead (the Freudenthal triangulation of the voxel centres along the main diagonal):
+  self-complementary, so a body and its complement have the same chi. Where grains nearly
+  touch every adjacency overcounts tunnels; the 6-adjacent foreground (chi of ~volume)
+  least of the three (B-204, B-206).
 - Functionals in voxel units, Steiner normalisation: volume, surface, mean curvature
   (integral of (1/r1 + 1/r2)/2), Euler characteristic. Surface and mean curvature of a
   digitised smooth surface come out about 3/2 of the smooth values.
@@ -91,22 +95,32 @@ def _choice(value: str, options: Sequence[str], name: str) -> str:
     return value
 
 
-def configuration_weights() -> np.ndarray:
+_ADJACENCY = ("cube26", "kuhn14")
+
+
+def _kuhn(adjacency: str) -> bool:
+    return _choice(adjacency, _ADJACENCY, "adjacency") == "kuhn14"
+
+
+def configuration_weights(adjacency: str = "cube26") -> np.ndarray:
     """(256, 4): contribution of one lattice vertex per 2x2x2 configuration, columns FUNCTIONALS.
 
     Bit i of the index is the voxel at offset (i & 1, i >> 1 & 1, i >> 2 & 1) along the
     C++ (width, height, depth) axes, i.e. numpy axes (2, 1, 0).
     """
-    return np.array([_rapidht.configuration_weights(n) for n in range(256)])
+    kuhn = _kuhn(adjacency)
+    return np.array([_rapidht.configuration_weights(n, kuhn) for n in range(256)])
 
 
-def minkowski_functionals(volume, boundary: str = "periodic") -> dict[str, float]:
+def minkowski_functionals(volume, boundary: str = "periodic", adjacency: str = "cube26") -> dict[str, float]:
     """Global functionals; boundary 'periodic' (per period cell) or 'empty' (background outside)."""
     _choice(boundary, ("periodic", "empty"), "boundary")
-    return _rapidht.minkowski_functionals(_volume(volume), boundary == "periodic")
+    return _rapidht.minkowski_functionals(_volume(volume), boundary == "periodic", _kuhn(adjacency))
 
 
-def minkowski_densities(volume, centring: str = "voxel", dtype=np.float32) -> np.ndarray:
+def minkowski_densities(
+    volume, centring: str = "voxel", dtype=np.float32, adjacency: str = "cube26"
+) -> np.ndarray:
     """(4, *shape) local densities; each plane sums to the periodic global functional.
 
     centring 'voxel': mean of the 8 corner contributions of each voxel (symmetric);
@@ -115,7 +129,7 @@ def minkowski_densities(volume, centring: str = "voxel", dtype=np.float32) -> np
     _choice(centring, ("voxel", "vertex"), "centring")
     v = _volume(volume)
     out = np.empty((4, *v.shape), dtype=dtype)
-    getattr(_rapidht, "_densities_" + _suffix(dtype))(v, out, centring == "voxel")
+    getattr(_rapidht, "_densities_" + _suffix(dtype))(v, out, centring == "voxel", _kuhn(adjacency))
     return out
 
 
@@ -136,7 +150,7 @@ class MinkowskiFields:
     """Local Minkowski functionals over a bank of windows, periodic boundary.
 
     MinkowskiFields(shape, radii, window='ball'|'gaussian', normalisation='mean'|'sum',
-    dtype=float32). Calling it on a volume of that shape returns (4, len(radii), *shape):
+    dtype=float32, adjacency='cube26'|'kuhn14'). Calling it on a volume of that shape returns (4, len(radii), *shape):
     functional (FUNCTIONALS order), window, voxel. 'sum' gives the functionals of the part
     of the body inside each window; 'mean' divides by the window weight (local volume
     fraction, surface per voxel, ...), comparable across window sizes.
@@ -151,6 +165,7 @@ class MinkowskiFields:
         window: str = "ball",
         normalisation: str = "mean",
         dtype=np.float32,
+        adjacency: str = "cube26",
     ):
         _choice(window, ("ball", "gaussian"), "window")
         _choice(normalisation, ("mean", "sum"), "normalisation")
@@ -162,7 +177,10 @@ class MinkowskiFields:
         self.normalisation = normalisation
         self.dtype = np.dtype(dtype)
         cls = getattr(_rapidht, "_MinkowskiFields_" + _suffix(dtype))
-        self._impl = cls(*self.shape, window == "gaussian", list(self.radii), normalisation == "mean")
+        self.adjacency = adjacency
+        self._impl = cls(
+            *self.shape, window == "gaussian", list(self.radii), normalisation == "mean", _kuhn(adjacency)
+        )
 
     @property
     def window_weights(self) -> np.ndarray:
@@ -180,7 +198,7 @@ class MinkowskiFields:
     def __repr__(self) -> str:
         return (
             f"MinkowskiFields(shape={self.shape}, radii={self.radii}, window={self.window!r}, "
-            f"normalisation={self.normalisation!r}, dtype={self.dtype.name})"
+            f"normalisation={self.normalisation!r}, dtype={self.dtype.name}, adjacency={self.adjacency!r})"
         )
 
 

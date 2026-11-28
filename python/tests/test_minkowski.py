@@ -193,3 +193,46 @@ def test_boolean_model_matches_cell_count_and_miles_volume():
         fractions.append(mf["volume"] / size**3)
     se = np.std(fractions, ddof=1) / np.sqrt(len(fractions))
     assert abs(np.mean(fractions) - phi) < 4.0 * se + 1e-3
+
+
+def freudenthal_euler(x: np.ndarray) -> int:
+    """chi of the Freudenthal triangulation of the voxel centres, periodic (B-206).
+
+    Simplices are chains p, p + s1, p + s1 + s2, ... with disjoint non-empty 0/1 steps
+    along the C++ axes (width, height, depth) = numpy axes (2, 1, 0).
+    """
+    x = x.astype(bool)
+
+    def shift(a, step):
+        return np.roll(a, tuple(-((step >> c) & 1) for c in range(3)), axis=(2, 1, 0))
+
+    total = int(x.sum())
+    for a in range(1, 8):
+        xa = x & shift(x, a)
+        total -= int(xa.sum())
+        for b in range(1, 8):
+            if a & b:
+                continue
+            xb = xa & shift(x, a | b)
+            total += int(xb.sum())
+            for c in range(1, 8):
+                if c & (a | b):
+                    continue
+                total -= int((xb & shift(x, a | b | c)).sum())
+    return total
+
+
+@pytest.mark.parametrize("seed", range(3))
+def test_kuhn14_euler_matches_freudenthal_count_and_is_self_complementary(seed):
+    v = random_volume((6, 8, 5), seed=seed)
+    mf = rapidht.minkowski_functionals(v, adjacency="kuhn14")
+    assert mf["euler"] == pytest.approx(freudenthal_euler(v), abs=1e-9)
+    assert rapidht.minkowski_functionals(~v, adjacency="kuhn14")["euler"] == pytest.approx(mf["euler"], abs=1e-9)
+    cubes = rapidht.minkowski_functionals(v)
+    assert {k: mf[k] for k in ("volume", "surface", "mean_curvature")} == pytest.approx(
+        {k: cubes[k] for k in ("volume", "surface", "mean_curvature")}
+    )
+    d = rapidht.minkowski_densities(v, dtype=np.float64, adjacency="kuhn14")
+    assert d[3].sum() == pytest.approx(mf["euler"], abs=1e-9)
+    with pytest.raises(ValueError):
+        rapidht.minkowski_functionals(v, adjacency="18")

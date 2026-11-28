@@ -785,3 +785,162 @@ TEST(SurfaceNormalTensor, DensitiesSumToTheTensorAndArgumentsAreChecked)
     EXPECT_THROW(SurfaceNormalTensor<float>(16, 16, 16, 0.0), std::invalid_argument);
     EXPECT_THROW(SurfaceNormalTensor<float>(16, 16, 16, 1.0, {}, Modes::RFFT), std::invalid_argument);
 }
+
+// ---------------------------------------------------------------------------
+// The Euler characteristic with 14-adjacency (B-206)
+// ---------------------------------------------------------------------------
+
+namespace {
+
+/*
+ * Reference: the Freudenthal triangulation counted directly on the periodic lattice of
+ * voxel centres. Its simplices are the chains p, p + s1, p + s1 + s2, ... with the steps
+ * s non-empty 0/1 vectors of disjoint supports: 7 edges, 12 triangles and 6 tetrahedra
+ * per lattice point. chi = points - edges + triangles - tetrahedra over the simplices
+ * whose vertices are all foreground. Nothing is shared with the library's per-cell
+ * shares.
+ */
+double FreudenthalEuler(const Volume& vol)
+{
+    auto at = [&](long i, long j, long k) {
+        const long W = static_cast<long>(vol.w), H = static_cast<long>(vol.h), D = static_cast<long>(vol.d);
+        return vol.at(static_cast<size_t>(((i % W) + W) % W), static_cast<size_t>(((j % H) + H) % H),
+                   static_cast<size_t>(((k % D) + D) % D))
+            != 0;
+    };
+    long counts[4] = { 0, 0, 0, 0 };
+    // Ordered chains of disjoint non-empty subsets of the axes {0, 1, 2}, as bit masks.
+    std::vector<std::vector<int>> chains;
+    for (int a = 1; a < 8; ++a) {
+        chains.push_back({ a });
+        for (int b = 1; b < 8; ++b) {
+            if ((a & b) == 0) {
+                chains.push_back({ a, b });
+                for (int c = 1; c < 8; ++c) {
+                    if ((c & (a | b)) == 0) {
+                        chains.push_back({ a, b, c });
+                    }
+                }
+            }
+        }
+    }
+    for (size_t k = 0; k < vol.d; ++k) {
+        for (size_t j = 0; j < vol.h; ++j) {
+            for (size_t i = 0; i < vol.w; ++i) {
+                long p[3] = { static_cast<long>(i), static_cast<long>(j), static_cast<long>(k) };
+                if (!at(p[0], p[1], p[2])) {
+                    continue;
+                }
+                ++counts[0];
+                for (const auto& chain : chains) {
+                    long q[3] = { p[0], p[1], p[2] };
+                    bool all = true;
+                    for (int step : chain) {
+                        for (int axis = 0; axis < 3; ++axis) {
+                            q[axis] += (step >> axis) & 1;
+                        }
+                        all = all && at(q[0], q[1], q[2]);
+                    }
+                    counts[chain.size()] += all ? 1 : 0;
+                }
+            }
+        }
+    }
+    return static_cast<double>(counts[0] - counts[1] + counts[2] - counts[3]);
+}
+
+double Euler14(const Volume& vol, MinkowskiBoundary b = MinkowskiBoundary::Periodic)
+{
+    return MinkowskiFunctionals(vol.v.data(), vol.w, vol.h, vol.d, b, EulerAdjacency::Kuhn14).euler;
+}
+
+} // namespace
+
+TEST(EulerKuhn14, WeightsCountTheSimplicesOfACell)
+{
+    for (unsigned bit = 0; bit < 8; ++bit) {
+        EXPECT_NEAR(MinkowskiConfigurationWeights(1u << bit, EulerAdjacency::Kuhn14).euler, 1.0 / 8.0, 1e-15);
+    }
+    EXPECT_EQ(MinkowskiConfigurationWeights(0, EulerAdjacency::Kuhn14).euler, 0.0);
+    EXPECT_NEAR(MinkowskiConfigurationWeights(255, EulerAdjacency::Kuhn14).euler, 0.0, 1e-15); // inside a solid
+    // Corners 0 and (1, 1, 1): joined by the main diagonal, which lies in this cell only.
+    EXPECT_NEAR(MinkowskiConfigurationWeights(1u | 128u, EulerAdjacency::Kuhn14).euler, 2.0 / 8.0 - 1.0, 1e-15);
+    // Corners (1, 0, 0) and (0, 1, 1): the other diagonal is not an edge.
+    EXPECT_NEAR(MinkowskiConfigurationWeights(2u | 64u, EulerAdjacency::Kuhn14).euler, 2.0 / 8.0, 1e-15);
+    // V, S and M do not depend on the adjacency.
+    for (unsigned n = 0; n < 256; ++n) {
+        const MinkowskiValues a = MinkowskiConfigurationWeights(n);
+        const MinkowskiValues b = MinkowskiConfigurationWeights(n, EulerAdjacency::Kuhn14);
+        ASSERT_EQ(a.volume, b.volume);
+        ASSERT_EQ(a.surface, b.surface);
+        ASSERT_EQ(a.meanCurvature, b.meanCurvature);
+    }
+}
+
+TEST(EulerKuhn14, MatchesDirectFreudenthalCount)
+{
+    for (unsigned seed = 0; seed < 6; ++seed) {
+        for (const auto& e : { std::array<size_t, 3> { 8, 8, 8 }, { 4, 8, 16 }, { 6, 5, 7 } }) {
+            const Volume vol = RandomVolume(e[0], e[1], e[2], seed);
+            EXPECT_NEAR(Euler14(vol), FreudenthalEuler(vol), 1e-9) << seed;
+        }
+    }
+}
+
+TEST(EulerKuhn14, KnownTopologiesAndSelfComplementarity)
+{
+    const size_t n = 40;
+    auto r = [](double x, double y, double z) { return std::sqrt(x * x + y * y + z * z); };
+    const Volume ball = Shape(n, [&](double x, double y, double z) { return r(x, y, z) < 12; });
+    const Volume torus = Shape(n, [](double x, double y, double z) {
+        const double rho = std::sqrt(x * x + y * y) - 10;
+        return rho * rho + z * z < 16;
+    });
+    const Volume shell = Shape(n, [&](double x, double y, double z) { return r(x, y, z) < 15 && r(x, y, z) > 8; });
+    for (auto b : { MinkowskiBoundary::Empty, MinkowskiBoundary::Periodic }) {
+        EXPECT_NEAR(Euler14(ball, b), 1.0, 1e-12);
+        EXPECT_NEAR(Euler14(torus, b), 0.0, 1e-12);
+        EXPECT_NEAR(Euler14(shell, b), 2.0, 1e-12);
+    }
+
+    // Two voxels touching at a corner: joined along (1, 1, 1), apart along (1, -1, -1).
+    Volume main(4, 4, 4), anti(4, 4, 4);
+    main.at(1, 1, 1) = main.at(2, 2, 2) = 1;
+    anti.at(2, 1, 1) = anti.at(1, 2, 2) = 1;
+    EXPECT_NEAR(Euler14(main, MinkowskiBoundary::Empty), 1.0, 1e-12);
+    EXPECT_NEAR(Euler14(anti, MinkowskiBoundary::Empty), 2.0, 1e-12);
+
+    // Foreground and background are both 14-adjacent: on the 3-torus a body and its
+    // complement have the same chi, which 26/6 does not give.
+    for (unsigned seed = 0; seed < 4; ++seed) {
+        Volume vol = RandomVolume(8, 16, 4, seed);
+        Volume inverse = vol;
+        for (auto& x : inverse.v) {
+            x = x ? 0 : 1;
+        }
+        EXPECT_NEAR(Euler14(vol), Euler14(inverse), 1e-9) << seed;
+    }
+}
+
+TEST(EulerKuhn14, DensitiesAndFieldsCarryTheAdjacency)
+{
+    const Volume vol = RandomVolume(8, 8, 8, 3);
+    std::vector<double> d(4 * vol.v.size());
+    MinkowskiDensities(vol.v.data(), 8, 8, 8, d.data(), DensityCentring::Voxel, EulerAdjacency::Kuhn14);
+    double sum = 0.0;
+    for (size_t n = 0; n < vol.v.size(); ++n) {
+        sum += d[3 * vol.v.size() + n];
+    }
+    EXPECT_NEAR(sum, Euler14(vol), 1e-9);
+
+    // The field over a window covering everything is its weight times the global value.
+    MinkowskiFields<double> mf(8, 8, 8, WindowShape::Gaussian, { 50.0 }, WindowNormalisation::Sum,
+        EulerAdjacency::Kuhn14);
+    std::vector<double> out(mf.FieldCount() * mf.Size());
+    mf.Compute(vol.v.data(), out.data());
+    double field = 0.0;
+    for (size_t n = 0; n < mf.Size(); ++n) {
+        field += out[3 * mf.Size() + n];
+    }
+    EXPECT_NEAR(field, mf.WindowWeight(0) * Euler14(vol), 1e-6 * std::max(1.0, std::fabs(field)));
+}

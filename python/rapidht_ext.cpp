@@ -54,6 +54,8 @@ void CheckOut(const Out<T>& out, size_t expected, const char* caller)
     }
 }
 
+EulerAdjacency Adjacency(bool kuhn) { return kuhn ? EulerAdjacency::Kuhn14 : EulerAdjacency::Cube26; }
+
 nb::dict ToDict(const MinkowskiValues& m)
 {
     nb::dict d;
@@ -251,11 +253,11 @@ void BindTyped(nb::module_& m, const char* suffix)
             release);
 
     m.def((std::string("_densities_") + suffix).c_str(),
-        [](const Volume& v, Out<T> out, bool voxel) {
+        [](const Volume& v, Out<T> out, bool voxel, bool kuhn) {
             const Extent e = ExtentOf(v);
             CheckOut(out, 4 * e.width * e.height * e.depth, "minkowski_densities");
             MinkowskiDensities<T>(v.data(), e.width, e.height, e.depth, out.data(),
-                voxel ? DensityCentring::Voxel : DensityCentring::Vertex);
+                voxel ? DensityCentring::Voxel : DensityCentring::Vertex, Adjacency(kuhn));
         },
         nb::call_guard<nb::gil_scoped_release>());
 
@@ -272,9 +274,9 @@ void BindTyped(nb::module_& m, const char* suffix)
         .def(
             "__init__",
             [](Fields* self, size_t n0, size_t n1, size_t n2, bool gaussian, const std::vector<double>& radii,
-                bool mean) {
+                bool mean, bool kuhn) {
                 new (self) Fields(n2, n1, n0, gaussian ? WindowShape::Gaussian : WindowShape::Ball, radii,
-                    mean ? WindowNormalisation::Mean : WindowNormalisation::Sum);
+                    mean ? WindowNormalisation::Mean : WindowNormalisation::Sum, Adjacency(kuhn));
             })
         .def(
             "compute",
@@ -297,20 +299,20 @@ NB_MODULE(_rapidht, m)
 {
     m.doc() = "RapiDHT core bindings; use the rapidht package, not this module.";
 
-    m.def("configuration_weights", [](unsigned n) {
-        const MinkowskiValues w = MinkowskiConfigurationWeights(n);
+    m.def("configuration_weights", [](unsigned n, bool kuhn) {
+        const MinkowskiValues w = MinkowskiConfigurationWeights(n, Adjacency(kuhn));
         return std::vector<double> { w.volume, w.surface, w.meanCurvature, w.euler };
     });
 
     m.def(
         "minkowski_functionals",
-        [](const Volume& v, bool periodic) {
+        [](const Volume& v, bool periodic, bool kuhn) {
             const Extent e = ExtentOf(v);
             MinkowskiValues r;
             {
                 nb::gil_scoped_release release;
                 r = MinkowskiFunctionals(v.data(), e.width, e.height, e.depth,
-                    periodic ? MinkowskiBoundary::Periodic : MinkowskiBoundary::Empty);
+                    periodic ? MinkowskiBoundary::Periodic : MinkowskiBoundary::Empty, Adjacency(kuhn));
             }
             return ToDict(r);
         });
